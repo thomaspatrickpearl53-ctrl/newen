@@ -533,6 +533,10 @@ int SV_DropToFloor(edict_t *e)
 	VectorCopy(e->v.origin, end);
 	end[2] -= 256;
 	trace_t trace = SV_Move(e->v.origin, e->v.mins, e->v.maxs, end, MOVE_NORMAL, e);
+	// starting inside another entity (an item given to the player spawns inside them) hides the
+	// floor below; look past entities then
+	if (trace.startsolid && !trace.allsolid && trace.fraction == 1 && trace.ent && trace.ent != sv.edicts)
+		trace = SV_Move(e->v.origin, e->v.mins, e->v.maxs, end, MOVE_NOMONSTERS, e);
 	if (trace.allsolid)
 		return -1;
 	if (trace.fraction == 1)

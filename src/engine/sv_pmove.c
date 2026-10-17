@@ -144,6 +144,19 @@ static pmtrace_t *PM_TraceLine(float *start, float *end, int flags, int usehull,
 	return &t;
 }
 
+// for the client DLL's view of player movement
+pmtrace_t *SV_PM_TraceLine(float *start, float *end, int flags, int usehull, int ignore_pe)
+{
+	if (!pm)
+		return NULL;
+	return PM_TraceLine(start, end, flags, usehull, ignore_pe);
+}
+
+movevars_t *SV_MoveVars(void)
+{
+	return &movevars;
+}
+
 static pmtrace_t *PM_TraceLineEx(float *start, float *end, int flags, int usehull, int (*ignore)(physent_t *))
 {
 	static pmtrace_t t;
@@ -239,17 +252,10 @@ static float PM_TraceModel(physent_t *pe, float *start, float *end, gs_trace_t *
 	return t.fraction;
 }
 
-// GoldSrc's modtype numbering: brush, sprite, alias, studio
+// model_t::type already uses GoldSrc's numbering (brush, sprite, alias, studio)
 static int PM_GetModelType(struct model_s *m)
 {
-	if (!m)
-		return 2;
-	switch (m->type) {
-	case mod_brush:  return 0;
-	case mod_sprite: return 1;
-	case mod_studio: return 3;
-	default:         return 2;
-	}
+	return (m && m->type != mod_bad) ? m->type : mod_alias;
 }
 
 static void PM_GetModelBounds(struct model_s *m, float *mins, float *maxs)

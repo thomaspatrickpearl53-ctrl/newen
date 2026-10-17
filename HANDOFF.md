@@ -4,12 +4,13 @@ Everything someone new needs to pick this project up: what it is, what was decid
 out, how to build and test it, what works, what doesn't, and what comes next. Read `README.md` first for the
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
-Status as of 2026-10-17: **Phase 1, steps 1 to 4 are done.** The engine
+Status as of 2026-10-17: **Phase 1, steps 1 to 4 are done; step 5 (client DLL) is under way.** The engine
 boots, has a full console and engine-level Lua, renders Half-Life maps, models and sprites, and runs the stock Steam
 `hl.dll`: it spawns every map's entities, monsters think, path-find and fight, doors and trains move, and the player
 walks with the DLL's own movement code (doors open, triggers fire, weapons can be picked up). Engine Lua can see
-and change the game: entities, traces, spawning, hooks. Next up is the client DLL (step 5: HUD, view model, input,
-VGUI1).
+and change the game: entities, traces, spawning, hooks. The stock `client.dll` now runs too (with `vgui.dll` hosted
+by the engine): its HUD, crosshair, input, view bob and view model work. Next: client-side events and effects (muzzle
+flashes, shells, decals), the triangle/efx/event APIs, then sound (step 6).
 
 ---
 
@@ -33,7 +34,8 @@ hl-lua folder from this project.
 | **32-bit only** for now | The Steam `hl.dll`/`client.dll` are 32-bit. CMake refuses a 64-bit build. 64-bit is a later goal (via a rebuilt open-source HLSDK) |
 | **Windows first**, SDL2 for window/input | Linux/Steam Deck later; keep platform code in `sys_win.c`, `font_win.c` |
 | **Clean-room**: written from documented formats; **never copy Xash3D code** | Xash3D is GPL; copying would force GPL on newen. Reading public format docs is fine |
-| **Game interface headers are our own** (`game_api.h`), written from the public HL SDK layout, not copied from the SDK | Owner's choice (step 4). Keeps newen free of the SDK license; size asserts guard the layout |
+| **Game interface headers are our own** (`game_api.h`, `client_api.h`), written from the public HL SDK layout, not copied from the SDK | Owner's choice (step 4). Keeps newen free of the SDK license; size asserts guard the layout |
+| **VGUI1 is hosted, not reimplemented**: the engine loads Half-Life's own `vgui.dll` and provides the drawing surface | The stock client.dll imports 548 vgui.dll functions and builds its viewport on an engine panel at `HUD_VidInit`. vgui.dll exports its vtables, so the layout is read from the binary (no SDK headers) |
 | **Never write into the Half-Life folder** | All writes go to `bin/userdata/<game>/` |
 | **Lua in the engine**, GMod-style API names (`hook.Add`, `concommand.Add`, `CreateConVar`, `surface.*`...) | Same names as hl-lua so addons move over |
 | **No hardcoded limits** where avoidable: growable arrays; remaining limits become cvars | The owner wants the engine to "be able to do a lot" |
@@ -157,6 +159,9 @@ All engine code is in `src/engine/`, about 12,400 lines. One executable, no DLL 
 | `cl_input.c` | 150 | **Temporary** (client.dll's job in GoldSrc): `+forward/+back/+moveleft/+moveright/+moveup/+movedown/+jump/+duck/+attack/+attack2/+use/+reload/+speed/+alt1/+showscores` and `impulse`, the `cl_*speed` cvars, `CL_CreateCmd` builds a `usercmd_t` each frame. `cl_viewangles` is the look direction (mouse) |
 | `lua_local.h` | 17 | What `lua_host.c` shares with `lua_game.c`: `Lua_GetState`, `Lua_Call`, `Lua_Hook`, `LuaG_PushEntity` |
 | `lua_game.c` | 1202 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
+| `client_api.h` | 384 | Clean-room client interface: `cl_enginefunc_t` (the SDK order, plus the later Steam/HL25 additions and 32 reserved slots), `cl_entity_t` (3000 bytes), `entity_state_t` (340), `ref_params_t`, `client_data_t`, `SCREENINFO`, `client_sprite_t`, the client export table. The tri/efx/event/demo/net/voice API tables are padded arrays of stubs for now |
+| `cl_main.c` | 1234 | Loads client.dll (after vgui.dll), every `cl_enginefunc_t` function (HUD sprites with `hud.txt` parsing and normal/holes/additive drawing, FillRGBA (additive, like GoldSrc), text, cvars/commands, user message hooks, player info, entities for the client, `V_CalcRefdef` with `ref_params_t`, the view model, crosshair, center print), the user-message queue (game DLL messages are buffered in `sv_engfuncs.c` and dispatched at the start of the client frame; `svc_weaponanim` sets the view model animation), `CLIENT_CALL` (SEH guard: a crash in the client prints module+offset and turns the client off instead of killing the engine) |
+| `vgui_bridge.c` | 386 | Hosts vgui.dll: constructs `App(true)`, a full-screen root `Panel` and a `SurfaceBase` with our own 35-slot vtable (thiscall via `__fastcall` + dummy EDX), OpenGL drawing for rects, textures and text (glyphs from vgui's own `Font::getCharRGBA`), paint/clip stack from `getAbsExtents/getClipRect/getInset`. App's `main` and `platTick` are stubbed in a copied vtable. VGUI1 alpha is transparency (0 = opaque) |
 | `r_main.c` | 288 | View: Hor+ FOV, projection, Quake modelview, frustum planes, `R_CullBox`; the noclip camera; commands `map`, `maps`, `disconnect`, `viewpos`, `setpos`, `texlist` |
 
 `base/lua/includes/init.lua` (231 lines) is the core Lua library (hook, timer, Color, draw helpers, string/table/math
@@ -219,6 +224,18 @@ opens.
   hitboxes aren't traced (bounding boxes only); `func_water`-style entity contents aren't in `SV_PointContents`;
   `MakeStatic` keeps studio models and sprites only. A few monsters report "stuck in wall" (headcrabs and a roach in
   c1a2, Big Momma in c4a2); compare with the real game before treating that as a bug.
+- **Client shortcuts (step 5a)**: the client's event hooks are registered but never called (no muzzle flashes,
+  shells, client-side sounds); `HUD_TempEntUpdate`, `HUD_DrawNormal/TransparentTriangles` and
+  `HUD_GetStudioModelInterface` aren't called (the engine draws all models itself); `TextMessageGet` returns NULL
+  (no titles.txt yet); screen fade and shake are stored but not drawn; `PlayerInfo_SetValueForKey` and mouse warping
+  are no-ops; VGUI input (clicking menus) isn't wired up. The view model is drawn with depth range 0-0.3.
+- The client's `CL_CreateMove` clears the usercmd, so the engine fills `msec` after calling it. `HUD_VidInit` runs
+  before the server spawns the map, so InitHUD/ResetHUD from the player's spawn reach a ready HUD (the other order
+  dropped them).
+- `SV_DropToFloor` looks past entities when the trace only starts inside one: `impulse 101`/`Give` spawn items inside
+  the player, and Quake's trace combining then hid the floor, so the suit "fell out of level" and the HUD stayed off.
+- Mouse look through the client (HL25 reads `SDL_GetRelativeMouseState`) works with the engine's relative mode but
+  hasn't been tried by hand yet.
 - `GetHullBounds` from the game DLL is for player movement (its numbering is stand/duck/point/large) and in the HL
   SDK it doesn't even fill the arrays (it assigns to its own pointer parameters). The engine pre-fills the defaults
   before calling it, and it must never change the BSP clip hull sizes.
@@ -280,7 +297,19 @@ The original plan for step 4:
 - **Headers**: decide with the owner how to get the ABI structs. Clean-room headers written from the public HL SDK's layout are the safest. The HL SDK's Valve license allows free non-commercial use for HL mods, and the hl-lua repo has a copy. Don't copy Xash3D headers.
 - Lua: hook the engine-to-DLL boundary (spawn, think, touch, use, client connect/command, every frame), `ents.Create(classname)` (calls the DLL's exported classname function), entvars access, traces. This is where the Vector/Angle types arrive in Lua (match hl-lua's `lua_vector.cpp` API).
 
-### Step 5: client DLL
+### Step 5: client DLL (in progress)
+
+**5a, done:** client.dll + vgui.dll load, the HUD draws (health, armor, ammo, weapon menu and history, flashlight,
+crosshair), `CL_CreateMove` drives movement and mouse look, `V_CalcRefdef` places the view and the view model,
+user messages flow from the game DLL. See `cl_main.c`, `vgui_bridge.c`, `client_api.h`.
+
+**5b, next:** event dispatch (`PlaybackEvent` from the game DLL to the client's `pfnHookEvent` callbacks, with
+`event_args_t`), a real `event_api_t` and `efx_api_t` (temp entities, muzzle flashes, decals, beams) and
+`triangleapi_t`, `HUD_TempEntUpdate`, `svc_temp_entity` messages, titles.txt, screen fade/shake, VGUI mouse input.
+Then decide whether the client's studio renderer (`HUD_GetStudioModelInterface`, `engine_studio_api_t`) takes over
+model drawing.
+
+The original plan for step 5:
 `client.dll`: `F` export/`Initialize(cl_enginefunc_t*)`, `HUD_*` callbacks, `cl_enginefunc_t`, triangle API, event API, efx API, studio interface (model rendering moves to the client), demo API, net API stubs, **VGUI1** (`vgui.dll` from the HL folder, `VGui_*` interfaces), view model, HUD sprites (`hud.txt`), `+forward` and other movement commands registered by the client.
 
 ### Step 6: single player

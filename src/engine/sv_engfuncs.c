@@ -704,24 +704,66 @@ static int PF_PointContents(const float *v) { return SV_PointContents(v); }
 
 // ---------------------------------------------------------------- messages (sent to clients in step 5)
 
+// Messages are built in a buffer and, if the local player should get them, queued for the client
+// DLL (there's one client, in this process)
+void CL_QueueMessage(int type, const unsigned char *data, int len);
 static int msg_dest, msg_type, msg_active;
+static edict_t *msg_ent;
+static unsigned char msg_buf[2048];
+static int msg_len;
+
 static void PF_MessageBegin(int dest, int type, const float *origin, edict_t *ed)
 {
 	if (msg_active)
 		Con_DPrintf("MessageBegin: a message (%d) was still open\n", msg_type);
 	msg_dest = dest;
 	msg_type = type;
+	msg_ent = ed;
+	msg_len = 0;
 	msg_active = 1;
 }
-static void PF_MessageEnd(void)         { msg_active = 0; }
-static void PF_WriteByte(int v)         {}
-static void PF_WriteChar(int v)         {}
-static void PF_WriteShort(int v)        {}
-static void PF_WriteLong(int v)         {}
-static void PF_WriteAngle(float v)      {}
-static void PF_WriteCoord(float v)      {}
-static void PF_WriteString(const char *s) {}
-static void PF_WriteEntity(int v)       {}
+
+static void PF_MessageEnd(void)
+{
+	if (!msg_active)
+		return;
+	msg_active = 0;
+	edict_t *pl = SV_LocalPlayer();
+	qboolean deliver;
+	switch (msg_dest) {
+	case MSG_ONE:
+	case MSG_ONE_UNRELIABLE:
+		deliver = pl && msg_ent == pl;
+		break;
+	case MSG_SPEC:
+		deliver = false;
+		break;
+	default:   // broadcast, all, init, PVS/PAS (one player: always in range)
+		deliver = true;
+		break;
+	}
+	if (deliver)
+		CL_QueueMessage(msg_type, msg_buf, msg_len);
+}
+
+static void MsgWrite(const void *data, int n)
+{
+	if (msg_len + n > (int)sizeof(msg_buf)) {
+		Con_DPrintf("Message %d is too long\n", msg_type);
+		return;
+	}
+	memcpy(msg_buf + msg_len, data, n);
+	msg_len += n;
+}
+
+static void PF_WriteByte(int v)   { unsigned char b = (unsigned char)v; MsgWrite(&b, 1); }
+static void PF_WriteChar(int v)   { signed char c = (signed char)v; MsgWrite(&c, 1); }
+static void PF_WriteShort(int v)  { short s = (short)v; MsgWrite(&s, 2); }
+static void PF_WriteLong(int v)   { MsgWrite(&v, 4); }
+static void PF_WriteAngle(float v) { PF_WriteByte((int)(v * 256.0f / 360.0f) & 255); }
+static void PF_WriteCoord(float v) { PF_WriteShort((int)(v * 8.0f)); }
+static void PF_WriteString(const char *s) { if (!s) s = ""; MsgWrite(s, (int)strlen(s) + 1); }
+static void PF_WriteEntity(int v) { PF_WriteShort(v); }
 
 // ---------------------------------------------------------------- cvars
 
@@ -834,6 +876,12 @@ static void *PF_GetModelPtr(edict_t *e)
 
 static char **usermsg_names;
 static int usermsg_count;
+
+const char *SV_UserMsgName(int type)
+{
+	int i = type - 64;
+	return (i >= 0 && i < usermsg_count) ? usermsg_names[i] : NULL;
+}
 
 static int PF_RegUserMsg(const char *name, int size)
 {

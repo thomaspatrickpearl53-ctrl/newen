@@ -8,7 +8,7 @@ hook.Add("DrawOverlay", "newen.watermark", function()
 	if not watermark:GetBool() then return end
 	local text = "newen " .. engine.Version() .. "  |  Lua engine hooks online  |  game: " .. engine.GetGameDir()
 	local w, h = surface.GetTextSize(text)
-	local x, y = 12, ScrH() - h - 12
+	local x, y = math.floor((ScrW() - w) / 2), 8   -- top centre, clear of the game's HUD
 	surface.SetDrawColor(0, 0, 0, 160)
 	surface.DrawRect(x - 6, y - 4, w + 12, h + 8)
 	surface.SetDrawColor(accent)

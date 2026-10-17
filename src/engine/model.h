@@ -187,7 +187,8 @@ typedef struct {
 
 // ---------------------------------------------------------------- loaded models
 
-typedef enum { mod_bad, mod_brush, mod_studio, mod_sprite } modtype_t;
+// GoldSrc's numbering (client.dll reads model_t::type); mod_bad is newen's own
+typedef enum { mod_brush, mod_sprite, mod_alias, mod_studio, mod_bad } modtype_t;
 
 // one triangle-list mesh, decoded from the strips and fans at load time
 typedef struct {
@@ -230,18 +231,26 @@ typedef struct {
 	spritegroup_t *frames;
 } spritemodel_t;
 
+// The first fields match GoldSrc's model_t, because the client DLL reads them directly
 typedef struct model_s {
 	char      name[64];
+	qboolean  needload;
 	modtype_t type;
+	int       numframes;
+	int       synctype;
+	int       flags;
 	vec3_t    mins, maxs;
 	float     radius;
-	int       numframes;
+	// newen's own from here on
 	int       submodel;           // brush models ("*n")
 	union {
 		studiomodel_t studio;
 		spritemodel_t sprite;
 	};
 } model_t;
+
+_Static_assert(offsetof(model_t, type) == 68 && offsetof(model_t, mins) == 84 && offsetof(model_t, radius) == 108,
+	"model_t must start like GoldSrc's");
 
 void     Mod_Init(void);
 model_t *Mod_ForName(const char *name, qboolean crash);   // cached; "*n" for brush submodels
@@ -299,3 +308,5 @@ void     R_BuildMapEntities(void);
 void     R_ClearEntities(void);
 void     R_DrawEntities(void);
 rentity_t *R_AddEntity(void);   // a new static entity (cleared on map change)
+void     R_ClearFrameEntities(void);
+rentity_t *R_AddFrameEntity(void);   // rebuilt every frame (server edicts, client entities)

@@ -797,7 +797,6 @@ void SV_Init(void)
 	Cmd_AddCommand("noclip", Noclip_f, "toggles flying through walls");
 	Cmd_AddCommand("kill", Kill_f, "kills the player");
 	Cmd_AddCommand("reload", Reload_f, "restarts the current map");
-	CL_InitInput();
 
 	if (COM_CheckParm("-nogamedll")) {
 		Con_Printf("Game DLL disabled (-nogamedll)\n");

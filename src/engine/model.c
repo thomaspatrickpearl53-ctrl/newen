@@ -587,7 +587,7 @@ static void ModelList_f(void)
 	int n = 0;
 	for (int i = 0; i < models_count; i++) {
 		const model_t *m = models[i];
-		static const char *types[] = { "bad", "brush", "studio", "sprite" };
+		static const char *types[] = { "brush", "sprite", "alias", "studio", "bad" };
 		Con_Printf("%-7s %s\n", types[m->type], m->name);
 		n++;
 	}

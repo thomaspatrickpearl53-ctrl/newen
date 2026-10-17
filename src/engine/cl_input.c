@@ -74,7 +74,8 @@ static void Impulse_f(void)
 		pending_impulse = atoi(Cmd_Argv(1));
 }
 
-void CL_CreateCmd(float frametime, usercmd_t *cmd)
+// without a client DLL, the engine builds the command itself
+void CL_CreateCmdEngine(float frametime, usercmd_t *cmd)
 {
 	memset(cmd, 0, sizeof(*cmd));
 	int msec = (int)(frametime * 1000.0f + 0.5f);

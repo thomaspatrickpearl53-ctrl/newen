@@ -102,7 +102,9 @@ void R_RenderView(void)
 	r_refdef.time = host_realtime;
 	// the view: the player's eyes when there is one, otherwise the free camera
 	edict_t *pl = SV_LocalPlayer();
-	if (pl) {
+	if (pl && CL_CalcRefdef(r_refdef.origin, r_refdef.angles)) {
+		// the client DLL placed the view
+	} else if (pl) {
 		VectorAdd(pl->v.origin, pl->v.view_ofs, r_refdef.origin);
 		VectorAdd(cl_viewangles, pl->v.punchangle, r_refdef.angles);
 	} else {
@@ -116,6 +118,7 @@ void R_RenderView(void)
 		SV_SetupRenderEntities();
 	R_DrawWorld();
 	R_DrawEntities();
+	CL_DrawViewModel();
 }
 
 // ---------------------------------------------------------------- noclip camera
@@ -130,6 +133,8 @@ void R_UpdateCamera(void)
 		return;
 
 	float sens = sensitivity->value;
+	if (CL_HasClient() && SV_LocalPlayer())
+		return;   // the client DLL turns the view (CL_CreateMove)
 	cl_viewangles[1] -= dx * sens * m_yaw->value;
 	cl_viewangles[0] += dy * sens * m_pitch->value;
 	if (cl_viewangles[0] > 89) cl_viewangles[0] = 89;
@@ -192,6 +197,7 @@ static void Map_f(void)
 
 	Lua_RunHookString("WorldUnloaded", current_map);
 	// models belong to the map they were loaded for (as in GoldSrc)
+	CL_MapEnded();
 	SV_Deactivate();
 	R_ClearEntities();
 	Mod_ClearAll();
@@ -202,6 +208,7 @@ static void Map_f(void)
 	}
 	Q_strncpy(current_map, name, sizeof(current_map));
 	R_NewMap();
+	CL_MapStarted();   // the client gets ready before the spawn messages reach it, as in GoldSrc
 	SV_SpawnServer(name);
 	PlaceCamera();
 	if (Con_IsVisible())
@@ -214,6 +221,7 @@ static void Disconnect_f(void)
 	if (!world.loaded)
 		return;
 	Lua_RunHookString("WorldUnloaded", current_map);
+	CL_MapEnded();
 	SV_Deactivate();
 	R_ClearEntities();
 	Mod_ClearAll();

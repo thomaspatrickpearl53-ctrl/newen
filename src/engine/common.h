@@ -224,6 +224,16 @@ void     SV_Frame(double frametime);
 qboolean SV_GameLoaded(void);
 qboolean SV_Active(void);
 
+// ---------------------------------------------------------------- client (cl_main.c)
+void     CL_Init(void);               // loads client.dll (and vgui.dll)
+void     CL_Shutdown(void);
+void     CL_Frame(double frametime);  // messages to the client, HUD_Frame
+void     CL_DrawHUD(void);            // 2D: HUD, crosshair, VGUI
+qboolean CL_KeyEvent(int key, qboolean down, const char *binding);   // false = the client ate it
+qboolean CL_HasClient(void);
+void     CL_MapStarted(void);
+void     CL_MapEnded(void);
+
 // ---------------------------------------------------------------- draw.c
 void Draw_Init(void);
 void Draw_Shutdown(void);

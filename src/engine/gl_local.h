@@ -76,3 +76,7 @@ typedef struct {
 } refdef_t;
 extern refdef_t r_refdef;
 qboolean R_CullBox(const vec3_t mins, const vec3_t maxs);
+
+// cl_main.c: the client DLL's view and the weapon in your hands
+qboolean CL_CalcRefdef(vec3_t vieworg, vec3_t viewangles);
+void     CL_DrawViewModel(void);

@@ -120,6 +120,17 @@ static void Bindlist_f(void)
 			Con_Printf("%-12s \"%s\"\n", Key_KeynumToString(i), bindings[i]);
 }
 
+// the first key bound to a command, for the client DLL's "press [key]" hints
+const char *Key_KeynameForBinding(const char *binding)
+{
+	if (!binding)
+		return NULL;
+	for (int i = 0; i < K_COUNT; i++)
+		if (bindings[i] && !stricmp(bindings[i], binding))
+			return Key_KeynumToString(i);
+	return NULL;
+}
+
 // remembers the engine's default keys, so the config only has to store changes
 void Key_SnapshotDefaults(void)
 {
@@ -184,6 +195,9 @@ void Key_Event(int key, qboolean down)
 	}
 
 	const char *b = bindings[key];
+	// the client DLL sees keys first (weapon menus use the number keys)
+	if (!repeat && !CL_KeyEvent(key, down, b ? b : ""))
+		return;
 	if (!b || repeat)
 		return;
 	if (b[0] == '+') {

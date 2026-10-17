@@ -52,7 +52,9 @@ static void DefaultBindings(void)
 	// GoldSrc's default movement keys (newen's own +commands until client.dll provides them)
 	Cbuf_AddText("bind w +forward; bind s +back; bind a +moveleft; bind d +moveright; bind SPACE +jump; "
 		"bind CTRL +duck; bind SHIFT +speed; bind e +use; bind r +reload; bind MOUSE1 +attack; bind MOUSE2 +attack2; "
-		"bind TAB +showscores; bind v noclip\n");
+		"bind TAB +showscores; bind v noclip; bind f \"impulse 100\"; bind q lastinv; bind t \"impulse 201\"; "
+		"bind MWHEELUP invprev; bind MWHEELDOWN invnext; bind 1 slot1; bind 2 slot2; bind 3 slot3; bind 4 slot4; "
+		"bind 5 slot5; bind 6 slot6; bind 7 slot7; bind 8 slot8; bind 9 slot9; bind 0 slot10\n");
 }
 
 void Host_Init(int argc, char **argv)
@@ -95,6 +97,7 @@ void Host_Init(int argc, char **argv)
 	Draw_Init();
 	R_Init();
 	Lua_Init();
+	CL_Init();
 	SV_Init();
 
 	// +commands from the command line, like GoldSrc: +map c1a0 +developer 1
@@ -164,6 +167,7 @@ void Host_Frame(void)
 	Vid_PumpEvents();
 	Cbuf_Execute();
 	R_UpdateCamera();
+	CL_Frame(host_frametime);
 	SV_Frame(host_frametime);
 	Lua_Frame();
 	double t1 = Sys_FloatTime();
@@ -171,6 +175,7 @@ void Host_Frame(void)
 	Vid_BeginFrame();
 	R_RenderView();
 	Draw_Begin2D();
+	CL_DrawHUD();
 	Lua_DrawOverlay();
 	Con_Draw();
 	DrawFPS();
@@ -191,6 +196,7 @@ void Host_Shutdown(void)
 	if (host_initialized)
 		WriteConfig();
 	Lua_Shutdown();
+	CL_Shutdown();
 	SV_Shutdown();
 	R_Shutdown();
 	Draw_Shutdown();

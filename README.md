@@ -50,8 +50,13 @@ doors and trains run, and the renderer draws what the game sets up. `-nogamedll`
 entities from the map file only).
 
 The player moves with the game's own movement code (walking, jumping, crouching, swimming, ladders, noclip), so
-doors, buttons, triggers and pickups work. There is no sound, HUD or view model yet (they come with the client DLL
-in step 5), and level changes only print a message.
+doors, buttons, triggers and pickups work. Level changes only print a message for now.
+
+newen also loads the mod's client DLL (`cl_dlls/client.dll`) together with Half-Life's `vgui.dll`: the game's own
+HUD (health, armor, ammo, weapon menus, pickup icons), crosshair, mouse look, view bob and the weapon in your hands
+come from it. Keys 1-9 pick weapons, the mouse wheel cycles them, F is the flashlight. `-noclientdll` runs without
+it (no HUD, engine-side movement keys). Still missing: sound, muzzle flashes and other client effects, VGUI menus
+beyond what the HUD needs.
 
 - `status` shows the game DLL, map and player health; `edicts [classname]` lists the game's entities.
 - `god`, `notarget` and `noclip` toggle invulnerability, being ignored by monsters, and flying through walls;
@@ -129,7 +134,7 @@ Phase 1, Half-Life runs:
 2. **World** - BSP v30 and big maps, WAD and HD textures, lightmaps, PVS, noclip camera *(done)*
 3. **Models and sprites** - MDL (no fixed limits), SPR, HD model textures *(done)*
 4. **Server** - load `hl.dll`, engine functions, collision, entity physics, player movement, Lua game API *(done)*
-5. Client - load `client.dll`, HUD, VGUI1
+5. **Client** - load `client.dll` and `vgui.dll`, HUD, view model, input *(first part done)*; effects, events, studio interface *(next)*
 6. Single player - loopback server, save/load, level changes, stereo and HQ audio, Half-Life: Lua API
 
 Then: Jolt physics, extended BSP, lights and shadows, particles, captions, dev tools; VGUI2; more games

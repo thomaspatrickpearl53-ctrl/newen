@@ -134,7 +134,8 @@ qboolean    SV_SetPlayerPos(const vec3_t eye, const vec3_t angles);   // false i
 
 // cl_input.c (temporary: client.dll owns movement input in GoldSrc)
 void        CL_InitInput(void);
-void        CL_CreateCmd(float frametime, usercmd_t *cmd);
+void        CL_CreateCmd(float frametime, usercmd_t *cmd);        // cl_main.c: the client DLL's, or the engine's
+void        CL_CreateCmdEngine(float frametime, usercmd_t *cmd);
 extern vec3_t cl_viewangles;
 void        SV_MakeVectors(const vec3_t angles);
 float       SV_VecToYaw(const vec3_t v);
