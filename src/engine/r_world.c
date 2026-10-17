@@ -415,15 +415,38 @@ static qboolean HiddenClass(const char *cls)
 	return false;
 }
 
-// Until hl.dll drives entities, brush entities are placed from the map's entity lump
+static int brushents_cap;
+
+void R_ClearBrushEntities(void)
+{
+	brushents_count = 0;
+}
+
+void R_AddBrushEntity(int submodel, const vec3_t origin, const vec3_t angles, int rendermode, int renderamt, const int color[3])
+{
+	if (submodel <= 0 || submodel >= world.numsubmodels)
+		return;
+	if (brushents_count == brushents_cap) {
+		brushents_cap = brushents_cap ? brushents_cap * 2 : 256;
+		brushents = Mem_Realloc(brushents, sizeof(brushent_t) * brushents_cap);
+	}
+	brushent_t *b = &brushents[brushents_count++];
+	memset(b, 0, sizeof(*b));
+	b->model = submodel;
+	VectorCopy(origin, b->origin);
+	VectorCopy(angles, b->angles);
+	b->rendermode = rendermode;
+	b->renderamt = rendermode == kRenderNormal ? 255 : renderamt;
+	for (int i = 0; i < 3; i++)
+		b->color[i] = color[i];
+}
+
+// Without a game DLL, brush entities are placed from the map's entity lump
 void R_BuildBrushEntities(void)
 {
-	Mem_Free(brushents);
-	brushents = NULL;
 	brushents_count = 0;
-	if (!world.loaded)
+	if (!world.loaded || SV_GameLoaded())
 		return;
-	brushents = Mem_Alloc(sizeof(brushent_t) * (world.numentities ? world.numentities : 1));
 	for (int i = 1; i < world.numentities; i++) {
 		bspentity_t *e = &world.entities[i];
 		const char *model = BSP_ValueForKey(e, "model");
@@ -432,16 +455,13 @@ void R_BuildBrushEntities(void)
 		int m = atoi(model + 1);
 		if (m <= 0 || m >= world.numsubmodels)
 			continue;
-		brushent_t *b = &brushents[brushents_count++];
-		memset(b, 0, sizeof(*b));
-		b->model = m;
-		sscanf(BSP_ValueForKey(e, "origin"), "%f %f %f", &b->origin[0], &b->origin[1], &b->origin[2]);
-		sscanf(BSP_ValueForKey(e, "angles"), "%f %f %f", &b->angles[0], &b->angles[1], &b->angles[2]);
-		b->rendermode = atoi(BSP_ValueForKey(e, "rendermode"));
+		vec3_t origin = { 0, 0, 0 }, angles = { 0, 0, 0 };
+		int color[3] = { 255, 255, 255 };
+		sscanf(BSP_ValueForKey(e, "origin"), "%f %f %f", &origin[0], &origin[1], &origin[2]);
+		sscanf(BSP_ValueForKey(e, "angles"), "%f %f %f", &angles[0], &angles[1], &angles[2]);
+		sscanf(BSP_ValueForKey(e, "rendercolor"), "%d %d %d", &color[0], &color[1], &color[2]);
 		const char *amt = BSP_ValueForKey(e, "renderamt");
-		b->renderamt = *amt ? atoi(amt) : 255;
-		b->color[0] = b->color[1] = b->color[2] = 255;
-		sscanf(BSP_ValueForKey(e, "rendercolor"), "%d %d %d", &b->color[0], &b->color[1], &b->color[2]);
+		R_AddBrushEntity(m, origin, angles, atoi(BSP_ValueForKey(e, "rendermode")), *amt ? atoi(amt) : 255, color);
 	}
 }
 

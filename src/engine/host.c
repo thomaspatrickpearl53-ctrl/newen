@@ -90,6 +90,7 @@ void Host_Init(int argc, char **argv)
 	Draw_Init();
 	R_Init();
 	Lua_Init();
+	SV_Init();
 
 	// +commands from the command line, like GoldSrc: +map c1a0 +developer 1
 	for (int i = 1; i < argc; i++) {
@@ -158,6 +159,7 @@ void Host_Frame(void)
 	Vid_PumpEvents();
 	Cbuf_Execute();
 	R_UpdateCamera();
+	SV_Frame(host_frametime);
 	Lua_Frame();
 	double t1 = Sys_FloatTime();
 
@@ -184,6 +186,7 @@ void Host_Shutdown(void)
 	if (host_initialized)
 		WriteConfig();
 	Lua_Shutdown();
+	SV_Shutdown();
 	R_Shutdown();
 	Draw_Shutdown();
 	Vid_Shutdown();

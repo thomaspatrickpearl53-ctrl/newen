@@ -478,6 +478,14 @@ model_t *Mod_ForName(const char *name, qboolean crash)
 	}
 	models[models_count++] = m;   // failures stay cached as mod_bad, so they warn once
 
+	if (world.loaded && !stricmp(fixed, world.name)) {
+		// the map itself (model 1 on the server)
+		m->type = mod_brush;
+		m->submodel = 0;
+		VectorCopy(world.submodels[0].mins, m->mins);
+		VectorCopy(world.submodels[0].maxs, m->maxs);
+		return m;
+	}
 	if (fixed[0] == '*') {
 		int n = atoi(fixed + 1);
 		if (n > 0 && n < world.numsubmodels) {

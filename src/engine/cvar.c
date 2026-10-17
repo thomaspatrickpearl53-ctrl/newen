@@ -70,6 +70,22 @@ static void SetString(cvar_t *var, const char *value)
 		ci->owned = true;   // string is ours from now on
 }
 
+// a saved value that was read before this cvar existed
+static void ApplyPending(cvar_t *var)
+{
+	for (pending_t **pp = &pending; *pp; pp = &(*pp)->next) {
+		if (!stricmp((*pp)->name, var->name)) {
+			pending_t *p = *pp;
+			*pp = p->next;
+			Cvar_DirectSet(var, p->value);
+			Mem_Free(p->name);
+			Mem_Free(p->value);
+			Mem_Free(p);
+			break;
+		}
+	}
+}
+
 cvar_t *Cvar_Get(const char *name, const char *value, int flags, const char *desc)
 {
 	cvarinfo_t *ci = FindInfo(name);
@@ -102,20 +118,36 @@ cvar_t *Cvar_Get(const char *name, const char *value, int flags, const char *des
 	unsigned h = HashName(name);
 	ci->hashnext = cvar_hash[h];
 	cvar_hash[h] = ci;
-
-	// a saved value that was read before this cvar existed
-	for (pending_t **pp = &pending; *pp; pp = &(*pp)->next) {
-		if (!stricmp((*pp)->name, name)) {
-			pending_t *p = *pp;
-			*pp = p->next;
-			Cvar_DirectSet(var, p->value);
-			Mem_Free(p->name);
-			Mem_Free(p->value);
-			Mem_Free(p);
-			break;
-		}
-	}
+	ApplyPending(var);
 	return var;
+}
+
+// A cvar_t that lives in a game DLL. Like GoldSrc, the string is copied so the DLL can start it
+// with a literal; an existing name wins and the DLL's copy is ignored.
+void Cvar_RegisterExternal(cvar_t *var)
+{
+	if (!var || !var->name || !*var->name)
+		return;
+	if (FindInfo(var->name)) {
+		Con_DPrintf("Can't register variable %s, already defined\n", var->name);
+		return;
+	}
+	if (Cmd_Exists(var->name)) {
+		Con_Warnf("Can't register variable %s, it is a command\n", var->name);
+		return;
+	}
+	var->string = Mem_Strdup(var->string ? var->string : "");
+	var->value = (float)atof(var->string);
+	var->next = cvar_vars;
+	cvar_vars = var;
+	cvarinfo_t *ci = Mem_Alloc(sizeof(*ci));
+	ci->var = var;
+	ci->defstring = Mem_Strdup(var->string);
+	ci->owned = true;
+	unsigned h = HashName(var->name);
+	ci->hashnext = cvar_hash[h];
+	cvar_hash[h] = ci;
+	ApplyPending(var);
 }
 
 void Cvar_SetPending(const char *name, const char *value)

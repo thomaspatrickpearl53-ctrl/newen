@@ -80,6 +80,7 @@ typedef struct mnode_s {
 typedef struct {
 	vec3_t mins, maxs, origin;
 	int    headnode;
+	int    headnodes[4];          // collision: hull 0 indexes world.clipnodes0, hulls 1-3 world.clipnodes
 	int    visleafs;
 	int    firstface, numfaces;
 } msubmodel_t;
@@ -89,6 +90,12 @@ typedef struct {
 	char **keys;
 	char **values;
 } bspentity_t;
+
+// collision tree node: children >= 0 are nodes, < 0 are contents
+typedef struct {
+	int planenum;
+	int children[2];
+} mclipnode_t;
 
 #define LM_PAGE 1024   // lightmap atlas page size; as many pages as needed
 
@@ -103,6 +110,8 @@ typedef struct {
 	mnode_t     *leafs;           int numleafs;
 	msurface_t **marksurfaces;    int nummarksurfaces;
 	msubmodel_t *submodels;       int numsubmodels;
+	mclipnode_t *clipnodes;       int numclipnodes;    // hulls 1-3 (player, big monster, crouch)
+	mclipnode_t *clipnodes0;                           // hull 0 (points), built from the render nodes
 	worldvert_t *verts;           int numverts;
 	GLuint       vbo;             // verts on the GPU
 	unsigned char *visdata;       size_t vissize;

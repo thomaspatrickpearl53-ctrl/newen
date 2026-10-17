@@ -1,6 +1,7 @@
 // newen - view setup, frustum, map loading commands and the noclip camera
 #include "bsp.h"
 #include "model.h"
+#include "server.h"
 
 refdef_t r_refdef;
 
@@ -103,6 +104,8 @@ void R_RenderView(void)
 	ComputeFov();
 	SetupFrustum();
 	SetupGL();
+	if (SV_Active())
+		SV_SetupRenderEntities();
 	R_DrawWorld();
 	R_DrawEntities();
 }
@@ -178,6 +181,7 @@ static void Map_f(void)
 
 	Lua_RunHookString("WorldUnloaded", current_map);
 	// models belong to the map they were loaded for (as in GoldSrc)
+	SV_Deactivate();
 	R_ClearEntities();
 	Mod_ClearAll();
 	if (!BSP_Load(name)) {
@@ -187,6 +191,7 @@ static void Map_f(void)
 	}
 	Q_strncpy(current_map, name, sizeof(current_map));
 	R_NewMap();
+	SV_SpawnServer(name);
 	PlaceCamera();
 	if (Con_IsVisible())
 		Con_ToggleConsole();
@@ -198,6 +203,7 @@ static void Disconnect_f(void)
 	if (!world.loaded)
 		return;
 	Lua_RunHookString("WorldUnloaded", current_map);
+	SV_Deactivate();
 	R_ClearEntities();
 	Mod_ClearAll();
 	BSP_Free();
@@ -293,6 +299,7 @@ void R_Init(void)
 
 void R_Shutdown(void)
 {
+	SV_Deactivate();
 	R_ClearEntities();
 	Mod_ClearAll();
 	BSP_Free();

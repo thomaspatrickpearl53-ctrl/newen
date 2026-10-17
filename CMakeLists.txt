@@ -56,6 +56,10 @@ add_executable(newen WIN32
 	src/engine/r_sprite.c
 	src/engine/r_light.c
 	src/engine/r_ents.c
+	src/engine/sv_main.c
+	src/engine/sv_engfuncs.c
+	src/engine/sv_world.c
+	src/engine/sv_phys.c
 )
 target_include_directories(newen PRIVATE src/engine third_party/stb)
 target_compile_definitions(newen PRIVATE _CRT_SECURE_NO_WARNINGS)

@@ -104,6 +104,7 @@ void        Cvar_WriteArchived(FILE *f);
 void        Cvar_RemoveFlagged(int flag);
 void        Cvar_SetPending(const char *name, const char *value);  // applied when the cvar is created
 cvar_t     *Cvar_First(void);
+void        Cvar_RegisterExternal(cvar_t *var);         // a game DLL's own cvar_t
 
 // ---------------------------------------------------------------- cmd.c
 typedef void (*xcommand_t)(void);
@@ -214,6 +215,13 @@ void        R_Shutdown(void);
 void        R_UpdateCamera(void);
 void        R_RenderView(void);
 const char *R_CurrentMap(void);
+
+// ---------------------------------------------------------------- server (sv_main.c)
+void     SV_Init(void);               // loads the game DLL
+void     SV_Shutdown(void);
+void     SV_Frame(double frametime);
+qboolean SV_GameLoaded(void);
+qboolean SV_Active(void);
 
 // ---------------------------------------------------------------- draw.c
 void Draw_Init(void);

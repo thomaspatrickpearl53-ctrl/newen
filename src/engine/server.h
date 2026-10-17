@@ -1,0 +1,118 @@
+// newen - the local server: game DLL, edicts, collision and physics
+#pragma once
+#include "game_api.h"
+#include "bsp.h"
+#include "model.h"
+
+// ---------------------------------------------------------------- collision
+
+typedef struct {
+	mclipnode_t *clipnodes;
+	mplane_t    *planes;
+	int          firstclipnode, lastclipnode;
+	vec3_t       clip_mins, clip_maxs;
+} hull_t;
+
+typedef struct {
+	qboolean allsolid, startsolid, inopen, inwater;
+	float    fraction;
+	vec3_t   endpos;
+	mplane_t plane;
+	edict_t *ent;
+	int      hitgroup;
+} trace_t;
+
+#define MAX_HULLS 4
+extern vec3_t hull_mins[MAX_HULLS], hull_maxs[MAX_HULLS];   // point, player, big monster, crouch
+
+void     SV_InitWorld(void);                     // hull sizes and the box hull; per map
+void     SV_LinkEdict(edict_t *e, qboolean touch_triggers);
+void     SV_UnlinkEdict(edict_t *e);
+int      SV_PointContents(const vec3_t p);
+int      SV_TruePointContents(const vec3_t p);  // keeps the current directions
+trace_t  SV_Move(const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int type, edict_t *passedict);
+trace_t  SV_ClipMoveToEntity(edict_t *ent, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end);
+edict_t *SV_TestEntityPosition(edict_t *e);     // what e is stuck in, or NULL
+hull_t  *SV_HullForBsp(edict_t *ent, const vec3_t mins, const vec3_t maxs, vec3_t offset);
+int      SV_HullPointContents(const hull_t *hull, int num, const vec3_t p);
+
+#define CONTENTS_CURRENT_0    -9
+#define CONTENTS_CURRENT_DOWN -14
+#define CONTENTS_TRANSLUCENT  -15
+#define CONTENTS_LADDER       -16
+
+// ---------------------------------------------------------------- server state
+
+typedef struct {
+	qboolean   active;
+	double     time;
+	float      frametime;
+	char       mapname[64];
+	char       modelname[64];     // "maps/c1a0.bsp"
+	edict_t   *edicts;
+	int        num_edicts, max_edicts;
+	int        maxclients;
+	char     **model_precache;    model_t **models;   int num_models;
+	char     **sound_precache;    int num_sounds;
+	char     **generic_precache;  int num_generic;
+	char     **event_precache;    int num_events;
+	qboolean   loading;           // precaching is allowed
+	char       clientinfo[1][512];   // userinfo per client ("\name\Player\model\gordon")
+	char       serverinfo[512];
+	char       localinfo[512];
+	qboolean   client_spawned;
+} server_t;
+
+extern server_t          sv;
+extern globalvars_t      gGlobals;
+extern DLL_FUNCTIONS     gEntityInterface;
+extern NEW_DLL_FUNCTIONS gNewDLLFunctions;
+extern qboolean          sv_game_loaded;
+extern void             *sv_game_dll;   // HMODULE
+extern cvar_t           *sv_gravity, *sv_stepsize, *sv_maxvelocity, *sv_friction, *sv_stopspeed, *sv_bounce;
+
+#define EDICT_NUM(n)     (&sv.edicts[n])
+#define NUM_FOR_EDICT(e) ((int)((e) - sv.edicts))
+
+static inline qboolean ED_Linked(const edict_t *e) { return e->area.prev != NULL; }
+
+// sv_main.c
+void        SV_Init(void);
+void        SV_Shutdown(void);
+qboolean    SV_SpawnServer(const char *mapname);   // after BSP_Load
+void        SV_Deactivate(void);
+void        SV_Frame(double frametime);
+const char *SV_String(string_t s);
+string_t    SV_AllocString(const char *s);
+string_t    SV_MakeString(const char *s);          // for strings that already live forever
+edict_t    *ED_Alloc(void);
+void        ED_Free(edict_t *e);
+void        ED_ClearEdict(edict_t *e);
+int         SV_ModelIndex(const char *name);       // 0 if not precached
+int         SV_PrecacheModel(const char *name);
+int         SV_PrecacheSound(const char *name);
+int         SV_PrecacheGeneric(const char *name);
+unsigned short SV_PrecacheEvent(int type, const char *name);
+model_t    *SV_ModelForIndex(int index);
+void        SV_SetMinMaxSize(edict_t *e, const vec3_t mins, const vec3_t maxs);
+void        SV_SetupRenderEntities(void);          // fills the renderer's lists from the edicts
+ENTITYINIT  SV_GetEntityInit(const char *classname);
+void       *SV_GetProcAddress(const char *name);
+const char *SV_NameForFunction(unsigned function);
+edict_t    *SV_LocalPlayer(void);
+
+// sv_engfuncs.c
+void        SV_InitEngineFuncs(enginefuncs_t *ef);
+void        SV_ExecuteServerCommands(void);   // what the game queued with ServerCommand
+void        SV_MakeVectors(const vec3_t angles);
+float       SV_VecToYaw(const vec3_t v);
+
+// sv_phys.c
+void        SV_Physics(void);
+void        SV_RunThink(edict_t *ent);
+void        SV_Impact(edict_t *e1, edict_t *e2);
+qboolean    SV_movestep(edict_t *ent, const vec3_t move, qboolean relink, int mode);
+qboolean    SV_CheckBottom(edict_t *ent);
+void        SV_MoveToOrigin(edict_t *ent, const vec3_t goal, float dist, int movetype);
+int         SV_DropToFloor(edict_t *e);
+void        SV_CheckVelocity(edict_t *ent);

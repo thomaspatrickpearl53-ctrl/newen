@@ -41,6 +41,22 @@ pages, coordinates beyond +-4096.
 HD textures: put `textures/<name>.png` (or .tga/.jpg/.bmp) in a game folder or in `bin\userdata\<game>\` and it
 replaces that texture at any resolution. `texlist` shows the names.
 
+## Game DLL (server)
+
+newen loads the mod's game DLL (`gamedll` in `liblist.gam`, so `valve/dlls/hl.dll` for Half-Life) through the
+GoldSrc interface, and `map` starts a local server: the DLL spawns the map's entities, monsters think and move,
+doors and trains run, and the renderer draws what the game sets up. `-nogamedll` turns it off (maps then show the
+entities from the map file only).
+
+There is no player movement yet: the player follows the free camera as a ghost that monsters can see (and shoot),
+but it doesn't touch triggers or push buttons.
+
+- `status` shows the game DLL, map and player health; `edicts [classname]` lists the game's entities.
+- `god` and `notarget` toggle invulnerability and whether monsters notice you.
+- Unknown console commands go to the game, as in GoldSrc (`say`, `give` with `sv_cheats 1`...).
+- `sv_maxedicts` (default 2048, GoldSrc 900) sets how many entities a map may have; `sv_ghostplayer 0` leaves the
+  player at its spawn point; `tracetest [hull]` checks collision under the camera.
+
 ## Models and sprites
 
 Studio models (`.mdl` v10, with separate `T` texture files and `01`... sequence files) and sprites (`.spr` v2) load
@@ -89,7 +105,7 @@ Phase 1, Half-Life runs:
 1. **Core** - window, console, cvars, commands, keys, filesystem, Lua VM *(done)*
 2. **World** - BSP v30 and big maps, WAD and HD textures, lightmaps, PVS, noclip camera *(done)*
 3. **Models and sprites** - MDL (no fixed limits), SPR, HD model textures *(done)*
-4. Server - load `hl.dll`, engine functions, collision and movement, Lua hooks
+4. **Server** - load `hl.dll`, engine functions, collision, entity physics *(done)*; player movement, Lua hooks *(next)*
 5. Client - load `client.dll`, HUD, VGUI1
 6. Single player - loopback server, save/load, level changes, stereo and HQ audio, Half-Life: Lua API
 

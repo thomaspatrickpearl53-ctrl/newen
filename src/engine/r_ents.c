@@ -6,8 +6,10 @@
 #include "bsp.h"
 #include "model.h"
 
-static rentity_t *ents;
+static rentity_t *ents;           // static: from the map without a game DLL, mdlview, MakeStatic
 static int ents_count, ents_cap;
+static rentity_t *frame_ents;     // rebuilt every frame from the server's edicts
+static int frame_count, frame_cap;
 static int preview_index = -1;   // the mdlview entity
 
 static rentity_t **trans;
@@ -32,6 +34,24 @@ void R_ClearEntities(void)
 {
 	ents_count = 0;
 	preview_index = -1;
+	frame_count = 0;
+}
+
+void R_ClearFrameEntities(void)
+{
+	frame_count = 0;
+}
+
+rentity_t *R_AddFrameEntity(void)
+{
+	if (frame_count == frame_cap) {
+		frame_cap = frame_cap ? frame_cap * 2 : 256;
+		frame_ents = Mem_Realloc(frame_ents, sizeof(*frame_ents) * frame_cap);
+	}
+	rentity_t *e = &frame_ents[frame_count++];
+	memset(e, 0, sizeof(*e));
+	e->renderamt = 255;
+	return e;
 }
 
 // ---------------------------------------------------------------- from the map
@@ -116,8 +136,8 @@ static void SetupFromKeys(rentity_t *e, const bspentity_t *be)
 void R_BuildMapEntities(void)
 {
 	R_ClearEntities();
-	if (!world.loaded)
-		return;
+	if (!world.loaded || SV_GameLoaded())
+		return;   // the game DLL places entities itself
 	int count = 0;
 	for (int i = 1; i < world.numentities; i++) {
 		const bspentity_t *be = &world.entities[i];
@@ -193,10 +213,11 @@ static void DrawEntity(rentity_t *e)
 
 void R_DrawEntities(void)
 {
-	if (!r_drawentities->value || !ents_count)
+	int total = ents_count + frame_count;
+	if (!r_drawentities->value || !total)
 		return;
-	if (trans_cap < ents_count) {
-		trans_cap = ents_cap;
+	if (trans_cap < total) {
+		trans_cap = total * 2;
 		trans = Mem_Realloc(trans, sizeof(*trans) * trans_cap);
 	}
 
@@ -206,8 +227,8 @@ void R_DrawEntities(void)
 	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
 	int ntrans = 0;
-	for (int i = 0; i < ents_count; i++) {
-		rentity_t *e = &ents[i];
+	for (int i = 0; i < total; i++) {
+		rentity_t *e = i < ents_count ? &ents[i] : &frame_ents[i - ents_count];
 		if (!e->model || (IsTranslucent(e) && e->renderamt <= 0))
 			continue;
 		qboolean culled = e->model->type == mod_studio ? R_StudioCull(e) : R_SpriteCull(e);

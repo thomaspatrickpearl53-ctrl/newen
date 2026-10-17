@@ -27,6 +27,7 @@ typedef struct { unsigned short planenum; short side; int firstedge; short numed
 typedef struct { int contents; int visofs; short mins[3], maxs[3];
                  unsigned short firstmarksurface, nummarksurfaces; unsigned char ambient_level[4]; } dleaf_t;
 typedef struct { unsigned short v[2]; } dedge_t;
+typedef struct { int planenum; short children[2]; } dclipnode_t;
 typedef struct { float mins[3], maxs[3]; float origin[3]; int headnode[4]; int visleafs; int firstface, numfaces; } dmodel_t;
 #pragma pack(pop)
 
@@ -606,6 +607,34 @@ static qboolean LoadTree(void)
 	if (nnodes)
 		SetNodeParent(&world.nodes[0], NULL, 0);
 
+	// collision hulls: 1-3 from the clipnodes lump, 0 from the render nodes
+	int nclip;
+	dclipnode_t *clip = LumpData(LUMP_CLIPNODES, sizeof(dclipnode_t), &nclip);
+	if (load_error)
+		return false;
+	world.numclipnodes = nclip;
+	world.clipnodes = Mem_Alloc(sizeof(mclipnode_t) * (nclip ? nclip : 1));
+	for (int i = 0; i < nclip; i++) {
+		mclipnode_t *c = &world.clipnodes[i];
+		c->planenum = (clip[i].planenum >= 0 && clip[i].planenum < nplanes) ? clip[i].planenum : 0;
+		for (int j = 0; j < 2; j++) {
+			int ch = clip[i].children[j];
+			// children are 16-bit; positive values past 32767 come out negative but aren't contents
+			if (ch < -15 && nclip > 32767)
+				ch = (unsigned short)ch;
+			c->children[j] = (ch >= nclip) ? CONTENTS_SOLID : ch;
+		}
+	}
+	world.clipnodes0 = Mem_Alloc(sizeof(mclipnode_t) * (nnodes ? nnodes : 1));
+	for (int i = 0; i < nnodes; i++) {
+		mclipnode_t *c = &world.clipnodes0[i];
+		c->planenum = (int)(world.nodes[i].plane - world.planes);
+		for (int j = 0; j < 2; j++) {
+			mnode_t *ch = world.nodes[i].children[j];
+			c->children[j] = ch->contents < 0 ? ch->contents : (int)(ch - world.nodes);
+		}
+	}
+
 	world.numsubmodels = nmodels;
 	world.submodels = Mem_Alloc(sizeof(msubmodel_t) * nmodels);
 	for (int i = 0; i < nmodels; i++) {
@@ -614,6 +643,8 @@ static qboolean LoadTree(void)
 		VectorCopy(models[i].maxs, m->maxs);
 		VectorCopy(models[i].origin, m->origin);
 		m->headnode = models[i].headnode[0];
+		for (int j = 0; j < 4; j++)
+			m->headnodes[j] = models[i].headnode[j];
 		m->visleafs = models[i].visleafs;
 		m->firstface = models[i].firstface;
 		m->numfaces = models[i].numfaces;
@@ -742,6 +773,8 @@ void BSP_Free(void)
 	Mem_Free(world.leafs);
 	Mem_Free(world.marksurfaces);
 	Mem_Free(world.submodels);
+	Mem_Free(world.clipnodes);
+	Mem_Free(world.clipnodes0);
 	Mem_Free(world.verts);
 	Mem_Free(world.visdata);
 	Mem_Free(world.lightdata);
