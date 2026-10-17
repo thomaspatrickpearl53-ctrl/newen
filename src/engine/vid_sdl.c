@@ -162,6 +162,14 @@ char *Vid_GetClipboard(void)
 static int mouse_dx, mouse_dy;
 static qboolean relative_mouse;
 
+static qboolean has_focus = true;
+
+// false while another window is in front (alt-tab): the mouse and keys are left alone then
+qboolean Vid_HasFocus(void)
+{
+	return has_focus;
+}
+
 void Vid_SetRelativeMouse(qboolean on)
 {
 	if (on == relative_mouse)
@@ -169,6 +177,31 @@ void Vid_SetRelativeMouse(qboolean on)
 	relative_mouse = on;
 	SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE);
 	mouse_dx = mouse_dy = 0;
+}
+
+// For a client DLL that reads the cursor and recenters it itself: no relative mode (it would pin
+// the cursor), just hidden and kept inside the window
+void Vid_SetCapturedCursor(qboolean on)
+{
+	static qboolean captured;
+	if (on == captured)
+		return;
+	captured = on;
+	if (window)
+		SDL_SetWindowGrab(window, on ? SDL_TRUE : SDL_FALSE);
+	SDL_ShowCursor(on ? SDL_DISABLE : SDL_ENABLE);
+}
+
+// the window's centre in screen coordinates (the client DLL's cursor-recentering mouse mode uses it)
+void Vid_GetWindowCenter(int *x, int *y)
+{
+	int wx = 0, wy = 0, ww = vid_width, wh = vid_height;
+	if (window) {
+		SDL_GetWindowPosition(window, &wx, &wy);
+		SDL_GetWindowSize(window, &ww, &wh);
+	}
+	*x = wx + ww / 2;
+	*y = wy + wh / 2;
 }
 
 void Vid_GetMouseDelta(int *dx, int *dy)
@@ -195,8 +228,12 @@ void Vid_PumpEvents(void)
 		case SDL_WINDOWEVENT:
 			if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
 				UpdateSize();
-			else if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
+			else if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
 				Key_ClearStates();
+				has_focus = false;
+			} else if (e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+				has_focus = true;
+			}
 			break;
 		case SDL_KEYDOWN:
 		case SDL_KEYUP: {

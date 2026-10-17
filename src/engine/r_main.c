@@ -125,8 +125,11 @@ void R_RenderView(void)
 
 void R_UpdateCamera(void)
 {
-	qboolean active = world.loaded && !Con_IsVisible();
-	Vid_SetRelativeMouse(active);
+	qboolean active = world.loaded && !Con_IsVisible() && Vid_HasFocus();
+	// with m_rawinput 0 the client DLL reads the cursor and recenters it, so relative mode must be off
+	qboolean cursor_mode = active && CL_HasClient() && SV_LocalPlayer() && Cvar_VariableValue("m_rawinput") == 0;
+	Vid_SetRelativeMouse(active && !cursor_mode);
+	Vid_SetCapturedCursor(cursor_mode);
 	int dx, dy;
 	Vid_GetMouseDelta(&dx, &dy);
 	if (!active)

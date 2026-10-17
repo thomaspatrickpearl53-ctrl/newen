@@ -99,6 +99,9 @@ void Host_Init(int argc, char **argv)
 	Lua_Init();
 	CL_Init();
 	SV_Init();
+	// Half-Life's default config turns on mouse look; without it the mouse's up/down walks you
+	if (CL_HasClient())
+		Cbuf_AddText("+mlook\n+jlook\n");
 
 	// +commands from the command line, like GoldSrc: +map c1a0 +developer 1
 	for (int i = 1; i < argc; i++) {

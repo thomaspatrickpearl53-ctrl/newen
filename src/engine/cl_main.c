@@ -444,8 +444,8 @@ static client_textmessage_t *TextMessageGet(const char *name) { return NULL; }
 
 static void ClAngleVectors(const float *a, float *f, float *r, float *u) { AngleVectors(a, f, r, u); }
 
-static int GetWindowCenterX(void) { return vid_width / 2; }
-static int GetWindowCenterY(void) { return vid_height / 2; }
+static int GetWindowCenterX(void) { int x, y; Vid_GetWindowCenter(&x, &y); return x; }
+static int GetWindowCenterY(void) { int x, y; Vid_GetWindowCenter(&x, &y); return y; }
 static void GetViewAngles(float *a) { VectorCopy(cl_viewangles, a); }
 static void SetViewAngles(float *a) { VectorCopy(a, cl_viewangles); }
 static int GetMaxClients(void) { return sv.maxclients > 0 ? sv.maxclients : 1; }
@@ -1052,7 +1052,7 @@ void CL_Frame(double frametime)
 
 	// mouse look belongs to the client while playing
 	static int mouse_on = -1;
-	int want = sv.active && !Con_IsVisible();
+	int want = sv.active && !Con_IsVisible() && Vid_HasFocus();   // let go of the mouse when alt-tabbed
 	if (want != mouse_on) {
 		if (want)
 			CLIENT_CALL("IN_ActivateMouse", cl.IN_ActivateMouse());
@@ -1154,6 +1154,8 @@ void CL_Init(void)
 	Cmd_AddCommand("richpresence_update", NoOp_f, "Steam rich presence (ignored)");
 	Cvar_Get("sv_allow_autoaim", "1", FCVAR_SERVER, NULL);
 	Cvar_Get("sv_allow_shaders", "1", FCVAR_SERVER, NULL);
+	// the 25th anniversary client reads raw mouse movement from SDL when this is on (an engine cvar there)
+	Cvar_Get("m_rawinput", "1", FCVAR_ARCHIVE, "1 = the client reads raw mouse movement (SDL relative mode)");
 	crosshair = Cvar_Get("crosshair", "1", FCVAR_ARCHIVE, "draws the crosshair");
 	cl_drawhud = Cvar_Get("hud_draw", "1", FCVAR_ARCHIVE, "draws the client DLL's HUD");
 	Cvar_Get("r_drawviewmodel", "1", FCVAR_ARCHIVE, "draws the weapon in your hands");

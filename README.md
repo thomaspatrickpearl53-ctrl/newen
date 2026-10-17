@@ -54,7 +54,8 @@ doors, buttons, triggers and pickups work. Level changes only print a message fo
 
 newen also loads the mod's client DLL (`cl_dlls/client.dll`) together with Half-Life's `vgui.dll`: the game's own
 HUD (health, armor, ammo, weapon menus, pickup icons), crosshair, mouse look, view bob and the weapon in your hands
-come from it. Keys 1-9 pick weapons, the mouse wheel cycles them, F is the flashlight. `-noclientdll` runs without
+come from it. Keys 1-9 pick weapons, the mouse wheel cycles them, F is the flashlight. `m_rawinput 0` switches mouse look to
+the cursor-based mode; alt-tabbing away releases the mouse. `-noclientdll` runs without
 it (no HUD, engine-side movement keys). Still missing: sound, muzzle flashes and other client effects, VGUI menus
 beyond what the HUD needs.
 

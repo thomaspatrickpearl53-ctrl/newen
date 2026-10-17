@@ -209,6 +209,9 @@ void     Vid_SetTextInput(qboolean on);
 char    *Vid_GetClipboard(void);   // Mem_Free it; NULL if empty
 void     Vid_SetRelativeMouse(qboolean on);
 void     Vid_GetMouseDelta(int *dx, int *dy);   // since the last call
+void     Vid_GetWindowCenter(int *x, int *y);   // screen coordinates
+qboolean Vid_HasFocus(void);
+void     Vid_SetCapturedCursor(qboolean on);   // hidden and confined, but not relative
 
 // ---------------------------------------------------------------- r_main.c
 void        R_Init(void);
