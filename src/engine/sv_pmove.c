@@ -375,8 +375,15 @@ static char *PM_memfgets(unsigned char *mem, int size, int *pos, char *out, int 
 }
 
 static void PM_PlaySound(int channel, const char *sample, float volume, float attenuation, int flags, int pitch) {}
+void CL_PlaybackEvent(int flags, const edict_t *invoker, unsigned short index, float delay, const float *origin,
+	const float *angles, float f1, float f2, int i1, int i2, int b1, int b2);
+
 static void PM_PlaybackEventFull(int flags, int clientindex, unsigned short eventindex, float delay, float *origin,
-	float *angles, float f1, float f2, int i1, int i2, int b1, int b2) {}
+	float *angles, float f1, float f2, int i1, int i2, int b1, int b2)
+{
+	edict_t *invoker = (clientindex >= 0 && clientindex < sv.maxclients) ? EDICT_NUM(clientindex + 1) : NULL;
+	CL_PlaybackEvent(flags & ~(1 << 6), invoker, eventindex, delay, origin, angles, f1, f2, i1, i2, b1, b2);
+}
 static struct msurface_s *PM_TraceSurface(int ground, float *vstart, float *vend) { return NULL; }
 
 // ---------------------------------------------------------------- setup
@@ -649,4 +656,99 @@ void SV_RunPlayerCmd(edict_t *pl, usercmd_t *cmd)
 	gGlobals.time = (float)sv.time;
 	gEntityInterface.pfnPlayerPostThink(pl);
 	gEntityInterface.pfnCmdEnd(pl);
+}
+
+// ---------------------------------------------------------------- traces for client events and temp entities
+
+// The client DLL's event code and its temp entity physics trace through the same playermove
+// structure (EV_PushPMStates, EV_SetSolidPlayers, EV_PlayerTrace). Here the "client's view" is the
+// server's edicts: every solid entity at any distance, not just the ones near the player.
+static physent_t *saved_physents;
+static int saved_num, saved_cap, saved_hull;
+static qboolean pushed;
+
+void SV_PM_PushClientState(void)
+{
+	if (!pm)
+		return;
+	if (saved_cap < pm->numphysent) {
+		saved_cap = pm->numphysent;
+		saved_physents = Mem_Realloc(saved_physents, sizeof(physent_t) * saved_cap);
+	}
+	memcpy(saved_physents, pm->physents, sizeof(physent_t) * pm->numphysent);
+	saved_num = pm->numphysent;
+	saved_hull = pm->usehull;
+	pushed = true;
+
+	pm->numphysent = 0;
+	FillPhysent(&pm->physents[pm->numphysent++], sv.edicts);
+	for (int i = sv.maxclients + 1; i < sv.num_edicts && pm->numphysent < MAX_PHYSENTS; i++) {
+		edict_t *e = EDICT_NUM(i);
+		if (e->free || !ED_Linked(e) || e->v.solid == SOLID_NOT || e->v.solid == SOLID_TRIGGER)
+			continue;
+		FillPhysent(&pm->physents[pm->numphysent++], e);
+	}
+}
+
+void SV_PM_PopClientState(void)
+{
+	if (!pm || !pushed)
+		return;
+	memcpy(pm->physents, saved_physents, sizeof(physent_t) * saved_num);
+	pm->numphysent = saved_num;
+	pm->usehull = saved_hull;
+	pushed = false;
+}
+
+// players become solid, except one (0-based player number; -1 = none skipped)
+void SV_PM_SetSolidPlayers(int skip)
+{
+	if (!pm)
+		return;
+	for (int i = 1; i <= sv.maxclients && pm->numphysent < MAX_PHYSENTS; i++) {
+		edict_t *e = EDICT_NUM(i);
+		if (i - 1 == skip || e->free || !ED_Linked(e) || e->v.solid == SOLID_NOT || e->v.health <= 0)
+			continue;
+		FillPhysent(&pm->physents[pm->numphysent++], e);
+	}
+}
+
+void SV_PM_SetTraceHull(int hull)
+{
+	if (pm)
+		pm->usehull = (hull >= 0 && hull < 4) ? hull : 2;
+}
+
+void SV_PM_ClientTrace(const float *start, const float *end, int flags, int ignore_pe, pmtrace_t *tr)
+{
+	if (!pm) {
+		memset(tr, 0, sizeof(*tr));
+		tr->fraction = 1;
+		tr->ent = -1;
+		VectorCopy(end, tr->endpos);
+		return;
+	}
+	*tr = PlayerTrace(start, end, flags, UseHull(), ignore_pe, NULL);
+}
+
+physent_t *SV_PM_GetPhysent(int i)
+{
+	return (pm && i >= 0 && i < pm->numphysent) ? &pm->physents[i] : NULL;
+}
+
+void SV_PM_HullBounds(int hull, float *mins, float *maxs)
+{
+	if (!pm || hull < 0 || hull > 3) {
+		VectorClear(mins);
+		VectorClear(maxs);
+		return;
+	}
+	VectorCopy(pm->player_mins[hull], mins);
+	VectorCopy(pm->player_maxs[hull], maxs);
+}
+
+// the client DLL's own pm_shared (texture types for impact sounds) is set up with the same structure
+playermove_t *SV_PlayerMove(void)
+{
+	return pm;
 }

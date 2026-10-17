@@ -579,6 +579,8 @@ void R_AddBrushEntity(int submodel, const vec3_t origin, const vec3_t angles, in
 void R_ClearFrameEntities(void);
 rentity_t *R_AddFrameEntity(void);
 extern refdef_t r_refdef;
+void R_AddBeamEntity(const edict_t *e, model_t *sprite);   // r_beam.c
+void CL_EntityStudioEvents(int index, const rentity_t *r);  // cl_tent.c
 
 void SV_SetupRenderEntities(void)
 {
@@ -595,6 +597,12 @@ void SV_SetupRenderEntities(void)
 		model_t *m = SV_ModelForIndex(e->v.modelindex);
 		if (!m)
 			continue;
+		// the game's beams (CBeam): a sprite drawn between two points or entities
+		if (e->v.flags & FL_CUSTOMENTITY) {
+			if (m->type == mod_sprite)
+				R_AddBeamEntity(e, m);
+			continue;
+		}
 		int color[3] = { (int)e->v.rendercolor[0], (int)e->v.rendercolor[1], (int)e->v.rendercolor[2] };
 		if (m->type == mod_brush) {
 			R_AddBrushEntity(m->submodel, e->v.origin, e->v.angles, e->v.rendermode, (int)e->v.renderamt, color);
@@ -619,6 +627,7 @@ void SV_SetupRenderEntities(void)
 			// the game sets frame at animtime; the renderer runs it forward on its own clock
 			r->framerate = e->v.framerate;
 			r->animtime = r_refdef.time - (sv.time - e->v.animtime);
+			CL_EntityStudioEvents(i, r);   // muzzle flashes and sparks from the model's animation
 		} else {
 			r->framerate = 0;   // the game animates sprites itself
 			r->animtime = r_refdef.time;

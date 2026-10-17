@@ -20,38 +20,46 @@ typedef struct {
 static wadfile_t *wads;
 static int wads_count;
 
-static void LoadWad(const char *name)
+static qboolean ReadWad(const char *name, wadfile_t *w)
 {
-	for (int i = 0; i < wads_count; i++)
-		if (!stricmp(wads[i].name, name))
-			return;
 	size_t size;
 	unsigned char *data = FS_LoadFile(name, &size);
 	if (!data) {
 		// maps often list WADs that were only on the mapper's machine; GoldSrc ignores them too
 		Con_DPrintf("WAD %s not found\n", name);
-		return;
+		return false;
 	}
 	if (size < 12 || memcmp(data, "WAD3", 4)) {
 		Con_Warnf("%s isn't a WAD3 file\n", name);
 		Mem_Free(data);
-		return;
+		return false;
 	}
 	int numlumps = *(int *)(data + 4);
 	int ofs = *(int *)(data + 8);
 	if (numlumps < 0 || ofs < 0 || (size_t)ofs + (size_t)numlumps * sizeof(wadlump_t) > size) {
 		Con_Warnf("%s is damaged\n", name);
 		Mem_Free(data);
-		return;
+		return false;
 	}
-	wads = Mem_Realloc(wads, sizeof(*wads) * (wads_count + 1));
-	wadfile_t *w = &wads[wads_count++];
 	Q_strncpy(w->name, name, sizeof(w->name));
 	w->data = data;
 	w->size = size;
 	w->lumps = (wadlump_t *)(data + ofs);
 	w->numlumps = numlumps;
 	Con_DPrintf("Loaded %s (%d textures)\n", name, numlumps);
+	return true;
+}
+
+static void LoadWad(const char *name)
+{
+	for (int i = 0; i < wads_count; i++)
+		if (!stricmp(wads[i].name, name))
+			return;
+	wadfile_t w;
+	if (!ReadWad(name, &w))
+		return;
+	wads = Mem_Realloc(wads, sizeof(*wads) * (wads_count + 1));
+	wads[wads_count++] = w;
 }
 
 // "\half-life\valve\halflife.wad;\half-life\valve\liquids.wad" -> halflife.wad, liquids.wad
@@ -84,6 +92,40 @@ void Wad_FreeAll(void)
 	Mem_Free(wads);
 	wads = NULL;
 	wads_count = 0;
+}
+
+static miptex_t *FindIn(const wadfile_t *w, const char *name, size_t *size)
+{
+	for (int j = 0; j < w->numlumps; j++) {
+		wadlump_t *l = &w->lumps[j];
+		if (l->type != TYP_MIPTEX || l->compression)
+			continue;
+		char lname[17];
+		memcpy(lname, l->name, 16);
+		lname[16] = 0;
+		if (stricmp(lname, name))
+			continue;
+		if (l->filepos < 0 || l->disksize < (int)sizeof(miptex_t) || (size_t)l->filepos + l->disksize > w->size)
+			return NULL;
+		*size = (size_t)l->disksize;
+		return (miptex_t *)(w->data + l->filepos);
+	}
+	return NULL;
+}
+
+// a WAD kept apart from the map's list, for the whole session (decals.wad)
+void *Wad_Open(const char *name)
+{
+	wadfile_t *w = Mem_Alloc(sizeof(*w));
+	if (ReadWad(name, w))
+		return w;
+	Mem_Free(w);
+	return NULL;
+}
+
+miptex_t *Wad_FindIn(void *wad, const char *name, size_t *size)
+{
+	return wad ? FindIn(wad, name, size) : NULL;
 }
 
 miptex_t *Wad_FindMiptex(const char *name, size_t *size)

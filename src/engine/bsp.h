@@ -117,6 +117,7 @@ typedef struct {
 	unsigned char *visdata;       size_t vissize;
 	unsigned char *lightdata;     size_t lightsize;
 	bspentity_t *entities;        int numentities;
+	char        *entitytext;      // the entity lump as text (the client DLL parses it too)
 	GLuint      *lightmaps;       int numlightmaps;
 	unsigned char **lightmap_pixels;   // CPU copy of each page (RGBA)
 	char         skyname[64];
@@ -139,3 +140,11 @@ void        R_SetLightStyle(int style, const char *pattern);
 void        R_AnimateLightStyles(double time);
 // true if any leaf the box touches is in the current view's PVS (r_world.c)
 qboolean    R_BoxVisible(const vec3_t mins, const vec3_t maxs);
+
+// decals (r_decal.c)
+void        R_InitDecals(void);
+int         R_DecalIndex(const char *name);   // the game's, the client's and the messages' decal numbers
+void        R_DecalShoot(int tex, int entity, int modelIndex, const float *pos, int flags, float scale);
+void        R_DecalRemoveAll(int tex);
+void        R_ClearDecals(void);
+void        R_DrawDecals(int first, int count, const float *viewer, qboolean world_pass);

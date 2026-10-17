@@ -63,6 +63,8 @@ typedef struct {
 void      Wad_LoadList(const char *wadlist);   // worldspawn "wad" key
 void      Wad_FreeAll(void);
 miptex_t *Wad_FindMiptex(const char *name, size_t *size);
+void     *Wad_Open(const char *name);                  // kept apart from the map's WADs (decals.wad)
+miptex_t *Wad_FindIn(void *wad, const char *name, size_t *size);
 // Converts a miptex (with its palette) to RGBA; '{' textures get transparency
 unsigned char *Miptex_ToRGBA(const miptex_t *mt, size_t size);
 
@@ -80,3 +82,6 @@ qboolean R_CullBox(const vec3_t mins, const vec3_t maxs);
 // cl_main.c: the client DLL's view and the weapon in your hands
 qboolean CL_CalcRefdef(vec3_t vieworg, vec3_t viewangles);
 void     CL_DrawViewModel(void);
+void     CL_CaptureViewMatrices(void);
+void     CL_AddEntities(void);
+void     CL_DrawEffects(void);

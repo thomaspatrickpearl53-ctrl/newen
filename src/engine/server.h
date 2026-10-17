@@ -129,8 +129,17 @@ const char *LuaG_EntityKeyValue(const char *classname, const char *key, const ch
 
 // sv_pmove.c
 void        SV_InitPlayerMove(void);                      // after the game DLL loads
+playermove_t *SV_PlayerMove(void);                        // NULL before then
 void        SV_RunPlayerCmd(edict_t *pl, usercmd_t *cmd);
 qboolean    SV_SetPlayerPos(const vec3_t eye, const vec3_t angles);   // false if there's no player
+// the client's traces (event API): push swaps in every solid entity, pop restores the movement set
+void        SV_PM_PushClientState(void);
+void        SV_PM_PopClientState(void);
+void        SV_PM_SetSolidPlayers(int skip);
+void        SV_PM_SetTraceHull(int hull);
+void        SV_PM_ClientTrace(const float *start, const float *end, int flags, int ignore_pe, pmtrace_t *tr);
+physent_t  *SV_PM_GetPhysent(int i);
+void        SV_PM_HullBounds(int hull, float *mins, float *maxs);
 
 // cl_input.c (temporary: client.dll owns movement input in GoldSrc)
 void        CL_InitInput(void);

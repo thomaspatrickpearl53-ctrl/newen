@@ -5,13 +5,10 @@
 // one process, so "network" messages from the game DLL are queued here and handed to the client's
 // message hooks at the start of each client frame.
 //
-// Not yet: sound, client-side events (muzzle flashes, shells), temp entities, the studio model
-// interface (the engine draws models itself), titles.txt, screen shake.
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#include "client_api.h"
-#include "server.h"
+// Events, temp entities and the other effects are in cl_event.c, cl_tent.c, r_part.c, r_beam.c,
+// r_decal.c; titles, screen fade and shake in cl_view.c; the triangle API in cl_tri.c.
+// Not yet: sound, the studio model interface (the engine draws models itself), dynamic lights.
+#include "cl_local.h"
 
 #pragma warning(disable: 4152)   // GetProcAddress results become function pointers
 
@@ -26,9 +23,9 @@ movevars_t *SV_MoveVars(void);
 const char *Key_KeynameForBinding(const char *binding);
 
 static HMODULE client_dll;
-static cldll_exports_t cl;
+cldll_exports_t cl;
 static cl_enginefunc_t cl_funcs;
-static qboolean client_ok;
+qboolean client_ok;
 static qboolean map_ready;   // HUD_VidInit has run for the current map
 
 static triangleapi_t tri_api;
@@ -40,21 +37,19 @@ static voicetweak_t voice_api;
 
 static cl_entity_t *cl_entities;
 static int cl_entities_count;
-static cl_entity_t cl_viewent;
+cl_entity_t cl_viewent;
 static usercmd_t last_cmd;
-static double cl_time, cl_oldtime;
+double cl_time, cl_oldtime;
 static cvar_t *crosshair, *cl_drawhud;
 
 qboolean CL_HasClient(void) { return client_ok; }
 
 // ---------------------------------------------------------------- guarded calls into the DLL
 
-// A crash in the client is turned into an error and the client is switched off, instead of
-// taking the engine down with it
-static char crash_where[256];
+char cl_crash_where[256];
 
-// remembers where it happened: module and offset, for finding the engine function at fault
-static int CrashFilter(EXCEPTION_POINTERS *ep)
+// remembers where a crash happened: module and offset, for finding the engine function at fault
+int CL_CrashFilter(EXCEPTION_POINTERS *ep)
 {
 	void *addr = ep->ExceptionRecord->ExceptionAddress;
 	HMODULE mod = NULL;
@@ -62,22 +57,13 @@ static int CrashFilter(EXCEPTION_POINTERS *ep)
 	if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)addr, &mod))
 		GetModuleFileNameA(mod, name, sizeof(name));
 	const char *base = strrchr(name, 92);   // backslash
-	snprintf(crash_where, sizeof(crash_where), "%s+0x%x (reading 0x%08lx)", base ? base + 1 : name,
+	snprintf(cl_crash_where, sizeof(cl_crash_where), "%s+0x%x (reading 0x%08lx)", base ? base + 1 : name,
 		(unsigned)((unsigned char *)addr - (unsigned char *)mod),
 		ep->ExceptionRecord->NumberParameters > 1 ? (unsigned long)ep->ExceptionRecord->ExceptionInformation[1] : 0ul);
+	Con_Errorf("Crash inside the client (exception 0x%08lx), call stack:\n", ep->ExceptionRecord->ExceptionCode);
+	Sys_LogException(ep);
 	return EXCEPTION_EXECUTE_HANDLER;
 }
-
-#define CLIENT_CALL(what, call) \
-	do { \
-		if (client_ok) { \
-			__try { call; } \
-			__except (CrashFilter(GetExceptionInformation())) { \
-				Con_Errorf("client.dll crashed in %s at %s; the client is now off\n", what, crash_where); \
-				client_ok = false; \
-			} \
-		} \
-	} while (0)
 
 // ---------------------------------------------------------------- sprites (HUD)
 
@@ -165,8 +151,9 @@ static void DrawSpriteFrame(model_t *m, int frame, int x, int y, const wrect_t *
 	glBindTexture(GL_TEXTURE_2D, f->gl->id);
 	glDisable(GL_ALPHA_TEST);
 	if (mode == SPRMODE_ADDITIVE) {
+		// weighted by opacity: alpha-test sprites (the crosshairs) keep a colour in their see-through pixels
 		glEnable(GL_BLEND);
-		glBlendFunc(GL_ONE, GL_ONE);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 	} else if (mode == SPRMODE_HOLES) {
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -257,7 +244,6 @@ static int crosshair_color[3];
 static float text_color[3] = { 1, 1, 1 };
 static char center_text[1024];
 static double center_time;
-static screenfade_t screen_fade;
 
 static void FillRGBA(int x, int y, int w, int h, int r, int g, int b, int a)
 {
@@ -356,8 +342,8 @@ static void CenterPrint(const char *s)
 	center_time = host_realtime;
 }
 
-static void GetScreenFade(screenfade_t *f) { if (f) *f = screen_fade; }
-static void SetScreenFade(screenfade_t *f) { if (f) screen_fade = *f; }
+static void GetScreenFade(screenfade_t *f) { if (f) CL_GetScreenFade(f); }
+static void SetScreenFade(screenfade_t *f) { if (f) CL_SetScreenFade(f); }
 
 // ---------------------------------------------------------------- cvars, commands, messages
 
@@ -370,7 +356,13 @@ static float GetCvarFloat(const char *n) { cvar_t *v = Cvar_Find(n); return v ? 
 static char *GetCvarString(const char *n) { cvar_t *v = Cvar_Find(n); return v ? v->string : ""; }
 static void ClCvar_SetValue(const char *n, float f) { Cvar_SetValue(n, f); }
 static void ClCvar_Set(const char *n, const char *v) { Cvar_Set(n, v); }
-static cvar_t *GetCvarPointer(const char *n) { return Cvar_Find(n); }
+static cvar_t *GetCvarPointer(const char *n)
+{
+	cvar_t *v = Cvar_Find(n);
+	if (!v)
+		Con_DPrintf("client.dll asked for cvar %s, which doesn't exist\n", n);
+	return v;
+}
 
 static int AddCommand(const char *name, void (*fn)(void))
 {
@@ -440,7 +432,7 @@ static void GetPlayerInfo(int ent_num, hud_player_info_t *info)
 static void PlaySoundByName(const char *s, float vol) {}
 static void PlaySoundByIndex(int i, float vol) {}
 static void PlaySoundByNameAtLocation(const char *s, float vol, float *org) {}
-static client_textmessage_t *TextMessageGet(const char *name) { return NULL; }
+static client_textmessage_t *TextMessageGet(const char *name) { return CL_TextMessageGet(name); }
 
 static void ClAngleVectors(const float *a, float *f, float *r, float *u) { AngleVectors(a, f, r, u); }
 
@@ -493,19 +485,20 @@ static void ClKey_Event(int key, int down) { Key_Event(key, down != 0); }
 static void GetMousePosition(int *x, int *y) { SDL_GetMouseState(x, y); }
 static int IsNoClipping(void) { edict_t *pl = SV_LocalPlayer(); return pl && pl->v.movetype == MOVETYPE_NOCLIP; }
 
-static cl_entity_t *GetEntityByIndex(int i)
+cl_entity_t *CL_EntityByIndex(int i)
 {
 	if (i < 0 || i >= cl_entities_count)
 		return NULL;
 	return &cl_entities[i];
 }
 
-static cl_entity_t *GetLocalPlayer(void) { return GetEntityByIndex(1); }
+static cl_entity_t *GetEntityByIndex(int i) { return CL_EntityByIndex(i); }
+static cl_entity_t *GetLocalPlayer(void) { return CL_EntityByIndex(1); }
 static cl_entity_t *GetViewModel(void) { return &cl_viewent; }
 static float GetClientTime(void) { return (float)cl_time; }
 static float GetClientOldTime(void) { return (float)cl_oldtime; }
-static void V_CalcShake(void) {}
-static void V_ApplyShake(float *origin, float *angles, float factor) {}
+static void V_CalcShake(void) { CL_CalcShake(); }
+static void V_ApplyShake(float *origin, float *angles, float factor) { CL_ApplyShake(origin, angles, factor); }
 
 static int ClPM_PointContents(float *p, int *truecontents)
 {
@@ -528,7 +521,7 @@ static struct model_s *CL_LoadModel(const char *name, int *index)
 	return Mod_ForName(name, false);
 }
 
-static int CL_CreateVisibleEntity(int type, cl_entity_t *ent)
+int CL_AddVisibleEntity(cl_entity_t *ent)
 {
 	if (!ent || !ent->model || ent->model->type == mod_brush)
 		return 0;
@@ -551,11 +544,16 @@ static int CL_CreateVisibleEntity(int type, cl_entity_t *ent)
 	return 1;
 }
 
+static int CL_CreateVisibleEntity(int type, cl_entity_t *ent) { return CL_AddVisibleEntity(ent); }
+
 static unsigned short ClPrecacheEvent(int type, const char *name) { return SV_PrecacheEvent(type, name); }
 static void ClPlaybackEvent(int flags, const edict_t *invoker, unsigned short index, float delay, float *origin, float *angles,
-	float f1, float f2, int i1, int i2, int b1, int b2) {}
+	float f1, float f2, int i1, int i2, int b1, int b2)
+{
+	CL_PlaybackEvent(flags | FEV_CLIENT, invoker, index, delay, origin, angles, f1, f2, i1, i2, b1, b2);
+}
 
-static void SetViewModelAnim(int anim, int body)
+void CL_SetViewModelAnim(int anim, int body)
 {
 	cl_viewent.curstate.sequence = anim;
 	cl_viewent.curstate.body = body;
@@ -564,26 +562,12 @@ static void SetViewModelAnim(int anim, int body)
 	cl_viewent.curstate.animtime = (float)cl_time;
 }
 
-static void WeaponAnim(int anim, int body) { SetViewModelAnim(anim, body); }
+static void WeaponAnim(int anim, int body) { CL_SetViewModelAnim(anim, body); }
 
 static unsigned rng = 0x2545F491u;
 static unsigned NextRand(void) { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; }
 static float ClRandomFloat(float lo, float hi) { return lo + (hi - lo) * ((NextRand() >> 8) / 16777216.0f); }
 static long ClRandomLong(long lo, long hi) { return hi <= lo ? lo : lo + (long)(NextRand() % (unsigned)(hi - lo + 1)); }
-
-typedef struct { char name[64]; pfnEventHook fn; } evhook_t;
-static evhook_t *evhooks;
-static int evhooks_count;
-
-static void HookEvent(const char *name, pfnEventHook fn)
-{
-	if (!name)
-		return;
-	evhooks = Mem_Realloc(evhooks, sizeof(evhook_t) * (evhooks_count + 1));
-	Q_strncpy(evhooks[evhooks_count].name, name, sizeof(evhooks[0].name));
-	evhooks[evhooks_count].fn = fn;
-	evhooks_count++;
-}
 
 static int ClCon_IsVisible(void) { return Con_IsVisible(); }
 static const char *GetGameDirectory(void) { return FS_GameDir(); }
@@ -738,7 +722,7 @@ static void InitEngineFuncs(void)
 	f->pfnWeaponAnim = WeaponAnim;
 	f->pfnRandomFloat = ClRandomFloat;
 	f->pfnRandomLong = ClRandomLong;
-	f->pfnHookEvent = HookEvent;
+	f->pfnHookEvent = CL_HookEvent;
 	f->Con_IsVisible = ClCon_IsVisible;
 	f->pfnGetGameDirectory = GetGameDirectory;
 	f->pfnGetCvarPointer = GetCvarPointer;
@@ -804,15 +788,10 @@ static void InitEngineFuncs(void)
 	for (int i = 0; i < 32; i++)
 		f->pfnReserved[i] = ApiStub;
 
-	// the other API tables: harmless stubs until each part is written
-	tri_api.version = 1;
-	event_api.version = 1;
-	for (int i = 0; i < 48; i++) {
-		tri_api.fn[i] = (void *)ApiStub;
-		event_api.fn[i] = (void *)ApiStub;
-	}
-	for (int i = 0; i < 128; i++)
-		efx_api.fn[i] = (void *)ApiStub;
+	CL_InitTriAPI(&tri_api);
+	CL_InitEfxAPI(&efx_api);
+	CL_InitEventAPI(&event_api);
+	// the rest: harmless stubs until each part is written
 	for (int i = 0; i < 16; i++) {
 		demo_api.fn[i] = (void *)ApiStub;
 		voice_api.fn[i] = (void *)ApiStub;
@@ -843,7 +822,16 @@ void CL_QueueMessage(int type, const unsigned char *data, int len)
 		memcpy(m->data, data, len);
 }
 
+#define SVC_TEMPENTITY 23
 #define SVC_WEAPONANIM 35
+
+pfnUserMsgHook CL_FindMessageHook(const char *name)
+{
+	for (int k = 0; name && k < msghooks_count; k++)
+		if (!strcmp(msghooks[k].name, name))
+			return msghooks[k].fn;
+	return NULL;
+}
 
 static void DispatchMessages(void)
 {
@@ -854,16 +842,17 @@ static void DispatchMessages(void)
 		unsigned char *data = m->data;
 		if (type >= 64) {
 			const char *name = SV_UserMsgName(type);
-			pfnUserMsgHook fn = NULL;
-			for (int k = 0; name && k < msghooks_count; k++)
-				if (!strcmp(msghooks[k].name, name))
-					fn = msghooks[k].fn;
+			pfnUserMsgHook fn = CL_FindMessageHook(name);
+			// a few messages are the engine's own in GoldSrc (ScreenFade, ScreenShake)
+			qboolean engine = !fn && name && CL_EngineMessage(name, data, len);
 			if (developer->value > 1)
-				Con_Printf("client message %s (%d bytes)%s\n", name ? name : "?", len, fn ? "" : ", not hooked");
+				Con_Printf("client message %s (%d bytes)%s\n", name ? name : "?", len, fn || engine ? "" : ", not hooked");
 			if (fn)
 				CLIENT_CALL(name, fn(name, len, data));
 		} else if (type == SVC_WEAPONANIM && len >= 2) {
-			SetViewModelAnim(data[0], data[1]);
+			CL_SetViewModelAnim(data[0], data[1]);
+		} else if (type == SVC_TEMPENTITY) {
+			CL_ParseTempEntity(data, len);
 		}
 		Mem_Free(msgqueue[i].data);
 	}
@@ -994,29 +983,34 @@ qboolean CL_CalcRefdef(vec3_t vieworg, vec3_t viewangles)
 	return true;
 }
 
-// the weapon in your hands, drawn last and squashed into the near depth range so it never
-// pokes into walls
-void CL_DrawViewModel(void)
+// the weapon in your hands, as the renderer draws it
+qboolean CL_BuildViewModel(rentity_t *r)
 {
 	edict_t *pl = SV_LocalPlayer();
 	if (!client_ok || !pl || !cl_viewent.model || pl->v.health <= 0 || cl_viewent.model->type != mod_studio)
-		return;
-	if (Cvar_VariableValue("r_drawviewmodel") == 0)
-		return;
+		return false;
+	memset(r, 0, sizeof(*r));
+	r->model = cl_viewent.model;
+	VectorCopy(cl_viewent.origin, r->origin);
+	VectorCopy(cl_viewent.angles, r->angles);
+	r->angles[0] = -r->angles[0];   // the renderer flips studio pitch again; the view model is already right
+	r->sequence = cl_viewent.curstate.sequence;
+	r->frame = 0;
+	r->framerate = cl_viewent.curstate.framerate ? cl_viewent.curstate.framerate : 1;
+	r->animtime = r_refdef.time - (cl_time - cl_viewent.curstate.animtime);
+	r->body = cl_viewent.curstate.body;
+	r->skin = cl_viewent.curstate.skin;
+	r->renderamt = 255;
+	R_StudioInitControllers(r->model, r);
+	return true;
+}
+
+// drawn last and squashed into the near depth range so it never pokes into walls
+void CL_DrawViewModel(void)
+{
 	rentity_t r;
-	memset(&r, 0, sizeof(r));
-	r.model = cl_viewent.model;
-	VectorCopy(cl_viewent.origin, r.origin);
-	VectorCopy(cl_viewent.angles, r.angles);
-	r.angles[0] = -r.angles[0];   // the renderer flips studio pitch again; the view model is already right
-	r.sequence = cl_viewent.curstate.sequence;
-	r.frame = 0;
-	r.framerate = cl_viewent.curstate.framerate ? cl_viewent.curstate.framerate : 1;
-	r.animtime = r_refdef.time - (cl_time - cl_viewent.curstate.animtime);
-	r.body = cl_viewent.curstate.body;
-	r.skin = cl_viewent.curstate.skin;
-	r.renderamt = 255;
-	R_StudioInitControllers(r.model, &r);
+	if (!CL_BuildViewModel(&r) || Cvar_VariableValue("r_drawviewmodel") == 0)
+		return;
 	glDepthRange(0, 0.3);
 	glEnable(GL_CULL_FACE);
 	glCullFace(GL_FRONT);
@@ -1062,6 +1056,7 @@ void CL_Frame(double frametime)
 	}
 	UpdateEntities();
 	DispatchMessages();
+	CL_FireEvents();
 	CLIENT_CALL("HUD_Frame", cl.HUD_Frame(cl_time));
 }
 
@@ -1069,6 +1064,8 @@ void CL_DrawHUD(void)
 {
 	if (!client_ok)
 		return;
+	if (sv.active && map_ready)
+		CL_DrawScreenFade();
 	if (sv.active && map_ready && cl_drawhud->value) {
 		edict_t *pl = SV_LocalPlayer();
 		if (pl) {
@@ -1124,6 +1121,13 @@ void CL_MapStarted(void)
 	if (!client_ok)
 		return;
 	memset(&cl_viewent, 0, sizeof(cl_viewent));
+	// the client's pm_shared needs its texture types before any event looks one up (GoldSrc does
+	// this once at startup; here the playermove structure exists once the game DLL is loaded)
+	static qboolean pm_ready;
+	if (!pm_ready && cl.HUD_PlayerMoveInit && SV_PlayerMove()) {
+		CLIENT_CALL("HUD_PlayerMoveInit", cl.HUD_PlayerMoveInit(SV_PlayerMove()));
+		pm_ready = true;
+	}
 	CLIENT_CALL("HUD_VidInit", cl.HUD_VidInit());
 	CLIENT_CALL("HUD_Reset", cl.HUD_Reset());
 	map_ready = client_ok;
@@ -1133,6 +1137,11 @@ void CL_MapEnded(void)
 {
 	map_ready = false;
 	CL_ClearSprites();
+	CL_ClearTempEnts();
+	CL_ClearEvents();
+	CL_ClearView();
+	R_ClearParticles();
+	R_ClearBeams();
 	for (int i = 0; i < msgqueue_count; i++)
 		Mem_Free(msgqueue[i].data);
 	msgqueue_count = 0;
@@ -1156,10 +1165,16 @@ void CL_Init(void)
 	Cvar_Get("sv_allow_shaders", "1", FCVAR_SERVER, NULL);
 	// the 25th anniversary client reads raw mouse movement from SDL when this is on (an engine cvar there)
 	Cvar_Get("m_rawinput", "1", FCVAR_ARCHIVE, "1 = the client reads raw mouse movement (SDL relative mode)");
+	// client-side weapon prediction: not supported yet, so off (the server's weapon effects are shown)
+	Cvar_Get("cl_lw", "0", FCVAR_READONLY, "client-side weapon prediction (not supported yet)");
 	crosshair = Cvar_Get("crosshair", "1", FCVAR_ARCHIVE, "draws the crosshair");
 	cl_drawhud = Cvar_Get("hud_draw", "1", FCVAR_ARCHIVE, "draws the client DLL's HUD");
 	Cvar_Get("r_drawviewmodel", "1", FCVAR_ARCHIVE, "draws the weapon in your hands");
 	Cvar_Get("default_fov", "90", FCVAR_ARCHIVE, "field of view the HUD asks for");
+	CL_InitView();
+	CL_InitTempEnts();
+	R_InitParticles();
+	R_InitBeams();
 
 	char path[MAX_OSPATH];
 	if (COM_CheckParm("-noclientdll") || COM_CheckParm("-nogamedll") || !FS_FullPath("cl_dlls/client.dll", path, sizeof(path))) {
@@ -1227,6 +1242,8 @@ void CL_Init(void)
 		CL_InitInput();
 		return;
 	}
+	CL_LoadTitles();
+	CL_InitStudioAPI();
 	Con_Printf("Client DLL: cl_dlls/client.dll\n");
 }
 

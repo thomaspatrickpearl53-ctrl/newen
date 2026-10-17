@@ -114,10 +114,13 @@ void R_RenderView(void)
 	ComputeFov();
 	SetupFrustum();
 	SetupGL();
+	CL_CaptureViewMatrices();
 	if (SV_Active())
 		SV_SetupRenderEntities();
+	CL_AddEntities();   // the client's temp entities and the view model's events
 	R_DrawWorld();
 	R_DrawEntities();
+	CL_DrawEffects();   // beams, particles, the client's triangles
 	CL_DrawViewModel();
 }
 

@@ -64,11 +64,19 @@ add_executable(newen WIN32
 	src/engine/sv_pmove.c
 	src/engine/cl_input.c
 	src/engine/cl_main.c
+	src/engine/cl_event.c
+	src/engine/cl_tent.c
+	src/engine/cl_tri.c
+	src/engine/cl_studio.c
+	src/engine/cl_view.c
+	src/engine/r_part.c
+	src/engine/r_beam.c
+	src/engine/r_decal.c
 	src/engine/vgui_bridge.c
 )
 target_include_directories(newen PRIVATE src/engine third_party/stb)
 target_compile_definitions(newen PRIVATE _CRT_SECURE_NO_WARNINGS)
-target_link_libraries(newen PRIVATE lua54 SDL2main SDL2 opengl32 winmm gdi32 advapi32)
+target_link_libraries(newen PRIVATE lua54 SDL2main SDL2 opengl32 winmm gdi32 advapi32 dbghelp)
 if(MSVC)
 	target_compile_options(newen PRIVATE /W4 /wd4100 /wd4996)
 	# SDL2main.lib was built against an older CRT

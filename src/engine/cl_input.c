@@ -81,6 +81,8 @@ void CL_CreateCmdEngine(float frametime, usercmd_t *cmd)
 	int msec = (int)(frametime * 1000.0f + 0.5f);
 	cmd->msec = (unsigned char)(msec < 1 ? 1 : msec > 255 ? 255 : msec);
 	VectorCopy(cl_viewangles, cmd->viewangles);
+	if (!cl_forwardspeed)
+		return;   // the client DLL owned input and was switched off after a crash: stand still
 
 	qboolean typing = Con_IsVisible();
 	if (!typing) {

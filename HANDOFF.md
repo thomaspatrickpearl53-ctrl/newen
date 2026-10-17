@@ -4,13 +4,14 @@ Everything someone new needs to pick this project up: what it is, what was decid
 out, how to build and test it, what works, what doesn't, and what comes next. Read `README.md` first for the
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
-Status as of 2026-10-17: **Phase 1, steps 1 to 4 are done; step 5 (client DLL) is under way.** The engine
-boots, has a full console and engine-level Lua, renders Half-Life maps, models and sprites, and runs the stock Steam
-`hl.dll`: it spawns every map's entities, monsters think, path-find and fight, doors and trains move, and the player
-walks with the DLL's own movement code (doors open, triggers fire, weapons can be picked up). Engine Lua can see
-and change the game: entities, traces, spawning, hooks. The stock `client.dll` now runs too (with `vgui.dll` hosted
-by the engine): its HUD, crosshair, input, view bob and view model work. Next: client-side events and effects (muzzle
-flashes, shells, decals), the triangle/efx/event APIs, then sound (step 6).
+Status as of 2026-10-17: **Phase 1, steps 1 to 4 are done; step 5 (client DLL) is under way (5a and 5b done).**
+The engine boots, has a full console and engine-level Lua, renders Half-Life maps, models and sprites, and runs the
+stock Steam `hl.dll`: it spawns every map's entities, monsters think, path-find and fight, doors and trains move, and
+the player walks with the DLL's own movement code. Engine Lua can see and change the game. The stock `client.dll` runs
+too (with `vgui.dll` hosted by the engine): HUD, crosshair, input, view bob, view model, and since 5b the client's
+effects: weapon events (muzzle flashes, shells, tracers, bullet holes), temp entities, particles, beams (egon, gauss,
+lasers), explosions, decals, titles.txt messages, screen fades and shakes. Next: VGUI mouse input and the owner's
+reported bugs, then step 6 (level changes, save/load, sound).
 
 ---
 
@@ -94,7 +95,8 @@ Command line: `-basedir <hl folder>`, `-game <mod>`, `-hd`, `-dev`, and `+comman
 like GoldSrc; negative numbers count as arguments).
 
 ### How testing has been done (automated, no human needed)
-Run the exe with a command script, let it quit itself, then read the log and look at screenshots:
+Run the exe with a command script, let it quit itself, then read the log and look at screenshots. If it crashes,
+the log ends with the call stack, and a failed assert's text is in `bin/userdata/stderr.log`:
 
 ```
 bin\newen.exe +map c2a5 +setpos 1856 300 350 20 200 0 +wait 30 +screenshot +wait 2 +quit
@@ -123,13 +125,13 @@ right to them; don't "fix" it.
 
 ## 6. Code map
 
-All engine code is in `src/engine/`, about 16,900 lines. One executable, no DLL split yet.
+All engine code is in `src/engine/`, about 21,700 lines. One executable, no DLL split yet.
 
 | File | Lines | What it does |
 |---|---|---|
-| `common.h` | 274 | Every shared declaration: memory, strings, cvar_t (GoldSrc layout), commands, console, keys (GoldSrc key numbers), filesystem, video, draw, Lua, host, renderer entry points |
+| `common.h` | 275 | Every shared declaration: memory, strings, cvar_t (GoldSrc layout), commands, console, keys (GoldSrc key numbers), filesystem, video, draw, Lua, host, renderer entry points |
 | `common.c` | 181 | `Mem_*` (zeroed alloc, never NULL), `va()`, wildcard match, growable `strbuf_t`, `COM_Parse` tokenizer, command-line `COM_CheckParm` |
-| `sys_win.c` | 126 | `main` (via SDL2main), timers (QPC), `Sys_Error` (message box + log), dirs/files, Steam path from the registry, dir listing |
+| `sys_win.c` | 216 | `main` (via SDL2main), timers (QPC), `Sys_Error` (message box + log), dirs/files, Steam path from the registry, dir listing. Crash reports: an unhandled exception, `abort()` or a pure virtual call writes the call stack (names from `newen.pdb`, module+offset for the game DLLs) to the console log; `Sys_LogException` does the same for crashes caught inside the client. The C runtime's messages (a failed `assert` in a game DLL) go to `bin/userdata/stderr.log` |
 | `host.c` | 209 | `Host_Init` order, the frame loop (fps cap, events, command buffer, camera, Lua, render, 2D), config writing (`newen_config.cfg`), `+commands` |
 | `cmd.c` | 406 | Command buffer (`;`/newline split, `wait`), tokenizer (`//` comments), commands (sorted list, `CMD_LUA` flag), aliases, `exec`, `find`, `cmdlist`. `cmd_defer_cvars`: while the saved config runs, unknown `name value` lines become pending cvar values |
 | `cvar.c` | 334 | Cvars in a hash plus the GoldSrc-style linked list; side table for default/description; pending values applied when a cvar is created later (so Lua cvars persist); `cvarlist`, `toggle`, `reset` |
@@ -140,31 +142,40 @@ All engine code is in `src/engine/`, about 16,900 lines. One executable, no DLL 
 | `draw.c` / `font_win.c` | 106 / 77 | 2D: filled rects and console text. The font is rasterized from a Windows font with GDI into an alpha atlas (ASCII 32-126, monospace) |
 | `lua_host.c` | 950 | The Lua VM (see section 7) |
 | `mathlib.h` | 61 | vec3 macros, `AngleVectors` (Quake conventions) |
-| `gl_local.h` | 82 | Renderer-internal: GL extension pointers (`qglActiveTexture`, buffers), texture API, WAD API, `refdef_t` |
+| `gl_local.h` | 87 | Renderer-internal: GL extension pointers (`qglActiveTexture`, buffers), texture API, WAD API, `refdef_t` |
 | `image.c` | 215 | stb_image loading through the FS, GL texture list, filters (`r_texturemode`, `r_anisotropy`), texture gamma table, checkerboard for missing textures, GL extension loading |
-| `wad.c` | 162 | WAD3 archives (loaded whole into memory), miptex lookup, miptex to RGBA (`{` transparency with color bleeding) |
-| `bsp.h` / `bsp.c` | 141 / 860 | BSP v30 loader into `world_t`: planes, textures (HD override, then embedded, then WAD), `+` animation chains, faces and extents, lightmap atlas packing (1024² pages, as many as needed), nodes/leafs/parents, PVS decompression, submodels, entity lump, light styles, skybox, the world VBO. Detects Blue Shift's swapped lumps |
-| `r_world.c` | 694 | Drawing: light style animation and lightmap re-upload of visible changed faces, PVS leaf marking, recursive node walk with frustum culling, surfaces sorted into (texture, lightmap page) batches drawn with `glDrawElements` from the VBO, two texture units (diffuse x lightmap), water (immediate mode, warped UVs, unlit), skybox (Quake 2 face orientation) plus sky faces written to depth only, brush entities from the entity lump with render modes and transparent sorting |
-| `model.h` | 312 | Studio (`studiohdr_t` and friends) and sprite file structures written from the documented formats; `model_t` (cache entry), `rentity_t` (what the renderer draws, with GoldSrc's render modes), and the model/studio/sprite/light/entity entry points |
-| `model.c` | 613 | Model cache (`Mod_ForName`; failures stay cached as `mod_bad` so they warn once; `Mod_ClearAll` on map change frees everything and its `TF_MODEL` textures). Studio loader: keeps the file in memory, range-checks every table, bone parents and vertex bones, loads `<name>T.mdl` textures and `<name>NN.mdl` sequence groups, decodes strips/fans into one triangle list per mesh, HD texture overrides. Sprite loader: palette per `texFormat`, single frames and groups. `mdlinfo`, `modellist` |
+| `wad.c` | 204 | WAD3 archives (loaded whole into memory), miptex lookup, miptex to RGBA (`{` transparency with color bleeding); `Wad_Open`/`Wad_FindIn` keep one WAD apart from the map's list (decals.wad) |
+| `bsp.h` / `bsp.c` | 150 / 864 | BSP v30 loader into `world_t`: planes, textures (HD override, then embedded, then WAD), `+` animation chains, faces and extents, lightmap atlas packing (1024² pages, as many as needed), nodes/leafs/parents, PVS decompression, submodels, entity lump, light styles, skybox, the world VBO. Detects Blue Shift's swapped lumps |
+| `r_world.c` | 702 | Drawing: light style animation and lightmap re-upload of visible changed faces, PVS leaf marking, recursive node walk with frustum culling, surfaces sorted into (texture, lightmap page) batches drawn with `glDrawElements` from the VBO, two texture units (diffuse x lightmap), water (immediate mode, warped UVs, unlit), skybox (Quake 2 face orientation) plus sky faces written to depth only, brush entities from the entity lump with render modes and transparent sorting |
+| `model.h` | 316 | Studio (`studiohdr_t` and friends) and sprite file structures written from the documented formats; `model_t` (cache entry; brush models keep the entity text at GoldSrc's offset 384, because the client's spectator code reads it there), `rentity_t` (what the renderer draws, with GoldSrc's render modes), and the model/studio/sprite/light/entity entry points |
+| `model.c` | 615 | Model cache (`Mod_ForName`; failures stay cached as `mod_bad` so they warn once; `Mod_ClearAll` on map change frees everything and its `TF_MODEL` textures). Studio loader: keeps the file in memory, range-checks every table, bone parents and vertex bones, loads `<name>T.mdl` textures and `<name>NN.mdl` sequence groups, decodes strips/fans into one triangle list per mesh, HD texture overrides. Sprite loader: palette per `texFormat`, single frames and groups. `mdlinfo`, `modellist` |
 | `r_studio.c` | 635 | Bone setup (RLE anim values, quaternion slerp between frames, 2-way sequence blending, bone controllers and mouth, motion bone zeroed, pitch flipped like GoldSrc), CPU skinning, GoldSrc-style lighting (ambient + shade from `R_LightPoint`, light from above, lambert 1.5 wrap; flatshade, fullbright), chrome UVs from the view axes, masked and additive meshes, entity render modes |
 | `r_sprite.c` | 165 | Sprite frames (groups by interval), the 5 orientation types, render modes, glows (constant screen size, hidden by `R_LineBlocked` with GoldSrc's 8-unit tolerance, no depth test) |
 | `r_light.c` | 104 | `R_LightPoint` (trace down 2048 units through the BSP, read the lightmap sample with light styles, same gamma table as the lightmaps) and `R_LineBlocked` (segment vs solid leaves) |
 | `r_ents.c` | 343 | The renderer's entity list: built from the entity lump (model keys plus a temporary classname-to-model preview table), frustum + PVS culling (`R_BoxVisible` in `r_world.c`), opaque first, then translucent far to near. `mdlview`, `r_entlist` |
 | `game_api.h` | 661 | Clean-room GoldSrc game interface: `entvars_t`, `edict_t`, `globalvars_t`, `TraceResult`, `KeyValueData`, `enginefuncs_t` (159 entries in order, plus 32 reserved slots in case a newer DLL copies a bigger table), `DLL_FUNCTIONS`, `NEW_DLL_FUNCTIONS`, constants. Static asserts check the sizes (entvars 676, edict 804) |
-| `server.h` | 151 | Server state (`sv`: edicts, precache lists, client info), `trace_t`/`hull_t`, entry points of the `sv_*.c` files |
-| `sv_main.c` | 818 | Loads the game DLL (`liblist.gam` `gamedll`, `GiveFnptrsToDll` is stdcall, `GetEntityAPI2`/`GetEntityAPI`, optional `GetNewDLLFunctions`), string pool (`string_t` = offset from an empty `pStringBase`), edict alloc/free (0.5 s reuse delay), precache lists (model 1 = world, 2.. = `*n`), map spawn (class export, `KeyValue`, `Spawn`; "angle" becomes "angles"), `ServerActivate`, 2 settling frames, local client connect, the ghost player, `SV_SetupRenderEntities` (edicts to the renderer every frame), commands `edicts`, `status`, `god`, `notarget`, `tracetest`, unknown commands to `pfnClientCommand` |
+| `server.h` | 160 | Server state (`sv`: edicts, precache lists, client info), `trace_t`/`hull_t`, entry points of the `sv_*.c` files |
+| `sv_main.c` | 827 | Loads the game DLL (`liblist.gam` `gamedll`, `GiveFnptrsToDll` is stdcall, `GetEntityAPI2`/`GetEntityAPI`, optional `GetNewDLLFunctions`), string pool (`string_t` = offset from an empty `pStringBase`), edict alloc/free (0.5 s reuse delay), precache lists (model 1 = world, 2.. = `*n`), map spawn (class export, `KeyValue`, `Spawn`; "angle" becomes "angles"), `ServerActivate`, 2 settling frames, local client connect, the ghost player, `SV_SetupRenderEntities` (edicts to the renderer every frame), commands `edicts`, `status`, `god`, `notarget`, `tracetest`, unknown commands to `pfnClientCommand` |
 | `sv_engfuncs.c` | 1371 | Every `enginefuncs_t` function. Real: precache, models, traces (line, hull, toss, model, texture), PVS (`FindClientInPVS`, `EntitiesInPVS`, fat PVS, `CheckVisibility`), entity search, private data, cvars (game cvars via `Cvar_RegisterExternal`), info strings, bone/attachment positions, CRC32, random, files, the game's own command buffer (`ServerCommand`/`ServerExecute`), `NameForFunction` via the DLL's export table. Stubs: sound, messages, events, deltas, voice, save/restore helpers |
 | `sv_world.c` | 433 | Collision: hulls from the BSP clipnodes (hull 0 built from the render nodes in `bsp.c`), box hull, `SV_HullPointContents`, `RecursiveHullCheck`, rotated brush entities, `SV_Move` (world + every linked edict: owner, monsterclip, ignore-glass, `ShouldCollide`), linking (`pfnSetAbsBox`, touched leafs for PVS, brush-shaped trigger touches) |
 | `sv_phys.c` | 711 | `SV_Physics`: `StartFrame`, then per movetype: push (move and rotate, blocking, riders), step (gravity, ground friction), toss/bounce/fly/missile, noclip, follow; think timing (`ltime` for pushers), `FL_KILLME` removal; monster movement: `SV_movestep` (step up/down 18), `SV_CheckBottom`, `SV_MoveToOrigin`, `SV_DropToFloor` |
-| `sv_pmove.c` | 652 | Player movement: fills `playermove_t` (player state, movevars from the `sv_*` cvars, physinfo, physents = world + solid entities within ~256 units, moveents = water/ladder brushes), all the pm callbacks (player traces against physents with the pm hull numbering stand/duck/point/large mapped to BSP hulls 1/3/0/2, `PM_TestPlayerPosition`, point contents incl. content brushes, `PM_HullForBsp`, `PM_TraceModel` into GoldSrc's trace_t layout, `memfgets`, files), then per command `CmdStart`, `PlayerPreThink`, think, `PM_Move`, copy back, link with trigger touches, touch what the move hit, `PlayerPostThink`, `CmdEnd` |
-| `cl_input.c` | 137 | **Temporary** (client.dll's job in GoldSrc): `+forward/+back/+moveleft/+moveright/+moveup/+movedown/+jump/+duck/+attack/+attack2/+use/+reload/+speed/+alt1/+showscores` and `impulse`, the `cl_*speed` cvars, `CL_CreateCmd` builds a `usercmd_t` each frame. `cl_viewangles` is the look direction (mouse) |
+| `sv_pmove.c` | 754 | Player movement: fills `playermove_t` (player state, movevars from the `sv_*` cvars, physinfo, physents = world + solid entities within ~256 units, moveents = water/ladder brushes), all the pm callbacks (player traces against physents with the pm hull numbering stand/duck/point/large mapped to BSP hulls 1/3/0/2, `PM_TestPlayerPosition`, point contents incl. content brushes, `PM_HullForBsp`, `PM_TraceModel` into GoldSrc's trace_t layout, `memfgets`, files), then per command `CmdStart`, `PlayerPreThink`, think, `PM_Move`, copy back, link with trigger touches, touch what the move hit, `PlayerPostThink`, `CmdEnd` |
+| `cl_input.c` | 139 | **Temporary** (client.dll's job in GoldSrc): `+forward/+back/+moveleft/+moveright/+moveup/+movedown/+jump/+duck/+attack/+attack2/+use/+reload/+speed/+alt1/+showscores` and `impulse`, the `cl_*speed` cvars, `CL_CreateCmd` builds a `usercmd_t` each frame. `cl_viewangles` is the look direction (mouse) |
 | `lua_local.h` | 17 | What `lua_host.c` shares with `lua_game.c`: `Lua_GetState`, `Lua_Call`, `Lua_Hook`, `LuaG_PushEntity` |
 | `lua_game.c` | 1202 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
-| `client_api.h` | 384 | Clean-room client interface: `cl_enginefunc_t` (the SDK order, plus the later Steam/HL25 additions and 32 reserved slots), `cl_entity_t` (3000 bytes), `entity_state_t` (340), `ref_params_t`, `client_data_t`, `SCREENINFO`, `client_sprite_t`, the client export table. The tri/efx/event/demo/net/voice API tables are padded arrays of stubs for now |
-| `cl_main.c` | 1236 | Loads client.dll (after vgui.dll), every `cl_enginefunc_t` function (HUD sprites with `hud.txt` parsing and normal/holes/additive drawing, FillRGBA (additive, like GoldSrc), text, cvars/commands, user message hooks, player info, entities for the client, `V_CalcRefdef` with `ref_params_t`, the view model, crosshair, center print), the user-message queue (game DLL messages are buffered in `sv_engfuncs.c` and dispatched at the start of the client frame; `svc_weaponanim` sets the view model animation), `CLIENT_CALL` (SEH guard: a crash in the client prints module+offset and turns the client off instead of killing the engine) |
+| `client_api.h` | 710 | Clean-room client interface: `cl_enginefunc_t` (the SDK order, plus the later Steam/HL25 additions and 32 reserved slots), `cl_entity_t` (3000 bytes), `entity_state_t` (340), `ref_params_t`, `client_data_t`, `SCREENINFO`, `client_sprite_t`, the client export table. The tri/efx/event/demo/net/voice API tables are padded arrays of stubs for now |
+| `cl_main.c` | 1253 | Loads client.dll (after vgui.dll), every `cl_enginefunc_t` function (HUD sprites with `hud.txt` parsing and normal/holes/additive drawing, FillRGBA (additive, like GoldSrc), text, cvars/commands, user message hooks, player info, entities for the client, `V_CalcRefdef` with `ref_params_t`, the view model, crosshair, center print), the user-message queue (game DLL messages are buffered in `sv_engfuncs.c` and dispatched at the start of the client frame; `svc_weaponanim` sets the view model animation, `svc_temp_entity` goes to `cl_tent.c`, unhooked ScreenFade/ScreenShake to `cl_view.c`), the API tables from the files below, `CL_CrashFilter` (with `CLIENT_CALL` in `cl_local.h`: a crash in the client logs its stack and turns the client off instead of killing the engine), `HUD_PlayerMoveInit` at the first map (the client's pm_shared needs its texture types before any event) |
 | `vgui_bridge.c` | 386 | Hosts vgui.dll: constructs `App(true)`, a full-screen root `Panel` and a `SurfaceBase` with our own 35-slot vtable (thiscall via `__fastcall` + dummy EDX), OpenGL drawing for rects, textures and text (glyphs from vgui's own `Font::getCharRGBA`), paint/clip stack from `getAbsExtents/getClipRect/getInset`. App's `main` and `platTick` are stubbed in a copied vtable. VGUI1 alpha is transparency (0 = opaque) |
-| `r_main.c` | 338 | View: Hor+ FOV, projection, Quake modelview, frustum planes, `R_CullBox`; the noclip camera; commands `map`, `maps`, `disconnect`, `viewpos`, `setpos`, `texlist` |
+| `cl_local.h` | 162 | What the client-side files share: client exports and time, `CLIENT_CALL`, TE_ numbers, the effect entry points |
+| `cl_event.c` | 231 | Events: `PlaybackEvent` (game, pm_shared or client) builds `event_args_t` (players shoot along `v_angle`), queued with delay and `FEV_UPDATE`, fired by name to the client's hooks in `CL_Frame`. The event API: traces through `sv_pmove.c`'s client view (every solid entity), `EV_KillEvents` marks instead of removing (it's called from inside hooks). FEV_NOTHOST events are played too (no client-side prediction) |
+| `cl_tent.c` | 1521 | Temp entities in fixed blocks (the client keeps pointers) on free/active lists; `HUD_TempEntUpdate` moves them and hands back visible ones. The whole efx API (models, sprites, muzzle flashes, sparks, blood, gibs, bubbles, projectiles, player attachments), `svc_temp_entity` parsing (all TE_ types), client events in model animations (5000+, fired by frame range with the last frame kept in `latched`), view model attachments every frame, `CL_GetEntityPoint` ("entity:attachment" packing) |
+| `r_part.c` | 677 | Particles from the Quake palette (`gfx/palette.lmp`): dots and streaks, the Quake ramps for fire and explosions, every particle effect of the efx API |
+| `r_beam.c` | 514 | Beams: points, entities, rings, disks/cylinders (radius grows with time), follow trails; noise or sine, scrolling sprite texture, additive. The game's CBeam entities (`FL_CUSTOMENTITY`) are drawn as beams each frame; widths are in tenths like the messages |
+| `r_decal.c` | 390 | Decals: one name list shared by the game (`DecalIndex`), the client and messages; decals.wad textures (index = opacity, last palette colour = colour); a decal is clipped to every surface polygon it lands on (texture-aligned), kept per surface in the brush model's own space, drawn after its surface with the lightmap. `r_decals` limit (permanent map decals kept), `decalcount` |
+| `cl_tri.c` | 244 | The triangle API (immediate-mode GL), WorldToScreen/ScreenToWorld from the view matrices captured each frame |
+| `cl_view.c` | 304 | titles.txt (`$position`, `$color`, timing...), TE_TEXTMESSAGE through "__NETMESSAGE__" slots and the client's HudText hook, ScreenFade (GoldSrc's fade timing, modulate) and ScreenShake (`V_CalcShake`/`V_ApplyShake`) |
+| `cl_studio.c` | 134 | The studio model API table given to the client at startup (`HUD_GetStudioModelInterface`). The engine still draws models; the table's queries are real (the egon asks `IsHardware`) and its drawing entries do nothing |
+| `r_main.c` | 341 | View: Hor+ FOV, projection, Quake modelview, frustum planes, `R_CullBox`; the noclip camera; commands `map`, `maps`, `disconnect`, `viewpos`, `setpos`, `texlist` |
 
 `base/lua/includes/init.lua` (231 lines) is the core Lua library (hook, timer, Color, draw helpers, string/table/math
 utilities). `base/lua/autorun/newen_welcome.lua` is the demo (watermark plus `newen_hello`).
@@ -232,11 +243,19 @@ opens.
   hitboxes aren't traced (bounding boxes only); `func_water`-style entity contents aren't in `SV_PointContents`;
   `MakeStatic` keeps studio models and sprites only. A few monsters report "stuck in wall" (headcrabs and a roach in
   c1a2, Big Momma in c4a2); compare with the real game before treating that as a bug.
-- **Client shortcuts (step 5a)**: the client's event hooks are registered but never called (no muzzle flashes,
-  shells, client-side sounds); `HUD_TempEntUpdate`, `HUD_DrawNormal/TransparentTriangles` and
-  `HUD_GetStudioModelInterface` aren't called (the engine draws all models itself); `TextMessageGet` returns NULL
-  (no titles.txt yet); screen fade and shake are stored but not drawn; `PlayerInfo_SetValueForKey` and `SetMousePos`
+- **Client shortcuts (after 5b)**: no sound (events, temp entities and messages skip their sounds); dynamic lights
+  are allocated but not drawn (muzzle flash and explosion light, TE_DLIGHT); the client's studio renderer is never
+  used (the engine draws models; HUD_GetStudioModelInterface only gets the API table); `cl_lw` is 0 (no client-side
+  weapon prediction, so the server's weapon entities are shown, e.g. the egon's CBeam); titles.txt text uses the
+  console font (GoldSrc draws titles bigger); spray logos aren't loaded; `PlayerInfo_SetValueForKey` and `SetMousePos`
   are no-ops; VGUI input (clicking menus) isn't wired up. The view model is drawn with depth range 0-0.3.
+- **Macros evaluate their arguments more than once** (`VectorCopy` and friends in `mathlib.h`): never put `++` or a
+  call with side effects inside them. `VectorCopy(a, out[count++])` in the decal clipper advanced by 3 and corrupted
+  the heap on every bullet hole.
+- **Tests and saved settings**: most cvars are archived, so a test script that sets one (`fps_max`, `r_decals`...)
+  changes the owner's config. Test scripts must set everything back before `quit`.
+- In developer mode, a cvar the client asks for that doesn't exist is printed: a missing engine cvar crashed the egon
+  (`cl_lw`, read through a NULL pointer).
 - The client's `CL_CreateMove` clears the usercmd, so the engine fills `msec` after calling it. `HUD_VidInit` runs
   before the server spawns the map, so InitHUD/ResetHUD from the player's spawn reach a ready HUD (the other order
   dropped them).
@@ -313,11 +332,15 @@ The original plan for step 4:
 crosshair), `CL_CreateMove` drives movement and mouse look, `V_CalcRefdef` places the view and the view model,
 user messages flow from the game DLL. See `cl_main.c`, `vgui_bridge.c`, `client_api.h`.
 
-**5b, next:** event dispatch (`PlaybackEvent` from the game DLL to the client's `pfnHookEvent` callbacks, with
-`event_args_t`), a real `event_api_t` and `efx_api_t` (temp entities, muzzle flashes, decals, beams) and
-`triangleapi_t`, `HUD_TempEntUpdate`, `svc_temp_entity` messages, titles.txt, screen fade/shake, VGUI mouse input.
-Then decide whether the client's studio renderer (`HUD_GetStudioModelInterface`, `engine_studio_api_t`) takes over
-model drawing.
+**5b, done:** events, the event/efx/triangle APIs, temp entities, particles, beams, decals, `svc_temp_entity`,
+titles.txt, screen fade and shake, the studio API table (the engine keeps drawing models). See the code map. Tested on
+c1a0d: the 9mm (muzzle flash, sparks, shells, bullet holes on a door), shotgun, egon and gauss beams from the gun
+barrel, a grenade (explosion sprite, smoke, scorch decal), env_fade/env_shake spawned from Lua, and the c1a0 chapter
+title. Fixed on the way: the client's pm_shared was never initialised (its assert fired on impact sounds), the
+world model's entity text wasn't where the client reads it, the HUD's additive sprites ignored alpha (the crosshair
+was a white box).
+
+**5c, next:** VGUI mouse input (clicking VGUI menus), titles in a bigger font, dynamic lights.
 
 The original plan for step 5:
 `client.dll`: `F` export/`Initialize(cl_enginefunc_t*)`, `HUD_*` callbacks, `cl_enginefunc_t`, triangle API, event API, efx API, studio interface (model rendering moves to the client), demo API, net API stubs, **VGUI1** (`vgui.dll` from the HL folder, `VGui_*` interfaces), view model, HUD sprites (`hud.txt`), `+forward` and other movement commands registered by the client.

@@ -246,11 +246,15 @@ typedef struct model_s {
 	union {
 		studiomodel_t studio;
 		spritemodel_t sprite;
+		// brush models: GoldSrc keeps the map's entity text here, and the client DLL reads it
+		// (its spectator code looks for info_player_start in the world model's entities)
+		struct { unsigned char unused[384 - 116]; char *entities; void *cache; } brush;
 	};
 } model_t;
 
 _Static_assert(offsetof(model_t, type) == 68 && offsetof(model_t, mins) == 84 && offsetof(model_t, radius) == 108,
 	"model_t must start like GoldSrc's");
+_Static_assert(offsetof(model_t, brush.entities) == 384, "brush models keep the entity text where GoldSrc does");
 
 void     Mod_Init(void);
 model_t *Mod_ForName(const char *name, qboolean crash);   // cached; "*n" for brush submodels

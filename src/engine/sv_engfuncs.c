@@ -687,18 +687,8 @@ static void PF_ClientCommand(edict_t *e, const char *fmt, ...)
 static void PF_ParticleEffect(const float *org, const float *dir, float color, float count) {}
 static void PF_LightStyle(int style, const char *val) { R_SetLightStyle(style, val); }
 
-static char **decal_names;
-static int decal_count;
-
-static int PF_DecalIndex(const char *name)
-{
-	for (int i = 0; i < decal_count; i++)
-		if (!stricmp(decal_names[i], name))
-			return i;
-	decal_names = Mem_Realloc(decal_names, sizeof(char *) * (decal_count + 1));
-	decal_names[decal_count] = Mem_Strdup(name);
-	return decal_count++;
-}
+// the decal list is shared with the client, so a number in a message means the same texture
+static int PF_DecalIndex(const char *name) { return R_DecalIndex(name); }
 
 static int PF_PointContents(const float *v) { return SV_PointContents(v); }
 
@@ -1085,7 +1075,10 @@ static void PF_SetClientKeyValue(int client, char *buf, const char *key, const c
 }
 
 static int PF_IsMapValid(const char *name) { return name && FS_FileExists(va("maps/%s.bsp", name)); }
-static void PF_StaticDecal(const float *origin, int decalIndex, int entityIndex, int modelIndex) {}
+static void PF_StaticDecal(const float *origin, int decalIndex, int entityIndex, int modelIndex)
+{
+	R_DecalShoot(decalIndex, entityIndex, modelIndex, origin, 1, 1.0f);   // permanent (infodecal)
+}
 static int PF_PrecacheGeneric(const char *s) { return SV_PrecacheGeneric(s); }
 
 static int PF_GetPlayerUserId(edict_t *e)
@@ -1110,8 +1103,15 @@ static const char *PF_GetPhysicsInfoString(const edict_t *e) { return physinfo; 
 const char *SV_PhysInfo(void) { return physinfo; }
 
 static unsigned short PF_PrecacheEvent(int type, const char *name) { return SV_PrecacheEvent(type, name); }
+// one client, in this process: events go straight to its queue (bit 6, FEV_CLIENT, marks the client's own)
+void CL_PlaybackEvent(int flags, const edict_t *invoker, unsigned short index, float delay, const float *origin,
+	const float *angles, float f1, float f2, int i1, int i2, int b1, int b2);
+
 static void PF_PlaybackEvent(int flags, const edict_t *invoker, unsigned short index, float delay, float *origin, float *angles,
-	float f1, float f2, int i1, int i2, int b1, int b2) {}
+	float f1, float f2, int i1, int i2, int b1, int b2)
+{
+	CL_PlaybackEvent(flags & ~(1 << 6), invoker, index, delay, origin, angles, f1, f2, i1, i2, b1, b2);
+}
 
 static unsigned char *fatpvs;
 static int fatpvs_size;

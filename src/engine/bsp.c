@@ -766,6 +766,7 @@ void BSP_Free(void)
 	Mem_Free(world.lightmaps);
 	Mem_Free(world.textures);
 	Mem_Free(world.entities);
+	Mem_Free(world.entitytext);
 	Mem_Free(world.planes);
 	Mem_Free(world.texinfo);
 	Mem_Free(world.surfaces);
@@ -829,8 +830,11 @@ qboolean BSP_Load(const char *mapname)
 	Q_strncpy(world.name, path, sizeof(world.name));
 	int entlen;
 	const char *ents = LumpData(LUMP_ENTITIES, 0, &entlen);
-	if (ents)
+	if (ents) {
 		ParseEntities(ents, (size_t)entlen);
+		world.entitytext = Mem_Alloc((size_t)entlen + 1);
+		memcpy(world.entitytext, ents, (size_t)entlen);
+	}
 	if (world.numentities)
 		Wad_LoadList(BSP_ValueForKey(&world.entities[0], "wad"));
 

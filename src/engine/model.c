@@ -482,6 +482,7 @@ model_t *Mod_ForName(const char *name, qboolean crash)
 		// the map itself (model 1 on the server)
 		m->type = mod_brush;
 		m->submodel = 0;
+		m->brush.entities = world.entitytext;
 		VectorCopy(world.submodels[0].mins, m->mins);
 		VectorCopy(world.submodels[0].maxs, m->maxs);
 		return m;
@@ -491,6 +492,7 @@ model_t *Mod_ForName(const char *name, qboolean crash)
 		if (n > 0 && n < world.numsubmodels) {
 			m->type = mod_brush;
 			m->submodel = n;
+			m->brush.entities = world.entitytext;
 			VectorCopy(world.submodels[n].mins, m->mins);
 			VectorCopy(world.submodels[n].maxs, m->maxs);
 			return m;

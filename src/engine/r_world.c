@@ -547,6 +547,10 @@ static void DrawBrushEntity(const brushent_t *b)
 		break;
 	}
 	DrawBatches(alpha);
+	if (b->rendermode == kRenderNormal || b->rendermode == kRenderTransAlpha) {
+		R_DrawDecals(m->firstface, m->numfaces, local, false);
+		SetupArrays();
+	}
 	glDisable(GL_ALPHA_TEST);
 	glDisable(GL_BLEND);
 	glDepthMask(GL_TRUE);
@@ -647,12 +651,14 @@ void R_InitWorld(void)
 	Cmd_AddCommand("lightstyle", LightStyle_f, "lightstyle <n> [pattern] - shows or sets an animated light style");
 	for (int i = 0; i < 64; i++)
 		R_SetLightStyle(i, "m");
+	R_InitDecals();
 }
 
 void R_NewMap(void)
 {
 	viewleaf = oldviewleaf = NULL;
 	old_novis = -1;
+	R_ClearDecals();
 	R_BuildBrushEntities();
 	R_BuildMapEntities();
 }
@@ -680,6 +686,8 @@ void R_DrawWorld(void)
 		RecursiveWorldNode(&world.nodes[0]);
 		DrawSkyDepth();
 		DrawBatches(1.0f);
+		R_DrawDecals(world.submodels[0].firstface, world.submodels[0].numfaces, r_refdef.origin, true);
+		SetupArrays();
 	}
 	DrawBrushEntities();
 

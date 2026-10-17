@@ -56,6 +56,7 @@ const char *COM_ParmValue(const char *parm);     // value after parm, or NULL
 
 // ---------------------------------------------------------------- sys_win.c
 NORETURN void Sys_Error(const char *fmt, ...);
+void Sys_LogException(void *exception_pointers);   // EXCEPTION_POINTERS: the call stack into the log
 double      Sys_FloatTime(void);
 void        Sys_Sleep(int ms);
 const char *Sys_ExeDir(void);
