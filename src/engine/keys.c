@@ -103,10 +103,14 @@ static void Unbind_f(void)
 	SetBinding(key, NULL);
 }
 
+static char *default_bindings[K_COUNT];
+
 static void Unbindall_f(void)
 {
+	// configs written before the movement keys existed start with "unbindall"; while the saved
+	// config loads, start from the defaults instead so new default keys survive
 	for (int i = 0; i < K_COUNT; i++)
-		SetBinding(i, NULL);
+		SetBinding(i, cmd_defer_cvars ? default_bindings[i] : NULL);
 }
 
 static void Bindlist_f(void)
@@ -116,12 +120,26 @@ static void Bindlist_f(void)
 			Con_Printf("%-12s \"%s\"\n", Key_KeynumToString(i), bindings[i]);
 }
 
+// remembers the engine's default keys, so the config only has to store changes
+void Key_SnapshotDefaults(void)
+{
+	for (int i = 0; i < K_COUNT; i++) {
+		Mem_Free(default_bindings[i]);
+		default_bindings[i] = bindings[i] ? Mem_Strdup(bindings[i]) : NULL;
+	}
+}
+
+// Only differences from the defaults are written, so keys added to the defaults later still show up
+// for people with an older config
 void Key_WriteBindings(FILE *f)
 {
-	fprintf(f, "unbindall\n");
-	for (int i = 0; i < K_COUNT; i++)
-		if (bindings[i])
+	for (int i = 0; i < K_COUNT; i++) {
+		const char *def = default_bindings[i];
+		if (bindings[i] && (!def || strcmp(def, bindings[i])))
 			fprintf(f, "bind \"%s\" \"%s\"\n", Key_KeynumToString(i), bindings[i]);
+		else if (!bindings[i] && def)
+			fprintf(f, "unbind \"%s\"\n", Key_KeynumToString(i));
+	}
 }
 
 qboolean Key_IsDown(int key)

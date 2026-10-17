@@ -83,6 +83,7 @@ void Host_Init(int argc, char **argv)
 	// settings: defaults, then the saved config, then the user's autoexec
 	DefaultBindings();
 	Cbuf_Execute();
+	Key_SnapshotDefaults();
 	cmd_defer_cvars = true;
 	Cmd_ExecFile(CONFIG_NAME, true);
 	Cbuf_Execute();

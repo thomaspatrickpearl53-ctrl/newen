@@ -178,6 +178,7 @@ qboolean    Key_IsDown(int key);
 int         Key_StringToKeynum(const char *str);
 const char *Key_KeynumToString(int key);
 void        Key_WriteBindings(FILE *f);
+void        Key_SnapshotDefaults(void);
 void        Key_ClearStates(void);
 
 // ---------------------------------------------------------------- filesystem.c
