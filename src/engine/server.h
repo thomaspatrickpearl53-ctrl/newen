@@ -35,6 +35,10 @@ trace_t  SV_ClipMoveToEntity(edict_t *ent, const vec3_t start, const vec3_t mins
 edict_t *SV_TestEntityPosition(edict_t *e);     // what e is stuck in, or NULL
 hull_t  *SV_HullForBsp(edict_t *ent, const vec3_t mins, const vec3_t maxs, vec3_t offset);
 int      SV_HullPointContents(const hull_t *hull, int num, const vec3_t p);
+hull_t  *SV_HullForBox(const vec3_t mins, const vec3_t maxs);   // shared storage, valid until the next call
+void     SV_ModelHull(const msubmodel_t *sm, int h, hull_t *out);
+qboolean SV_RecursiveHullCheck(const hull_t *hull, int num, float p1f, float p2f, const vec3_t p1, const vec3_t p2,
+	trace_t *trace, int depth);
 
 #define CONTENTS_CURRENT_0    -9
 #define CONTENTS_CURRENT_DOWN -14
@@ -61,6 +65,7 @@ typedef struct {
 	char       serverinfo[512];
 	char       localinfo[512];
 	qboolean   client_spawned;
+	qboolean   restarting;        // a reload is queued; the game repeats the request every frame
 } server_t;
 
 extern server_t          sv;
@@ -104,6 +109,19 @@ edict_t    *SV_LocalPlayer(void);
 // sv_engfuncs.c
 void        SV_InitEngineFuncs(enginefuncs_t *ef);
 void        SV_ExecuteServerCommands(void);   // what the game queued with ServerCommand
+const char *SV_InfoValueForKey(const char *s, const char *key);
+const char *SV_TraceTexture(edict_t *texent, const float *v1, const float *v2);
+const char *SV_PhysInfo(void);
+
+// sv_pmove.c
+void        SV_InitPlayerMove(void);                      // after the game DLL loads
+void        SV_RunPlayerCmd(edict_t *pl, usercmd_t *cmd);
+qboolean    SV_SetPlayerPos(const vec3_t eye, const vec3_t angles);   // false if there's no player
+
+// cl_input.c (temporary: client.dll owns movement input in GoldSrc)
+void        CL_InitInput(void);
+void        CL_CreateCmd(float frametime, usercmd_t *cmd);
+extern vec3_t cl_viewangles;
 void        SV_MakeVectors(const vec3_t angles);
 float       SV_VecToYaw(const vec3_t v);
 

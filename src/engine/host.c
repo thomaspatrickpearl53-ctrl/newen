@@ -49,6 +49,10 @@ static void WriteConfig_f(void)
 static void DefaultBindings(void)
 {
 	Cbuf_AddText("bind ` toggleconsole\n");
+	// GoldSrc's default movement keys (newen's own +commands until client.dll provides them)
+	Cbuf_AddText("bind w +forward; bind s +back; bind a +moveleft; bind d +moveright; bind SPACE +jump; "
+		"bind CTRL +duck; bind SHIFT +speed; bind e +use; bind r +reload; bind MOUSE1 +attack; bind MOUSE2 +attack2; "
+		"bind TAB +showscores; bind v noclip\n");
 }
 
 void Host_Init(int argc, char **argv)

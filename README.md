@@ -29,9 +29,10 @@ newen never writes into the Half-Life folder. Configs, logs and screenshots go t
 
 ## Maps
 
-`map c1a0` loads a map and puts the camera at the player start; `maps` lists them, `disconnect` unloads.
-Until the game DLLs are loaded the camera flies freely: mouse to look, WASD to move, Space/Ctrl up and down,
-Shift for speed (`cam_speed`, `sensitivity`). `viewpos` and `setpos x y z [pitch yaw roll]` read and set it.
+`map c1a0` loads a map and starts it; `maps` lists them, `disconnect` unloads, `reload` restarts.
+You play as the player: mouse to look, WASD to walk, Space to jump, Ctrl to crouch, Shift to walk slowly, E to use,
+mouse buttons to attack, V for noclip. `viewpos` and `setpos x y z [pitch yaw roll]` read and set your position.
+Without a game DLL (`-nogamedll`) the camera flies freely instead (`cam_speed`, `sensitivity`).
 
 Rendering: BSP v30 (and Blue Shift's lump order), WAD3 and embedded textures, lightmaps with animated light
 styles (`lightstyle`), PVS and frustum culling, skyboxes, warped water, animated `+` textures, `{` see-through
@@ -48,14 +49,17 @@ GoldSrc interface, and `map` starts a local server: the DLL spawns the map's ent
 doors and trains run, and the renderer draws what the game sets up. `-nogamedll` turns it off (maps then show the
 entities from the map file only).
 
-There is no player movement yet: the player follows the free camera as a ghost that monsters can see (and shoot),
-but it doesn't touch triggers or push buttons.
+The player moves with the game's own movement code (walking, jumping, crouching, swimming, ladders, noclip), so
+doors, buttons, triggers and pickups work. There is no sound, HUD or view model yet (they come with the client DLL
+in step 5), and level changes only print a message.
 
 - `status` shows the game DLL, map and player health; `edicts [classname]` lists the game's entities.
-- `god` and `notarget` toggle invulnerability and whether monsters notice you.
+- `god`, `notarget` and `noclip` toggle invulnerability, being ignored by monsters, and flying through walls;
+  `kill` kills you (the map restarts on the next attack press, like Half-Life).
+- `impulse <n>` sends an impulse (`sv_cheats 1` then `impulse 101` gives every weapon).
 - Unknown console commands go to the game, as in GoldSrc (`say`, `give` with `sv_cheats 1`...).
-- `sv_maxedicts` (default 2048, GoldSrc 900) sets how many entities a map may have; `sv_ghostplayer 0` leaves the
-  player at its spawn point; `tracetest [hull]` checks collision under the camera.
+- `sv_maxedicts` (default 2048, GoldSrc 900) sets how many entities a map may have.
+  `tracetest [hull]` checks collision under the camera.
 
 ## Models and sprites
 
@@ -105,7 +109,7 @@ Phase 1, Half-Life runs:
 1. **Core** - window, console, cvars, commands, keys, filesystem, Lua VM *(done)*
 2. **World** - BSP v30 and big maps, WAD and HD textures, lightmaps, PVS, noclip camera *(done)*
 3. **Models and sprites** - MDL (no fixed limits), SPR, HD model textures *(done)*
-4. **Server** - load `hl.dll`, engine functions, collision, entity physics *(done)*; player movement, Lua hooks *(next)*
+4. **Server** - load `hl.dll`, engine functions, collision, entity physics, player movement *(done)*; Lua hooks *(next)*
 5. Client - load `client.dll`, HUD, VGUI1
 6. Single player - loopback server, save/load, level changes, stereo and HQ audio, Half-Life: Lua API
 

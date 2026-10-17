@@ -100,6 +100,14 @@ void R_RenderView(void)
 		return;
 	r_refdef.framecount++;
 	r_refdef.time = host_realtime;
+	// the view: the player's eyes when there is one, otherwise the free camera
+	edict_t *pl = SV_LocalPlayer();
+	if (pl) {
+		VectorAdd(pl->v.origin, pl->v.view_ofs, r_refdef.origin);
+		VectorAdd(cl_viewangles, pl->v.punchangle, r_refdef.angles);
+	} else {
+		VectorCopy(cl_viewangles, r_refdef.angles);
+	}
 	AngleVectors(r_refdef.angles, r_refdef.forward, r_refdef.right, r_refdef.up);
 	ComputeFov();
 	SetupFrustum();
@@ -122,14 +130,16 @@ void R_UpdateCamera(void)
 		return;
 
 	float sens = sensitivity->value;
-	r_refdef.angles[1] -= dx * sens * m_yaw->value;
-	r_refdef.angles[0] += dy * sens * m_pitch->value;
-	if (r_refdef.angles[0] > 89) r_refdef.angles[0] = 89;
-	if (r_refdef.angles[0] < -89) r_refdef.angles[0] = -89;
-	r_refdef.angles[1] = fmodf(r_refdef.angles[1], 360.0f);
+	cl_viewangles[1] -= dx * sens * m_yaw->value;
+	cl_viewangles[0] += dy * sens * m_pitch->value;
+	if (cl_viewangles[0] > 89) cl_viewangles[0] = 89;
+	if (cl_viewangles[0] < -89) cl_viewangles[0] = -89;
+	cl_viewangles[1] = fmodf(cl_viewangles[1], 360.0f);
+	if (SV_LocalPlayer())
+		return;   // the player moves through the game's movement code
 
 	vec3_t f, r, u, move = { 0, 0, 0 };
-	AngleVectors(r_refdef.angles, f, r, u);
+	AngleVectors(cl_viewangles, f, r, u);
 	if (Key_IsDown('w')) VectorAdd(move, f, move);
 	if (Key_IsDown('s')) VectorSubtract(move, f, move);
 	if (Key_IsDown('d')) VectorAdd(move, r, move);
@@ -147,7 +157,7 @@ void R_UpdateCamera(void)
 static void PlaceCamera(void)
 {
 	VectorClear(r_refdef.origin);
-	VectorClear(r_refdef.angles);
+	VectorClear(cl_viewangles);
 	static const char *starts[] = { "info_player_start", "info_player_deathmatch", "info_player_coop", NULL };
 	for (int s = 0; starts[s]; s++) {
 		for (int i = 0; i < world.numentities; i++) {
@@ -157,10 +167,11 @@ static void PlaceCamera(void)
 			sscanf(BSP_ValueForKey(e, "origin"), "%f %f %f", &r_refdef.origin[0], &r_refdef.origin[1], &r_refdef.origin[2]);
 			const char *ang = BSP_ValueForKey(e, "angles");
 			if (*ang)
-				sscanf(ang, "%f %f %f", &r_refdef.angles[0], &r_refdef.angles[1], &r_refdef.angles[2]);
+				sscanf(ang, "%f %f %f", &cl_viewangles[0], &cl_viewangles[1], &cl_viewangles[2]);
 			else
-				r_refdef.angles[1] = (float)atof(BSP_ValueForKey(e, "angle"));
-			r_refdef.angles[2] = 0;
+				cl_viewangles[1] = (float)atof(BSP_ValueForKey(e, "angle"));
+			cl_viewangles[2] = 0;
+			VectorCopy(cl_viewangles, r_refdef.angles);
 			r_refdef.origin[2] += 28;   // eye height above the player origin
 			return;
 		}
@@ -244,11 +255,20 @@ static void Setpos_f(void)
 		Con_Printf("usage: setpos <x> <y> <z> [pitch yaw roll]\n");
 		return;
 	}
+	vec3_t pos, ang;
 	for (int i = 0; i < 3; i++)
-		r_refdef.origin[i] = (float)atof(Cmd_Argv(1 + i));
-	if (Cmd_Argc() >= 7)
+		pos[i] = (float)atof(Cmd_Argv(1 + i));
+	qboolean hasangles = Cmd_Argc() >= 7;
+	if (hasangles)
 		for (int i = 0; i < 3; i++)
-			r_refdef.angles[i] = (float)atof(Cmd_Argv(4 + i));
+			ang[i] = (float)atof(Cmd_Argv(4 + i));
+	// with a game running this moves the player (its eyes end up at the position)
+	SV_SetPlayerPos(pos, hasangles ? ang : NULL);
+	VectorCopy(pos, r_refdef.origin);
+	if (hasangles) {
+		VectorCopy(ang, cl_viewangles);
+		VectorCopy(ang, r_refdef.angles);
+	}
 }
 
 static void Texlist_f(void)

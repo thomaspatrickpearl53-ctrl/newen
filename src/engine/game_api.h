@@ -467,6 +467,182 @@ typedef struct {
 	void (*pfnCvarValue2)(const edict_t *pEnt, int requestID, const char *cvarName, const char *value);
 } NEW_DLL_FUNCTIONS;
 
+// ---------------------------------------------------------------- player movement (pm_shared in the DLL)
+
+#define MAX_PHYSENTS        600   // compiled into the DLL's playermove_t; can't be raised
+#define MAX_MOVEENTS        64
+#define MAX_PHYSINFO_STRING 256
+
+// PM_PlayerTrace flags
+#define PM_NORMAL        0
+#define PM_STUDIO_IGNORE 1
+#define PM_STUDIO_BOX    2
+#define PM_GLASS_IGNORE  4
+#define PM_WORLD_ONLY    8
+// PM_TraceLine flags
+#define PM_TRACELINE_PHYSENTSONLY 0
+#define PM_TRACELINE_ANYVISIBLE   1
+
+// usercmd buttons
+#define IN_ATTACK    (1<<0)
+#define IN_JUMP      (1<<1)
+#define IN_DUCK      (1<<2)
+#define IN_FORWARD   (1<<3)
+#define IN_BACK      (1<<4)
+#define IN_USE       (1<<5)
+#define IN_CANCEL    (1<<6)
+#define IN_LEFT      (1<<7)
+#define IN_RIGHT     (1<<8)
+#define IN_MOVELEFT  (1<<9)
+#define IN_MOVERIGHT (1<<10)
+#define IN_ATTACK2   (1<<11)
+#define IN_RUN       (1<<12)
+#define IN_RELOAD    (1<<13)
+#define IN_ALT1      (1<<14)
+#define IN_SCORE     (1<<15)
+
+typedef struct usercmd_s {
+	short          lerp_msec;
+	unsigned char  msec;
+	vec3f_t        viewangles;
+	float          forwardmove, sidemove, upmove;
+	unsigned char  lightlevel;
+	unsigned short buttons;
+	unsigned char  impulse;
+	unsigned char  weaponselect;
+	int            impact_index;
+	vec3f_t        impact_position;
+} usercmd_t;
+
+typedef struct movevars_s {
+	float    gravity, stopspeed, maxspeed, spectatormaxspeed, accelerate, airaccelerate, wateraccelerate;
+	float    friction, edgefriction, waterfriction, entgravity, bounce, stepsize, maxvelocity, zmax, waveHeight;
+	qboolean footsteps;
+	char     skyName[32];
+	float    rollangle, rollspeed;
+	float    skycolor_r, skycolor_g, skycolor_b;
+	float    skyvec_x, skyvec_y, skyvec_z;
+} movevars_t;
+
+typedef struct {
+	vec3f_t normal;
+	float   dist;
+} pmplane_t;
+
+typedef struct pmtrace_s {
+	qboolean  allsolid, startsolid, inopen, inwater;
+	float     fraction;
+	vec3f_t   endpos;
+	pmplane_t plane;
+	int       ent;            // physent index
+	vec3f_t   deltavelocity;
+	int       hitgroup;
+} pmtrace_t;
+
+typedef struct physent_s {
+	char     name[32];
+	int      player;
+	vec3f_t  origin;
+	struct model_s *model;      // brush models only; the DLL just hands it back to the engine
+	struct model_s *studiomodel;
+	vec3f_t  mins, maxs;
+	int      info;              // edict index
+	vec3f_t  angles;
+	int      solid, skin, rendermode;
+	float    frame;
+	int      sequence;
+	unsigned char controller[4], blending[2];
+	int      movetype, takedamage, blooddecal, team, classnumber;
+	int      iuser1, iuser2, iuser3, iuser4;
+	float    fuser1, fuser2, fuser3, fuser4;
+	vec3f_t  vuser1, vuser2, vuser3, vuser4;
+} physent_t;
+
+// GoldSrc's own trace_t, as PM_TraceModel fills it (its plane has byte type/signbits)
+typedef struct {
+	qboolean allsolid, startsolid, inopen, inwater;
+	float    fraction;
+	vec3f_t  endpos;
+	struct { vec3f_t normal; float dist; unsigned char type, signbits, pad[2]; } plane;
+	edict_t *ent;
+	int      hitgroup;
+} gs_trace_t;
+
+typedef struct playermove_s {
+	int       player_index;
+	qboolean  server, multiplayer;
+	float     time, frametime;     // time in milliseconds
+	vec3f_t   forward, right, up;
+	vec3f_t   origin, angles, oldangles, velocity, movedir, basevelocity;
+	vec3f_t   view_ofs;
+	float     flDuckTime;
+	qboolean  bInDuck;
+	int       flTimeStepSound, iStepLeft;
+	float     flFallVelocity;
+	vec3f_t   punchangle;
+	float     flSwimTime, flNextPrimaryAttack;
+	int       effects, flags;
+	int       usehull;             // 0 stand, 1 duck, 2 point, 3 large
+	float     gravity, friction;
+	int       oldbuttons;
+	float     waterjumptime;
+	qboolean  dead;
+	int       deadflag, spectator, movetype;
+	int       onground;            // physent index, -1 in the air
+	int       waterlevel, watertype, oldwaterlevel;
+	char      sztexturename[256];
+	char      chtextype;
+	float     maxspeed, clientmaxspeed;
+	int       iuser1, iuser2, iuser3, iuser4;
+	float     fuser1, fuser2, fuser3, fuser4;
+	vec3f_t   vuser1, vuser2, vuser3, vuser4;
+	int       numphysent;
+	physent_t physents[MAX_PHYSENTS];
+	int       nummoveent;
+	physent_t moveents[MAX_MOVEENTS];
+	int       numvisent;
+	physent_t visents[MAX_PHYSENTS];
+	usercmd_t cmd;
+	int       numtouch;
+	pmtrace_t touchindex[MAX_PHYSENTS];
+	char      physinfo[MAX_PHYSINFO_STRING];
+	movevars_t *movevars;
+	vec3f_t   player_mins[4], player_maxs[4];
+
+	const char *(*PM_Info_ValueForKey)(const char *s, const char *key);
+	void      (*PM_Particle)(float *origin, int color, float life, int zpos, int zvel);
+	int       (*PM_TestPlayerPosition)(float *pos, pmtrace_t *ptrace);
+	void      (*Con_NPrintf)(int idx, const char *fmt, ...);
+	void      (*Con_DPrintf)(const char *fmt, ...);
+	void      (*Con_Printf)(const char *fmt, ...);
+	double    (*Sys_FloatTime)(void);
+	void      (*PM_StuckTouch)(int hitent, pmtrace_t *ptraceresult);
+	int       (*PM_PointContents)(float *p, int *truecontents);
+	int       (*PM_TruePointContents)(float *p);
+	int       (*PM_HullPointContents)(void *hull, int num, float *p);
+	pmtrace_t (*PM_PlayerTrace)(float *start, float *end, int traceFlags, int ignore_pe);
+	pmtrace_t *(*PM_TraceLine)(float *start, float *end, int flags, int usehull, int ignore_pe);
+	long      (*RandomLong)(long lLow, long lHigh);
+	float     (*RandomFloat)(float flLow, float flHigh);
+	int       (*PM_GetModelType)(struct model_s *mod);
+	void      (*PM_GetModelBounds)(struct model_s *mod, float *mins, float *maxs);
+	void     *(*PM_HullForBsp)(physent_t *pe, float *offset);
+	float     (*PM_TraceModel)(physent_t *pEnt, float *start, float *end, gs_trace_t *trace);
+	int       (*COM_FileSize)(const char *filename);
+	unsigned char *(*COM_LoadFile)(const char *path, int usehunk, int *pLength);
+	void      (*COM_FreeFile)(void *buffer);
+	char     *(*memfgets)(unsigned char *pMemFile, int fileSize, int *pFilePos, char *pBuffer, int bufferSize);
+	qboolean  runfuncs;
+	void      (*PM_PlaySound)(int channel, const char *sample, float volume, float attenuation, int fFlags, int pitch);
+	const char *(*PM_TraceTexture)(int ground, float *vstart, float *vend);
+	void      (*PM_PlaybackEventFull)(int flags, int clientindex, unsigned short eventindex, float delay, float *origin,
+	                                  float *angles, float fparam1, float fparam2, int iparam1, int iparam2, int bparam1, int bparam2);
+	pmtrace_t (*PM_PlayerTraceEx)(float *start, float *end, int traceFlags, int (*pfnIgnore)(physent_t *pe));
+	int       (*PM_TestPlayerPositionEx)(float *pos, pmtrace_t *ptrace, int (*pfnIgnore)(physent_t *pe));
+	pmtrace_t *(*PM_TraceLineEx)(float *start, float *end, int flags, int usehull, int (*pfnIgnore)(physent_t *pe));
+	struct msurface_s *(*PM_TraceSurface)(int ground, float *vstart, float *vend);
+} playermove_t;
+
 typedef void (__stdcall *GIVEFNPTRSTODLL)(enginefuncs_t *engfuncs, globalvars_t *globals);
 typedef int  (*APIFUNCTION)(DLL_FUNCTIONS *functionTable, int interfaceVersion);
 typedef int  (*APIFUNCTION2)(DLL_FUNCTIONS *functionTable, int *interfaceVersion);
@@ -479,3 +655,7 @@ _Static_assert(sizeof(edict_t) == 804, "edict_t layout");
 _Static_assert(sizeof(TraceResult) == 56, "TraceResult layout");
 _Static_assert(offsetof(enginefuncs_t, pfnCheckParm) == 157 * 4, "enginefuncs_t order");
 _Static_assert(sizeof(DLL_FUNCTIONS) == 50 * 4, "DLL_FUNCTIONS layout");
+_Static_assert(sizeof(usercmd_t) == 52, "usercmd_t layout");
+_Static_assert(sizeof(pmtrace_t) == 68, "pmtrace_t layout");
+_Static_assert(sizeof(physent_t) == 224, "physent_t layout");
+_Static_assert(sizeof(gs_trace_t) == 60, "trace_t layout");

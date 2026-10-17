@@ -80,7 +80,7 @@ static qboolean EdictToRentity(const edict_t *e, rentity_t *r)
 
 // ---------------------------------------------------------------- info strings ("\key\value\key\value")
 
-static const char *Info_ValueForKey(const char *s, const char *key)
+const char *SV_InfoValueForKey(const char *s, const char *key)
 {
 	static char value[4][256];
 	static int which;
@@ -584,7 +584,7 @@ static msurface_t *SurfaceAtPoint(mnode_t *node, const vec3_t start, const vec3_
 	return SurfaceAtPoint(node->children[!side], mid, end, depth + 1);
 }
 
-static const char *PF_TraceTexture(edict_t *texent, const float *v1, const float *v2)
+const char *SV_TraceTexture(edict_t *texent, const float *v1, const float *v2)
 {
 	if (!world.numnodes)
 		return NULL;
@@ -651,6 +651,8 @@ void SV_ExecuteServerCommands(void)
 		memmove(server_cmds.data, server_cmds.data + i, server_cmds.len - i);
 		server_cmds.len -= i;
 		server_cmds.data[server_cmds.len] = 0;
+		if (developer->value > 1)
+			Con_Printf("game command: %s\n", line);
 		Cmd_ExecuteString(line);
 		Mem_Free(line);
 	}
@@ -996,7 +998,7 @@ static char *PF_GetInfoKeyBuffer(edict_t *e)
 	return empty;
 }
 
-static char *PF_InfoKeyValue(char *buf, const char *key) { return (char *)Info_ValueForKey(buf ? buf : "", key); }
+static char *PF_InfoKeyValue(char *buf, const char *key) { return (char *)SV_InfoValueForKey(buf ? buf : "", key); }
 
 static size_t InfoBufferSize(const char *buf)
 {
@@ -1038,12 +1040,13 @@ static unsigned PF_GetPlayerWONId(edict_t *e) { return 0xFFFFFFFFu; }
 static void PF_Info_RemoveKey(char *s, const char *key) { if (s && InfoBufferSize(s)) Info_RemoveKey(s, key); }
 
 static char physinfo[512];
-static const char *PF_GetPhysicsKeyValue(const edict_t *e, const char *key) { return Info_ValueForKey(physinfo, key); }
+static const char *PF_GetPhysicsKeyValue(const edict_t *e, const char *key) { return SV_InfoValueForKey(physinfo, key); }
 static void PF_SetPhysicsKeyValue(const edict_t *e, const char *key, const char *value)
 {
 	Info_SetValueForKey(physinfo, key, value, sizeof(physinfo));
 }
 static const char *PF_GetPhysicsInfoString(const edict_t *e) { return physinfo; }
+const char *SV_PhysInfo(void) { return physinfo; }
 
 static unsigned short PF_PrecacheEvent(int type, const char *name) { return SV_PrecacheEvent(type, name); }
 static void PF_PlaybackEvent(int flags, const edict_t *invoker, unsigned short index, float delay, float *origin, float *angles,
@@ -1179,7 +1182,7 @@ void SV_InitEngineFuncs(enginefuncs_t *ef)
 	ef->pfnTraceMonsterHull = PF_TraceMonsterHull;
 	ef->pfnTraceHull = PF_TraceHull;
 	ef->pfnTraceModel = PF_TraceModel;
-	ef->pfnTraceTexture = PF_TraceTexture;
+	ef->pfnTraceTexture = SV_TraceTexture;
 	ef->pfnTraceSphere = PF_TraceSphere;
 	ef->pfnGetAimVector = PF_GetAimVector;
 	ef->pfnServerCommand = PF_ServerCommand;

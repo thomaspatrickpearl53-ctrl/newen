@@ -5,6 +5,7 @@
 // common classnames whose model only the game DLL knows. Both are temporary.
 #include "bsp.h"
 #include "model.h"
+#include "server.h"
 
 static rentity_t *ents;           // static: from the map without a game DLL, mdlview, MakeStatic
 static int ents_count, ents_cap;
@@ -295,13 +296,13 @@ static void MdlView_f(void)
 	// in front of the camera, at the feet of a standing player, facing back
 	// from the angles, not r_refdef.forward: that is only updated when a frame is drawn
 	vec3_t f;
-	AngleVectors(r_refdef.angles, f, NULL, NULL);
+	AngleVectors(cl_viewangles, f, NULL, NULL);
 	f[2] = 0;
 	if (VectorNormalize(f) == 0)
 		VectorSet(f, 1, 0, 0);
 	VectorMA(r_refdef.origin, 120, f, e->origin);
 	e->origin[2] -= m->type == mod_studio ? 64 : 0;
-	e->angles[1] = r_refdef.angles[1] + 180;
+	e->angles[1] = cl_viewangles[1] + 180;
 	if (m->type == mod_sprite) {
 		e->rendermode = m->sprite.texFormat == SPR_ADDITIVE ? kRenderTransAdd : kRenderNormal;
 		e->framerate = 10;

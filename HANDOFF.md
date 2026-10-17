@@ -4,10 +4,11 @@ Everything someone new needs to pick this project up: what it is, what was decid
 out, how to build and test it, what works, what doesn't, and what comes next. Read `README.md` first for the
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
-Status as of 2026-10-17: **Phase 1, steps 1 to 3 are done, and step 4 is half done.** The engine boots, has a full
-console and engine-level Lua, renders Half-Life maps, models and sprites, and runs the stock Steam `hl.dll`: it
-spawns every map's entities, monsters think, path-find and fight, doors and trains move. Next up is player movement
-(step 4b), then Lua hooks at the DLL boundary (4c).
+Status as of 2026-10-17: **Phase 1, steps 1 to 3 are done; step 4 is done except the Lua hooks.** The engine
+boots, has a full console and engine-level Lua, renders Half-Life maps, models and sprites, and runs the stock Steam
+`hl.dll`: it spawns every map's entities, monsters think, path-find and fight, doors and trains move, and the player
+walks with the DLL's own movement code (doors open, triggers fire, weapons can be picked up). Next up is Lua at the
+DLL boundary (4c), then the client DLL (step 5: HUD, view model, input, VGUI1).
 
 ---
 
@@ -101,7 +102,10 @@ bin\newen.exe +map c2a5 +setpos 1856 300 350 20 200 0 +wait 30 +screenshot +wait
   Convert with `ffmpeg -i shot0012.tga shot.png` to view.
 - Useful test spots: `c1a0` spawn (484 318 -176, tram tunnel); `c2a5` at `1856 300 350 20 200 0` (canyon, barrels,
   grass) and `1000 -1200 300 15 120 0` (road); `c1a0d` spawn (lab).
-- Game DLL: `+map c2a5 +setpos 1679 150 100 0 90 0 +wait 400 +status` (soldiers find and kill the ghost player in
+- Movement: put commands in `bin/userdata/valve/test.cfg` and run `+map c1a0d +exec test.cfg` (`-forward` can't be
+  given on the command line, it looks like an option). `setpos -2540 1168 -224 0 180 0`, `+forward`, `wait 40`,
+  `-forward` walks into func_door 39, which slides open (check with `edicts func_door`, origin y becomes 58).
+- Game DLL: `+map c2a5 +setpos 1679 150 100 0 90 0 +wait 400 +status` (soldiers find and kill the player in
   about 7 seconds; add `+god` to survive); `+map c0a0 +edicts func_tracktrain` twice, a few hundred frames apart
   (one tram moves). Running every campaign map for 400 frames gave no crashes (c1a1 through c5a1, t0a0).
 - Models: `c1a0d` at `-2250 1136 -220 8 180 0` (two scientists by the soda machines); `+map c1a0d +mdlview gman walk`
@@ -148,6 +152,8 @@ All engine code is in `src/engine/`, about 12,400 lines. One executable, no DLL 
 | `sv_engfuncs.c` | 1307 | Every `enginefuncs_t` function. Real: precache, models, traces (line, hull, toss, model, texture), PVS (`FindClientInPVS`, `EntitiesInPVS`, fat PVS, `CheckVisibility`), entity search, private data, cvars (game cvars via `Cvar_RegisterExternal`), info strings, bone/attachment positions, CRC32, random, files, the game's own command buffer (`ServerCommand`/`ServerExecute`), `NameForFunction` via the DLL's export table. Stubs: sound, messages, events, deltas, voice, save/restore helpers |
 | `sv_world.c` | 433 | Collision: hulls from the BSP clipnodes (hull 0 built from the render nodes in `bsp.c`), box hull, `SV_HullPointContents`, `RecursiveHullCheck`, rotated brush entities, `SV_Move` (world + every linked edict: owner, monsterclip, ignore-glass, `ShouldCollide`), linking (`pfnSetAbsBox`, touched leafs for PVS, brush-shaped trigger touches) |
 | `sv_phys.c` | 707 | `SV_Physics`: `StartFrame`, then per movetype: push (move and rotate, blocking, riders), step (gravity, ground friction), toss/bounce/fly/missile, noclip, follow; think timing (`ltime` for pushers), `FL_KILLME` removal; monster movement: `SV_movestep` (step up/down 18), `SV_CheckBottom`, `SV_MoveToOrigin`, `SV_DropToFloor` |
+| `sv_pmove.c` | 530 | Player movement: fills `playermove_t` (player state, movevars from the `sv_*` cvars, physinfo, physents = world + solid entities within ~256 units, moveents = water/ladder brushes), all the pm callbacks (player traces against physents with the pm hull numbering stand/duck/point/large mapped to BSP hulls 1/3/0/2, `PM_TestPlayerPosition`, point contents incl. content brushes, `PM_HullForBsp`, `PM_TraceModel` into GoldSrc's trace_t layout, `memfgets`, files), then per command `CmdStart`, `PlayerPreThink`, think, `PM_Move`, copy back, link with trigger touches, touch what the move hit, `PlayerPostThink`, `CmdEnd` |
+| `cl_input.c` | 150 | **Temporary** (client.dll's job in GoldSrc): `+forward/+back/+moveleft/+moveright/+moveup/+movedown/+jump/+duck/+attack/+attack2/+use/+reload/+speed/+alt1/+showscores` and `impulse`, the `cl_*speed` cvars, `CL_CreateCmd` builds a `usercmd_t` each frame. `cl_viewangles` is the look direction (mouse) |
 | `r_main.c` | 288 | View: Hor+ FOV, projection, Quake modelview, frustum planes, `R_CullBox`; the noclip camera; commands `map`, `maps`, `disconnect`, `viewpos`, `setpos`, `texlist` |
 
 `base/lua/includes/init.lua` (231 lines) is the core Lua library (hook, timer, Color, draw helpers, string/table/math
@@ -192,15 +198,21 @@ opens.
 - **Untested**: Blue Shift lump detection, maps beyond ±4096, the HD override seen on screen (the loader path *is* confirmed by the log: "1 HD texture replacement"), `-game` mods, and hand-driven mouse/keyboard play.
 - `bin/` holds build output plus `userdata/`. Add `build/`, `bin/` to `.gitignore` when git is set up (keep `base/` and `third_party/` in git).
 - The PDB/ILK in `bin/` come from the RelWithDebInfo build.
-- **Server shortcuts (step 4a)**: no player movement (the player is a ghost at the camera: `sv_ghostplayer`; it
-  doesn't touch triggers, so doors and level scripts that need the player don't start); no sound, so
+- **Server shortcuts (step 4)**: no sound, so
   `EmitSound` and friends do nothing; messages to the client are dropped (no HUD, no TextMsg); `ChangeLevel` only
   prints; no save/restore; no area tree (traces check every edict); rotating pushers don't carry riders; studio
   hitboxes aren't traced (bounding boxes only); `func_water`-style entity contents aren't in `SV_PointContents`;
   `MakeStatic` keeps studio models and sprites only. A few monsters report "stuck in wall" (headcrabs and a roach in
   c1a2, Big Momma in c4a2); compare with the real game before treating that as a bug.
 - `GetHullBounds` from the game DLL is for player movement (its numbering is stand/duck/point/large) and in the HL
-  SDK it doesn't even fill the arrays. It must not change the BSP clip hull sizes; it will matter for pmove.
+  SDK it doesn't even fill the arrays (it assigns to its own pointer parameters). The engine pre-fills the defaults
+  before calling it, and it must never change the BSP clip hull sizes.
+- **Player shortcuts (step 4b)**: no view model, HUD, crosshair or sound; weapons fire on the server but nothing shows
+  it. The view has no bob, roll or smoothing (those are client.dll's `V_CalcRefdef`). Death restarts the map through
+  `reload` (single player rules send it). `SetView` (camera entities) is ignored. Ducking under low ceilings, ladders
+  and water use the DLL's code and the engine callbacks, but haven't been tested by hand yet.
+- The movement keys are bound in `DefaultBindings` (host.c) every start: w a s d, space, ctrl, shift, e, r, mouse1/2,
+  tab, v = noclip. They run before the saved config, so the owner's rebinds win.
 - `ServerCommand` text goes to its own buffer, run by `ServerExecute`, after `GameInit`, before each spawn and every
   frame. Putting it in the console buffer made `ServerExecute` run the user's queued commands (even `quit`) in the
   middle of a map load.
@@ -236,15 +248,11 @@ what `pfnPrecacheModel`/`pfnSetModel` will use.
 **4a, done:** DLL loading, the full engine functions table, edicts and strings, map spawning, collision hulls and
 traces, entity physics and thinking, PVS queries, rendering from edicts, a ghost player. See the code map.
 
-**4b, next: player movement.** Implement `playermove_t` (a big shared struct: physents, the trace and point-contents
-callbacks, movevars from the `sv_*` cvars, hull sizes from `pfnGetHullBounds`), call `pfnPM_Init` once and then per
-frame `pfnCmdStart`, `pfnPlayerPreThink`, `pfnPM_Move`, touch the triggers the move touched, `pfnPlayerPostThink`,
-`pfnCmdEnd`. Input comes from a local `usercmd_t` built from the keys (`+forward`... are client.dll commands in
-GoldSrc, so step 4b needs temporary engine-side `+forward/+back/+moveleft/+moveright/+jump/+duck/+attack/+use`).
-The camera then follows the player's eyes (`view_ofs`, `punchangle`); the noclip camera becomes a `noclip` mode.
-Also `pfnUpdateClientData` (health for a minimal HUD) and `pfnGetWeaponData` can wait for step 5.
+**4b, done: player movement.** See `sv_pmove.c` and `cl_input.c` in the code map. The camera follows the player's
+eyes (`view_ofs` + `punchangle`); `noclip` is the game's own noclip movetype; `fixangle` from the game sets the view.
 
-**4c: Lua at the DLL boundary**, as planned below.
+**4c, next: Lua at the DLL boundary**, as planned below. `pfnUpdateClientData` and `pfnGetWeaponData` wait for
+step 5, along with removing `cl_input.c` once client.dll registers its own `+forward` and friends.
 
 The original plan for step 4:
 - Load `valve/dlls/hl.dll` (path from `liblist.gam` `gamedll`), call `GiveFnptrsToDll(&enginefuncs, &globalvars)`, `GetEntityAPI2`/`GetEntityAPI` (`DLL_FUNCTIONS`), `GetNewDLLFunctions`.

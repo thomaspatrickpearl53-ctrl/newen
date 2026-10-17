@@ -34,7 +34,7 @@ static void InitBoxHull(void)
 	}
 }
 
-static hull_t *HullForBox(const vec3_t mins, const vec3_t maxs)
+hull_t *SV_HullForBox(const vec3_t mins, const vec3_t maxs)
 {
 	box_planes[0].dist = maxs[0];
 	box_planes[1].dist = mins[0];
@@ -59,7 +59,7 @@ void SV_InitWorld(void)
 }
 
 // a brush model's hull, with the bounds of that hull's player size
-static void ModelHull(const msubmodel_t *sm, int h, hull_t *out)
+void SV_ModelHull(const msubmodel_t *sm, int h, hull_t *out)
 {
 	out->clipnodes = h == 0 ? world.clipnodes0 : world.clipnodes;
 	out->planes = world.planes;
@@ -86,7 +86,7 @@ hull_t *SV_HullForBsp(edict_t *ent, const vec3_t mins, const vec3_t maxs, vec3_t
 	model_t *m = SV_ModelForIndex(ent->v.modelindex);
 	int sub = (m && m->type == mod_brush) ? m->submodel : 0;
 	int h = HullForSize(mins, maxs);
-	ModelHull(&world.submodels[sub], h, &hull);
+	SV_ModelHull(&world.submodels[sub], h, &hull);
 	VectorSubtract(hull.clip_mins, mins, offset);
 	VectorAdd(offset, ent->v.origin, offset);
 	return &hull;
@@ -104,7 +104,7 @@ static hull_t *HullForEntity(edict_t *ent, const vec3_t mins, const vec3_t maxs,
 	VectorSubtract(ent->v.mins, maxs, hullmins);
 	VectorSubtract(ent->v.maxs, mins, hullmaxs);
 	VectorCopy(ent->v.origin, offset);
-	return HullForBox(hullmins, hullmaxs);
+	return SV_HullForBox(hullmins, hullmaxs);
 }
 
 // ---------------------------------------------------------------- point contents
@@ -128,7 +128,7 @@ int SV_TruePointContents(const vec3_t p)
 	if (!world.loaded || !world.numnodes)
 		return CONTENTS_EMPTY;
 	hull_t h;
-	ModelHull(&world.submodels[0], 0, &h);
+	SV_ModelHull(&world.submodels[0], 0, &h);
 	return SV_HullPointContents(&h, h.firstclipnode, p);
 }
 
@@ -142,7 +142,7 @@ int SV_PointContents(const vec3_t p)
 
 // ---------------------------------------------------------------- tracing
 
-static qboolean RecursiveHullCheck(const hull_t *hull, int num, float p1f, float p2f, const vec3_t p1, const vec3_t p2,
+qboolean SV_RecursiveHullCheck(const hull_t *hull, int num, float p1f, float p2f, const vec3_t p1, const vec3_t p2,
 	trace_t *trace, int depth)
 {
 	if (num < 0) {
@@ -171,9 +171,9 @@ static qboolean RecursiveHullCheck(const hull_t *hull, int num, float p1f, float
 		t2 = DotProduct(plane->normal, p2) - plane->dist;
 	}
 	if (t1 >= 0 && t2 >= 0)
-		return RecursiveHullCheck(hull, node->children[0], p1f, p2f, p1, p2, trace, depth + 1);
+		return SV_RecursiveHullCheck(hull, node->children[0], p1f, p2f, p1, p2, trace, depth + 1);
 	if (t1 < 0 && t2 < 0)
-		return RecursiveHullCheck(hull, node->children[1], p1f, p2f, p1, p2, trace, depth + 1);
+		return SV_RecursiveHullCheck(hull, node->children[1], p1f, p2f, p1, p2, trace, depth + 1);
 
 	// split, keeping the impact point a hair on the near side of the plane
 	float frac = t1 < 0 ? (t1 + DIST_EPSILON) / (t1 - t2) : (t1 - DIST_EPSILON) / (t1 - t2);
@@ -185,10 +185,10 @@ static qboolean RecursiveHullCheck(const hull_t *hull, int num, float p1f, float
 		mid[i] = p1[i] + frac * (p2[i] - p1[i]);
 	int side = t1 < 0;
 
-	if (!RecursiveHullCheck(hull, node->children[side], p1f, midf, p1, mid, trace, depth + 1))
+	if (!SV_RecursiveHullCheck(hull, node->children[side], p1f, midf, p1, mid, trace, depth + 1))
 		return false;
 	if (SV_HullPointContents(hull, node->children[side ^ 1], mid) != CONTENTS_SOLID)
-		return RecursiveHullCheck(hull, node->children[side ^ 1], midf, p2f, mid, p2, trace, depth + 1);
+		return SV_RecursiveHullCheck(hull, node->children[side ^ 1], midf, p2f, mid, p2, trace, depth + 1);
 	if (trace->allsolid)
 		return false;   // never got out of the solid area
 
@@ -242,7 +242,7 @@ trace_t SV_ClipMoveToEntity(edict_t *ent, const vec3_t start, const vec3_t mins,
 		end_l[0] = DotProduct(t, f); end_l[1] = -DotProduct(t, r); end_l[2] = DotProduct(t, u);
 	}
 
-	RecursiveHullCheck(hull, hull->firstclipnode, 0, 1, start_l, end_l, &trace, 0);
+	SV_RecursiveHullCheck(hull, hull->firstclipnode, 0, 1, start_l, end_l, &trace, 0);
 
 	if (rotated && trace.fraction != 1) {
 		vec3_t n;

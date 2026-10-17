@@ -6,8 +6,8 @@
 // game's C++ object), passes each key with KeyValue, then calls Spawn. ServerActivate follows, two
 // settling frames run, and the local player connects.
 //
-// Until player movement exists (pm_shared through the playermove interface), the player follows the
-// free camera as a ghost: monsters see and react to it, but it touches nothing.
+// Each frame the local player's input runs through the game's player movement (sv_pmove.c), then
+// every other entity moves and thinks (sv_phys.c).
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -23,7 +23,7 @@ static enginefuncs_t g_engfuncs;
 static char       game_dll_path[MAX_OSPATH];
 
 cvar_t *sv_gravity, *sv_stepsize, *sv_maxvelocity, *sv_friction, *sv_stopspeed, *sv_bounce;
-static cvar_t *sv_maxedicts, *deathmatch, *coop, *teamplay, *sv_ghostplayer;
+static cvar_t *sv_maxedicts, *deathmatch, *coop, *teamplay;
 
 // ---------------------------------------------------------------- strings
 
@@ -453,6 +453,7 @@ qboolean SV_SpawnServer(const char *mapname)
 
 	sv.time = 1.0;
 	sv.maxclients = 1;
+	sv.restarting = false;
 	Q_strncpy(sv.mapname, mapname, sizeof(sv.mapname));
 	Q_strncpy(sv.modelname, world.name, sizeof(sv.modelname));
 	sv.max_edicts = (int)sv_maxedicts->value;
@@ -516,27 +517,14 @@ qboolean SV_SpawnServer(const char *mapname)
 
 // ---------------------------------------------------------------- frames
 
-// The ghost player stands where the camera is, so the game sees the player moving
-static void UpdateGhostPlayer(void)
+// The game set the view (spawning, teleporting, cameras): GoldSrc sends the client its angles
+static void CheckFixAngle(edict_t *pl)
 {
-	edict_t *pl = SV_LocalPlayer();
-	if (!pl)
+	if (!pl->v.fixangle)
 		return;
-	if (sv_ghostplayer->value) {
-		extern refdef_t r_refdef;
-		for (int i = 0; i < 3; i++)
-			pl->v.origin[i] = r_refdef.origin[i] - pl->v.view_ofs[i];
-		VectorCopy(r_refdef.angles, pl->v.v_angle);
-		pl->v.angles[0] = -r_refdef.angles[0] / 3;   // players lean a third of their view pitch
-		pl->v.angles[1] = r_refdef.angles[1];
-		pl->v.angles[2] = 0;
-		VectorClear(pl->v.velocity);
-		SV_LinkEdict(pl, false);
-	}
-	gGlobals.time = (float)sv.time;
-	gGlobals.frametime = sv.frametime;
-	gEntityInterface.pfnPlayerPreThink(pl);
-	gEntityInterface.pfnPlayerPostThink(pl);
+	VectorCopy(pl->v.angles, cl_viewangles);
+	VectorCopy(pl->v.angles, pl->v.v_angle);
+	pl->v.fixangle = 0;
 }
 
 void SV_Frame(double frametime)
@@ -549,8 +537,21 @@ void SV_Frame(double frametime)
 	sv.frametime = ft;
 	gGlobals.frametime = ft;
 	SV_ExecuteServerCommands();
-	UpdateGhostPlayer();
+	if (!sv.active)
+		return;
+
+	edict_t *pl = SV_LocalPlayer();
+	if (pl) {
+		CheckFixAngle(pl);
+		usercmd_t cmd;
+		CL_CreateCmd(ft, &cmd);
+		SV_RunPlayerCmd(pl, &cmd);
+	}
+	sv.frametime = ft;
+	gGlobals.frametime = ft;
 	SV_Physics();
+	if ((pl = SV_LocalPlayer()) != NULL)
+		CheckFixAngle(pl);
 }
 
 // ---------------------------------------------------------------- rendering bridge
@@ -638,8 +639,12 @@ static void Edicts_f(void)
 		const char *cls = SV_String(e->v.classname);
 		if (filter && !Q_WildcardMatch(filter, cls) && strnicmp(cls, filter, strlen(filter)))
 			continue;
-		Con_Printf("%4d %-24s %-20s at %6.0f %6.0f %6.0f  move %d solid %d\n", i, cls, SV_String(e->v.model),
-			e->v.origin[0], e->v.origin[1], e->v.origin[2], e->v.movetype, e->v.solid);
+		// brush entities sit at 0 0 0 with their geometry elsewhere: show where they really are
+		vec3_t c;
+		for (int j = 0; j < 3; j++)
+			c[j] = (e->v.absmin[j] + e->v.absmax[j]) * 0.5f;
+		Con_Printf("%4d %-24s %-20s at %6.0f %6.0f %6.0f  center %6.0f %6.0f %6.0f  move %d solid %d\n", i, cls,
+			SV_String(e->v.model), e->v.origin[0], e->v.origin[1], e->v.origin[2], c[0], c[1], c[2], e->v.movetype, e->v.solid);
 		n++;
 	}
 	Con_Printf("%d of %d edicts in use (max %d)\n", n, sv.num_edicts, sv.max_edicts);
@@ -677,6 +682,55 @@ static void ToggleFlag(int flag, const char *name)
 static void God_f(void)      { ToggleFlag(FL_GODMODE, "godmode"); }
 static void Notarget_f(void) { ToggleFlag(FL_NOTARGET, "notarget"); }
 
+// the game's movement code flies through walls when the player's movetype is noclip
+static void Noclip_f(void)
+{
+	edict_t *pl = SV_LocalPlayer();
+	if (!pl) {
+		Con_Printf("No player\n");
+		return;
+	}
+	if (pl->v.movetype != MOVETYPE_NOCLIP) {
+		pl->v.movetype = MOVETYPE_NOCLIP;
+		Con_Printf("noclip ON\n");
+	} else {
+		pl->v.movetype = MOVETYPE_WALK;
+		Con_Printf("noclip OFF\n");
+	}
+}
+
+static void Kill_f(void)
+{
+	edict_t *pl = SV_LocalPlayer();
+	if (pl && pl->v.health > 0) {
+		gGlobals.time = (float)sv.time;
+		gEntityInterface.pfnClientKill(pl);
+	}
+}
+
+// single player restarts the map when the player dies; deferred so the map isn't freed mid-frame
+static void Reload_f(void)
+{
+	if (sv.active && !sv.restarting) {
+		sv.restarting = true;
+		Cbuf_InsertText(va("map %s\n", sv.mapname));
+	}
+}
+
+// moves the player (or, without one, the free camera)
+qboolean SV_SetPlayerPos(const vec3_t eye, const vec3_t angles)
+{
+	edict_t *pl = SV_LocalPlayer();
+	if (!pl)
+		return false;
+	VectorSubtract(eye, pl->v.view_ofs, pl->v.origin);
+	VectorClear(pl->v.velocity);
+	SV_LinkEdict(pl, false);
+	if (angles)
+		VectorCopy(angles, cl_viewangles);
+	return true;
+}
+
 static void Status_f(void)
 {
 	Con_Printf("game DLL: %s\n", sv_game_loaded ? game_dll_path : "none");
@@ -684,8 +738,8 @@ static void Status_f(void)
 		Con_Printf("map: %s, time %.1f, %d edicts\n", sv.mapname, sv.time, sv.num_edicts);
 	edict_t *pl = SV_LocalPlayer();
 	if (pl)
-		Con_Printf("player: health %.0f, armor %.0f, at %.0f %.0f %.0f\n", pl->v.health, pl->v.armorvalue,
-			pl->v.origin[0], pl->v.origin[1], pl->v.origin[2]);
+		Con_Printf("player: health %.0f, armor %.0f, weapons 0x%x, deadflag %d, button %d, at %.0f %.0f %.0f\n", pl->v.health,
+			pl->v.armorvalue, pl->v.weapons, pl->v.deadflag, pl->v.button, pl->v.origin[0], pl->v.origin[1], pl->v.origin[2]);
 }
 
 void SV_Init(void)
@@ -697,7 +751,6 @@ void SV_Init(void)
 	sv_stopspeed = Cvar_Get("sv_stopspeed", "100", FCVAR_SERVER, "speed below which friction stops you");
 	sv_bounce = Cvar_Get("sv_bounce", "1", FCVAR_SERVER, "bounce factor for MOVETYPE_BOUNCE");
 	sv_maxedicts = Cvar_Get("sv_maxedicts", "2048", FCVAR_ARCHIVE, "edicts per map (GoldSrc: 900); applies on map load");
-	sv_ghostplayer = Cvar_Get("sv_ghostplayer", "1", 0, "the player follows the free camera until player movement exists");
 	deathmatch = Cvar_Get("deathmatch", "0", FCVAR_SERVER, "deathmatch game");
 	coop = Cvar_Get("coop", "0", FCVAR_SERVER, "cooperative game");
 	teamplay = Cvar_Get("teamplay", "0", FCVAR_SERVER, "team deathmatch");
@@ -721,13 +774,19 @@ void SV_Init(void)
 	Cmd_AddCommand("god", God_f, "toggles invulnerability for the player");
 	Cmd_AddCommand("notarget", Notarget_f, "toggles whether monsters notice the player");
 	Cmd_AddCommand("status", Status_f, "shows the game DLL and the running map");
+	Cmd_AddCommand("noclip", Noclip_f, "toggles flying through walls");
+	Cmd_AddCommand("kill", Kill_f, "kills the player");
+	Cmd_AddCommand("reload", Reload_f, "restarts the current map");
+	CL_InitInput();
 
 	if (COM_CheckParm("-nogamedll")) {
 		Con_Printf("Game DLL disabled (-nogamedll)\n");
 		return;
 	}
-	if (LoadGameDLL())
+	if (LoadGameDLL()) {
 		cmd_fallback = ClientCommandFallback;
+		SV_InitPlayerMove();
+	}
 }
 
 void SV_Shutdown(void)
