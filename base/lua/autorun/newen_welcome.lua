@@ -23,3 +23,16 @@ end, nil, "prints a greeting from Lua")
 hook.Add("Initialize", "newen.welcome", function()
 	print("Lua is running inside the engine. Try: lua_run 2+2   or   newen_hello world")
 end)
+
+-- newen_spawn <classname>: spawns a game entity where you're looking (monster_scientist, item_healthkit...)
+concommand.Add("newen_spawn", function(ply, cmd, args)
+	if not IsValid(ply) then print("load a map first") return end
+	local class = args[1]
+	if not class then print("usage: newen_spawn <classname>") return end
+	local tr = util.TraceLine({ start = ply:EyePos(), endpos = ply:EyePos() + ply:GetAimVector() * 1024, filter = ply })
+	local ent = ents.Create(class)
+	if not IsValid(ent) then print("no entity class " .. class) return end
+	ent:SetPos(tr.HitPos + tr.HitNormal * 40)   -- far enough out that a monster fits
+	ent:SetAngles(Angle(0, ply:EyeAngles().y + 180, 0))
+	if ent:Spawn() then print("spawned " .. tostring(ent)) end
+end, nil, "spawns an entity where you're looking")

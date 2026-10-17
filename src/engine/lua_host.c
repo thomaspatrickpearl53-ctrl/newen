@@ -6,11 +6,8 @@
 //   base/addons/<id>/lua
 //   base/lua                       core libraries (lua/includes/init.lua)
 // On start: includes/init.lua, then every autorun/*.lua (merged, alphabetical), then hook "Initialize".
-#include "common.h"
+#include "lua_local.h"
 #include <ctype.h>
-#include "lua.h"
-#include "lauxlib.h"
-#include "lualib.h"
 
 static lua_State *L;
 static cvar_t *lua_timeout;
@@ -332,8 +329,8 @@ static void LuaCommand_f(void)
 		lua_pop(L, 1);
 		return;
 	}
-	// GMod signature: (ply, cmd, args, argStr); ply is nil for the engine console
-	lua_pushnil(L);
+	// GMod signature: (ply, cmd, args, argStr); ply is the local player, or NULL without a map
+	LuaG_PushEntity(L, SV_LocalPlayer());
 	lua_pushstring(L, Cmd_Argv(0));
 	lua_createtable(L, Cmd_Argc() - 1, 0);
 	for (int i = 1; i < Cmd_Argc(); i++) {
@@ -757,6 +754,8 @@ static void OpenLibs(void)
 
 	lua_newtable(L);
 	lua_setfield(L, LUA_REGISTRYINDEX, CONCOMMANDS);
+
+	LuaG_Open(L);   // game types and libraries (lua_game.c)
 }
 
 // hook.Run(name, ...) with the given args already pushed; returns results count or -1
@@ -884,6 +883,12 @@ static void LuaMem_f(void)
 	if (L)
 		Con_Printf("Lua memory: %d KB\n", lua_gc(L, LUA_GCCOUNT, 0));
 }
+
+// ---------------------------------------------------------------- for lua_game.c
+
+lua_State *Lua_GetState(void) { return L; }
+qboolean   Lua_Call(int nargs, int nres, const char *where) { return L && SafeCall(nargs, nres, where); }
+int        Lua_Hook(const char *name, int nargs, int nres) { return L ? RunHook(name, nargs, nres) : -1; }
 
 // ---------------------------------------------------------------- engine hooks
 

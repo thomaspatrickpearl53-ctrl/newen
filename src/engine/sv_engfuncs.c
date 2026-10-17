@@ -153,7 +153,7 @@ static void Info_SetValueForKey(char *s, const char *key, const char *value, siz
 static int PF_PrecacheModel(const char *s) { return SV_PrecacheModel(s); }
 static int PF_PrecacheSound(const char *s) { return SV_PrecacheSound(s); }
 
-static void PF_SetModel(edict_t *e, const char *m)
+void SV_SetModel(edict_t *e, const char *m)
 {
 	if (!e || !m)
 		return;
@@ -425,6 +425,19 @@ static void PF_RemoveEntity(edict_t *e)
 {
 	if (e && e != sv.edicts)
 		ED_Free(e);
+}
+
+edict_t *SV_CreateNamedEntity(const char *name)
+{
+	ENTITYINIT init = SV_GetEntityInit(name);
+	if (!init) {
+		Con_DPrintf("CreateNamedEntity: no class %s\n", name);
+		return NULL;
+	}
+	edict_t *e = ED_Alloc();
+	e->v.classname = SV_AllocString(name);
+	init(&e->v);
+	return e;
 }
 
 static edict_t *PF_CreateNamedEntity(int className)
@@ -1148,7 +1161,7 @@ void SV_InitEngineFuncs(enginefuncs_t *ef)
 	memset(ef, 0, sizeof(*ef));
 	ef->pfnPrecacheModel = PF_PrecacheModel;
 	ef->pfnPrecacheSound = PF_PrecacheSound;
-	ef->pfnSetModel = PF_SetModel;
+	ef->pfnSetModel = SV_SetModel;
 	ef->pfnModelIndex = PF_ModelIndex;
 	ef->pfnModelFrames = PF_ModelFrames;
 	ef->pfnSetSize = PF_SetSize;

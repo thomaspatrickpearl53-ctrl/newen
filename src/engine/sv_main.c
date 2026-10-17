@@ -117,6 +117,7 @@ void ED_Free(edict_t *e)
 {
 	if (e->free)
 		return;
+	LuaG_EntityRemoved(e);
 	SV_UnlinkEdict(e);
 	FreePrivateData(e);
 	e->serialnumber++;
@@ -394,6 +395,9 @@ static void ParseEntity(const bspentity_t *be, qboolean isworld)
 				Q_strncpy(value, "90 0 0", sizeof(value));
 			Q_strncpy(key, "angles", sizeof(key));
 		}
+		const char *replaced = LuaG_EntityKeyValue(cls, key, value);
+		if (replaced)
+			Q_strncpy(value, replaced, sizeof(value));
 		KeyValueData kvd = { cls, key, value, 0 };
 		gEntityInterface.pfnKeyValue(e, &kvd);
 	}
@@ -466,6 +470,7 @@ qboolean SV_SpawnServer(const char *mapname)
 		e->free = i > 0;
 	}
 	sv.num_edicts = sv.maxclients + 1;
+	LuaG_ServerStarted();
 
 	memset(&gGlobals, 0, sizeof(gGlobals));
 	gGlobals.pStringBase = string_base;
@@ -506,6 +511,10 @@ qboolean SV_SpawnServer(const char *mapname)
 	}
 	ConnectLocalClient();
 	sv.loading = false;
+	LuaG_CheckNewEntities();
+	if (SV_LocalPlayer())
+		LuaG_PlayerSpawned(SV_LocalPlayer());
+	LuaG_InitPostEntity();
 
 	int used = 0;
 	for (int i = 0; i < sv.num_edicts; i++)
@@ -552,6 +561,15 @@ void SV_Frame(double frametime)
 	SV_Physics();
 	if ((pl = SV_LocalPlayer()) != NULL)
 		CheckFixAngle(pl);
+
+	LuaG_CheckNewEntities();
+	static float last_health = 1;
+	if (pl) {
+		if (last_health > 0 && pl->v.health <= 0)
+			LuaG_PlayerDied(pl);
+		last_health = pl->v.health;
+	}
+	LuaG_Tick();
 }
 
 // ---------------------------------------------------------------- rendering bridge
@@ -619,6 +637,8 @@ static qboolean ClientCommandFallback(void)
 	edict_t *pl = SV_LocalPlayer();
 	if (!pl)
 		return false;
+	if (LuaG_PlayerCommand(pl))
+		return true;
 	gGlobals.time = (float)sv.time;
 	gEntityInterface.pfnClientCommand(pl);
 	return true;

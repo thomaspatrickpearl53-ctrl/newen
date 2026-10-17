@@ -4,11 +4,12 @@ Everything someone new needs to pick this project up: what it is, what was decid
 out, how to build and test it, what works, what doesn't, and what comes next. Read `README.md` first for the
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
-Status as of 2026-10-17: **Phase 1, steps 1 to 3 are done; step 4 is done except the Lua hooks.** The engine
+Status as of 2026-10-17: **Phase 1, steps 1 to 4 are done.** The engine
 boots, has a full console and engine-level Lua, renders Half-Life maps, models and sprites, and runs the stock Steam
 `hl.dll`: it spawns every map's entities, monsters think, path-find and fight, doors and trains move, and the player
-walks with the DLL's own movement code (doors open, triggers fire, weapons can be picked up). Next up is Lua at the
-DLL boundary (4c), then the client DLL (step 5: HUD, view model, input, VGUI1).
+walks with the DLL's own movement code (doors open, triggers fire, weapons can be picked up). Engine Lua can see
+and change the game: entities, traces, spawning, hooks. Next up is the client DLL (step 5: HUD, view model, input,
+VGUI1).
 
 ---
 
@@ -133,7 +134,7 @@ All engine code is in `src/engine/`, about 12,400 lines. One executable, no DLL 
 | `filesystem.c` | 324 | Search paths (see the comment at the top), finding Half-Life, `FS_LoadFile`, `FS_ListFiles` (merged, sorted), `FS_OpenWrite` (write dir only), `path`, `dir` |
 | `vid_sdl.c` | 304 | SDL window and GL 2.1 compatibility context, key/mouse mapping to GoldSrc key numbers, relative mouse for mouse look, vsync, `vid_restart`, `screenshot` (TGA) |
 | `draw.c` / `font_win.c` | 106 / 77 | 2D: filled rects and console text. The font is rasterized from a Windows font with GDI into an alpha atlas (ASCII 32-126, monospace) |
-| `lua_host.c` | 945 | The Lua VM (see section 7) |
+| `lua_host.c` | 950 | The Lua VM (see section 7) |
 | `mathlib.h` | 61 | vec3 macros, `AngleVectors` (Quake conventions) |
 | `gl_local.h` | 77 | Renderer-internal: GL extension pointers (`qglActiveTexture`, buffers), texture API, WAD API, `refdef_t` |
 | `image.c` | 215 | stb_image loading through the FS, GL texture list, filters (`r_texturemode`, `r_anisotropy`), texture gamma table, checkerboard for missing textures, GL extension loading |
@@ -154,6 +155,8 @@ All engine code is in `src/engine/`, about 12,400 lines. One executable, no DLL 
 | `sv_phys.c` | 707 | `SV_Physics`: `StartFrame`, then per movetype: push (move and rotate, blocking, riders), step (gravity, ground friction), toss/bounce/fly/missile, noclip, follow; think timing (`ltime` for pushers), `FL_KILLME` removal; monster movement: `SV_movestep` (step up/down 18), `SV_CheckBottom`, `SV_MoveToOrigin`, `SV_DropToFloor` |
 | `sv_pmove.c` | 530 | Player movement: fills `playermove_t` (player state, movevars from the `sv_*` cvars, physinfo, physents = world + solid entities within ~256 units, moveents = water/ladder brushes), all the pm callbacks (player traces against physents with the pm hull numbering stand/duck/point/large mapped to BSP hulls 1/3/0/2, `PM_TestPlayerPosition`, point contents incl. content brushes, `PM_HullForBsp`, `PM_TraceModel` into GoldSrc's trace_t layout, `memfgets`, files), then per command `CmdStart`, `PlayerPreThink`, think, `PM_Move`, copy back, link with trigger touches, touch what the move hit, `PlayerPostThink`, `CmdEnd` |
 | `cl_input.c` | 150 | **Temporary** (client.dll's job in GoldSrc): `+forward/+back/+moveleft/+moveright/+moveup/+movedown/+jump/+duck/+attack/+attack2/+use/+reload/+speed/+alt1/+showscores` and `impulse`, the `cl_*speed` cvars, `CL_CreateCmd` builds a `usercmd_t` each frame. `cl_viewangles` is the look direction (mouse) |
+| `lua_local.h` | 17 | What `lua_host.c` shares with `lua_game.c`: `Lua_GetState`, `Lua_Call`, `Lua_Hook`, `LuaG_PushEntity` |
+| `lua_game.c` | 1202 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
 | `r_main.c` | 288 | View: Hor+ FOV, projection, Quake modelview, frustum planes, `R_CullBox`; the noclip camera; commands `map`, `maps`, `disconnect`, `viewpos`, `setpos`, `texlist` |
 
 `base/lua/includes/init.lua` (231 lines) is the core Lua library (hook, timer, Color, draw helpers, string/table/math
@@ -180,6 +183,16 @@ opens.
 - **Timeouts**: an instruction-count hook checks a deadline (`lua_timeout`, default 5 s) per outermost call.
 - **Errors**: tracebacks print in red. The same error repeating within 5 s is shown once (so a broken Think hook doesn't spam).
 - Engine-to-Lua hooks: `Initialize`, `Think`, `DrawOverlay` (surface.* only works here), `KeyEvent(name, down, keynum)` (return true to eat the key), `WorldLoaded(map)`, `WorldUnloaded(map)`, `ShutDown`.
+- Game hooks (step 4c, `lua_game.c`, fired from `sv_main.c`/`sv_pmove.c`): `InitPostEntity`, `Tick` (every server
+  frame), `OnEntityCreated` (found by scanning edicts after each frame, because the game creates most entities
+  without telling the engine; each slot remembers the serial it announced), `EntityRemoved` (from `ED_Free`),
+  `PlayerSpawn`/`PlayerInitialSpawn`, `PlayerDeath` (health crossing 0), `PlayerCommand` (before unknown commands go
+  to the game), `StartCommand` (the usercmd as a table, copied back), `EntityKeyValue` (while a map spawns).
+- These hooks can fire while Lua is already running (Lua spawns an entity, the game frees another inside that
+  call), so they save and restore the Lua stack top instead of clearing it. Keep it that way.
+- `SERVER` and `CLIENT` are both true: one Lua state runs both sides. Concommand callbacks get the local player.
+- The game's entity think/touch/use calls aren't hooked (they happen inside the DLL); only the engine-side
+  boundary is. GMod-style damage hooks need either DLL cooperation or client-side work later.
 - Helpers for C code: `SafeCall`, `RunHook(name, nargs, nres)`, `Lua_RunHookString`.
 
 ## 8. Known issues and shortcuts (fix when convenient)
@@ -196,6 +209,8 @@ opens.
 - `+command` arguments are only quoted when they contain spaces.
 - The FPS counter reads 0 for the first half second.
 - **Untested**: Blue Shift lump detection, maps beyond ±4096, the HD override seen on screen (the loader path *is* confirmed by the log: "1 HD texture replacement"), `-game` mods, and hand-driven mouse/keyboard play.
+- Files in `base/` are copied to `bin/base/` only when the exe links. After changing only Lua files, copy them by
+  hand (or touch a C file) or the old scripts run.
 - `bin/` holds build output plus `userdata/`. Add `build/`, `bin/` to `.gitignore` when git is set up (keep `base/` and `third_party/` in git).
 - The PDB/ILK in `bin/` come from the RelWithDebInfo build.
 - **Server shortcuts (step 4)**: no sound, so
@@ -251,8 +266,12 @@ traces, entity physics and thinking, PVS queries, rendering from edicts, a ghost
 **4b, done: player movement.** See `sv_pmove.c` and `cl_input.c` in the code map. The camera follows the player's
 eyes (`view_ofs` + `punchangle`); `noclip` is the game's own noclip movetype; `fixangle` from the game sets the view.
 
-**4c, next: Lua at the DLL boundary**, as planned below. `pfnUpdateClientData` and `pfnGetWeaponData` wait for
-step 5, along with removing `cl_input.c` once client.dll registers its own `+forward` and friends.
+**4c, done: Lua at the DLL boundary.** See `lua_game.c` and section 7. Tested with a throwaway autorun script on
+c1a0d: vector math, 206 map entities announced, traces (hit a func_door, `HitTexture` c1a0b_dr4b), a Lua-spawned
+headcrab that dropped to the floor and attacked, `Give`, `PlayerCommand`, `EntityRemoved`, `ent.health = 50`.
+
+`pfnUpdateClientData` and `pfnGetWeaponData` wait for step 5, along with removing `cl_input.c` once client.dll
+registers its own `+forward` and friends.
 
 The original plan for step 4:
 - Load `valve/dlls/hl.dll` (path from `liblist.gam` `gamedll`), call `GiveFnptrsToDll(&enginefuncs, &globalvars)`, `GetEntityAPI2`/`GetEntityAPI` (`DLL_FUNCTIONS`), `GetNewDLLFunctions`.

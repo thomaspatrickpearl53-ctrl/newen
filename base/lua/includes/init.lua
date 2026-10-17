@@ -32,7 +32,7 @@ function hook.Run(event, ...)
 	for id, fn in pairs(list) do
 		-- an id that is a table (or object) with IsValid() is removed once it's no longer valid
 		if type(id) ~= "string" and type(id) ~= "number" then
-			if type(id) == "table" and id.IsValid and not id:IsValid() then
+			if (type(id) == "table" or type(id) == "userdata") and id.IsValid and not id:IsValid() then
 				list[id] = nil
 				goto continue
 			end
@@ -222,6 +222,13 @@ function math.Approach(cur, target, inc)
 	inc = math.abs(inc)
 	if cur < target then return math.min(cur + inc, target) end
 	return math.max(cur - inc, target)
+end
+
+-- true for a valid Entity (or any object whose IsValid() says so)
+function IsValid(o)
+	local t = type(o)
+	if t ~= "userdata" and t ~= "table" then return false end
+	return o.IsValid ~= nil and o:IsValid() == true
 end
 
 function isstring(v) return type(v) == "string" end

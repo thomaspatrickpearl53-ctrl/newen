@@ -112,6 +112,20 @@ void        SV_ExecuteServerCommands(void);   // what the game queued with Serve
 const char *SV_InfoValueForKey(const char *s, const char *key);
 const char *SV_TraceTexture(edict_t *texent, const float *v1, const float *v2);
 const char *SV_PhysInfo(void);
+void        SV_SetModel(edict_t *e, const char *name);
+edict_t    *SV_CreateNamedEntity(const char *classname);   // allocates and runs the class function; NULL if unknown
+
+// lua_game.c: hooks the server fires into engine Lua
+void        LuaG_ServerStarted(void);
+void        LuaG_CheckNewEntities(void);
+void        LuaG_EntityRemoved(edict_t *e);
+void        LuaG_PlayerSpawned(edict_t *pl);
+void        LuaG_PlayerDied(edict_t *pl);
+void        LuaG_InitPostEntity(void);
+void        LuaG_Tick(void);
+qboolean    LuaG_PlayerCommand(edict_t *pl);
+void        LuaG_StartCommand(edict_t *pl, usercmd_t *cmd);
+const char *LuaG_EntityKeyValue(const char *classname, const char *key, const char *value);
 
 // sv_pmove.c
 void        SV_InitPlayerMove(void);                      // after the game DLL loads

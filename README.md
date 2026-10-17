@@ -103,13 +103,32 @@ API so far: `hook.Add/Remove/Run` (events: `Initialize`, `Think`, `DrawOverlay`,
 `engine.GetGameDir/Version/GetMap` (hooks `WorldLoaded`, `WorldUnloaded` get the map name), `CurTime/RealTime/FrameTime/SysTime/ScrW/ScrH`, `print/Msg/MsgN/include/PrintTable`.
 The names follow Garry's Mod and Half-Life: Lua so addons can move over.
 
+Game API (works while a map runs):
+
+- `Vector(x, y, z)` and `Angle(p, y, r)` with math operators and `Length`, `Distance`, `Dot`, `Cross`,
+  `GetNormalized`, `Angle()` / `Forward`, `Right`, `Up`.
+- `Entity(i)`, `LocalPlayer()`, `NULL`, `IsValid(ent)`; `ents.Create`, `GetAll`, `FindByClass`, `FindByName`,
+  `FindByModel`, `FindInSphere`, `FindInBox`, `GetCount`; `player.GetAll`.
+- Entity methods: `GetPos/SetPos`, `GetAngles/SetAngles`, `GetVelocity/SetVelocity`, `GetModel/SetModel`,
+  `Health/SetHealth`, `Armor/SetArmor`, `GetClass`, `GetName`, `GetOwner`, `SetKeyValue`, `Spawn`, `Use`, `Touch`,
+  `Remove`, `SetSequence`, `LookupSequence`, `SetColor`, `SetSize`, `IsPlayer`, `IsNPC`, `Alive`, `EyePos`,
+  `EyeAngles`, `GetAimVector`, `Give` (players), `Kill`, and more. Any entity field works directly too:
+  `ent.health = 50`, `ent.target`, `ent.rendermode`...
+- `util.TraceLine{ start, endpos, filter }` and `util.TraceHull{ ..., mins, maxs }` return `Hit`, `HitPos`,
+  `HitNormal`, `Fraction`, `Entity`, `HitWorld`, `HitTexture`; `util.PointContents`, `util.PrecacheModel`.
+- Hooks: `InitPostEntity`, `Tick`, `OnEntityCreated(ent)`, `EntityRemoved(ent)`, `PlayerSpawn(ply)`,
+  `PlayerInitialSpawn(ply)`, `PlayerDeath(ply)`, `PlayerCommand(ply, cmd, args)` (return true to swallow),
+  `StartCommand(ply, cmd)` (change the movement input), `EntityKeyValue(class, key, value)` (return a string to
+  change a map's entity keys as it loads).
+- `newen_spawn <classname>` (from the example script) spawns an entity where you're looking.
+
 ## Roadmap
 
 Phase 1, Half-Life runs:
 1. **Core** - window, console, cvars, commands, keys, filesystem, Lua VM *(done)*
 2. **World** - BSP v30 and big maps, WAD and HD textures, lightmaps, PVS, noclip camera *(done)*
 3. **Models and sprites** - MDL (no fixed limits), SPR, HD model textures *(done)*
-4. **Server** - load `hl.dll`, engine functions, collision, entity physics, player movement *(done)*; Lua hooks *(next)*
+4. **Server** - load `hl.dll`, engine functions, collision, entity physics, player movement, Lua game API *(done)*
 5. Client - load `client.dll`, HUD, VGUI1
 6. Single player - loopback server, save/load, level changes, stereo and HQ audio, Half-Life: Lua API
 

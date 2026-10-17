@@ -46,6 +46,7 @@ add_executable(newen WIN32
 	src/engine/font_win.c
 	src/engine/host.c
 	src/engine/lua_host.c
+	src/engine/lua_game.c
 	src/engine/image.c
 	src/engine/wad.c
 	src/engine/bsp.c
