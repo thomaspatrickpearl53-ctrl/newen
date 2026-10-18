@@ -10,12 +10,15 @@ widened as they load. All values little-endian, structs packed.
 |---|---|---|
 | ident | 4 bytes | `NBSP` |
 | version | int32 | 1 |
-| numlumps | int32 | 15 or more |
-| lumps | numlumps × { int32 offset, int32 length } | |
+| lumps | 15 × { int32 offset, int32 length } | |
 
-Lumps 0-14 are BSP30's, in the same order: entities, planes, textures, vertexes, visibility, nodes, texinfo,
-faces, lighting, clipnodes, leafs, marksurfaces, edges, surfedges, models. Lumps past 14 are for later
-features; a reader skips the ones it doesn't know. Lumps start on 4-byte boundaries.
+The lumps are BSP30's, in the same order: entities, planes, textures, vertexes, visibility, nodes, texinfo,
+faces, lighting, clipnodes, leafs, marksurfaces, edges, surfedges, models. Lumps start on 4-byte boundaries.
+
+Extra data (later features, e.g. a lightmap scale per face) goes in a **BSPX block**, the convention Quake
+tools already use: 4-byte aligned right after the last lump, `"BSPX"`, int32 count, then count ×
+{ char name[24], int32 offset, int32 length }. Readers skip names they don't know; newen ignores the block
+for now.
 
 ## What changed from BSP30
 
@@ -38,7 +41,12 @@ The format has no size limit of its own. In practice float precision sets one: a
 to about 1/64 unit, which the movement code still handles; further out needs origin rebasing (later).
 Game DLLs can have their own limits: stock `hl.dll` deletes grenades, satchels, snarks and gibs outside ±4096.
 
+The field layout is the same as Quake's BSP2, so tools that write BSP2 need only the header and Half-Life's
+lumps (textures with palettes, RGB lighting).
+
 ## Making NBSP maps
 
-No compiler writes NBSP yet. `tools/bsp2nbsp.py in.bsp out.bsp [x y z]` converts a BSP30 map, optionally moving
-the whole map by an offset (for testing big coordinates).
+- The compiler, `newen-compiler` (ericw-tools with NBSP added): `qbsp -nbsp map.map`, then `vis` and `light`
+  as usual. `qbsp -hlbsp` writes BSP30 and switches to NBSP by itself when the map is too big for BSP30.
+- `tools/bsp2nbsp.py in.bsp out.bsp [x y z]` converts a BSP30 map, optionally moving the whole map by an
+  offset (for testing big coordinates).

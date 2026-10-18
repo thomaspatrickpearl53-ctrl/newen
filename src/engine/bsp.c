@@ -18,8 +18,8 @@ enum {
 typedef struct { int fileofs, filelen; } lump_t;
 typedef struct { int version; lump_t lumps[HEADER_LUMPS]; } dheader_t;
 
-// newen's extended format (NBSP, docs/NBSP.md): BSP30's lumps with 32-bit indices and float bounds, and a lump
-// count so more lumps can follow. Header: "NBSP", version, number of lumps, then the lumps.
+// newen's extended format (NBSP, docs/NBSP.md): BSP30's lumps with 32-bit indices and float bounds.
+// Header: "NBSP", version, then the 15 lumps. Extra data follows the lumps as a BSPX block (ignored for now).
 #define NBSP_IDENT   (('P' << 24) | ('S' << 16) | ('B' << 8) | 'N')
 #define NBSP_VERSION 1
 
@@ -945,7 +945,7 @@ qboolean BSP_Load(const char *mapname)
 		Con_Errorf("Map %s not found\n", path);
 		return false;
 	}
-	if (size < sizeof(dheader_t) && !(size >= 12 && *(int *)data == NBSP_IDENT)) {
+	if (size < sizeof(dheader_t) + 4) {
 		Mem_Free(data);
 		Con_Errorf("%s is too small to be a map\n", path);
 		return false;
@@ -959,14 +959,13 @@ qboolean BSP_Load(const char *mapname)
 
 	const int *h = (const int *)data;
 	if (h[0] == NBSP_IDENT) {
-		// "NBSP", version, lump count, lumps; lumps past the ones known here are for later features
-		if (h[1] != NBSP_VERSION || h[2] < HEADER_LUMPS || 12 + (size_t)h[2] * sizeof(lump_t) > size) {
-			Con_Errorf("%s is NBSP version %d with %d lumps; this engine reads version %d\n", path, h[1], h[2], NBSP_VERSION);
+		if (h[1] != NBSP_VERSION) {
+			Con_Errorf("%s is NBSP version %d; this engine reads version %d\n", path, h[1], NBSP_VERSION);
 			Mem_Free(data);
 			return false;
 		}
 		wide = true;
-		memcpy(lumps, data + 12, sizeof(lumps));
+		memcpy(lumps, data + 8, sizeof(lumps));
 	} else if (h[0] == BSPVERSION) {
 		wide = false;
 		memcpy(lumps, ((dheader_t *)data)->lumps, sizeof(lumps));

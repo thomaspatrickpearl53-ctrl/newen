@@ -432,14 +432,22 @@ maps already pass 4096 (`lambda_bunker` reaches x 9000, `c2a2c` z -9000). BSP30 
 leaf bounds are shorts).
 
 **Extended format, done (owner said go with the recommendations, 2026-10-18): NBSP, see `docs/NBSP.md`.** BSP30's
-lumps with 32-bit indices and float bounds, plus a lump count so later features can add lumps. `bsp.c` reads both:
+lumps with 32-bit indices and float bounds (the same field layout as Quake's BSP2); header `NBSP`, version 1, the 15
+lumps; extra data later goes in a BSPX block after the lumps. `bsp.c` reads both:
 `GetNodes/GetFaces/GetLeafs/GetEdges/GetMarkSurfaces/GetClipnodes` hand out the wide structs and widen BSP30 lumps
 into scratch copies freed after the load. `tools/bsp2nbsp.py in out [x y z]` converts (and optionally moves) a
 BSP30 map. Tested: converted `c2a5` renders pixel-identical; `c1a3b` converted and moved to +60000 and to -120000
-plays the same as the original (walking, jumping, a zombie, explosion, bullets). Not done: **a compiler that
-writes NBSP.** The plan is to modify VHLT (the compilers GoldSrc mappers use), but its license isn't confirmed:
-it continues Zoner's tools, which came from Valve's tools under the HL SDK license (free, non-commercial, HL mods),
-so it's probably the same. Check the license in its own download before starting, and ask the owner which map
-editor they use (editors have their own size limits). Lightmap scale is still BSP30's fixed 16 units; a later
-lump can change that when lighting work needs it.
+plays the same as the original (walking, jumping, a zombie, explosion, bullets).
+
+**Compiler, done: `%USERPROFILE%\newen-compiler`** (owner's choice, 2026-10-18). The owner maps in
+**TrenchBroom** for big maps (Hammer 3.5 stops at +-4096) and also has their own web map editor. VHLT was ruled out:
+its license is GPL overridden by Valve's HL SDK EULA (Half-Life-engine mods only). The compiler is **ericw-tools**
+(plain GPL v3; it has Half-Life output, `-hlbsp`) with NBSP added, kept in its own folder and git repo (local branch
+`newen`, never pushed) so newen's code stays clean. `NEWEN.md` there lists the changes; `build-newen.bat` builds it
+64-bit (Embree and oneTBB from their GitHub releases in `deps/`). `qbsp -nbsp` writes NBSP; `qbsp -hlbsp` writes
+BSP30 and switches to NBSP by itself past BSP30's limits. Tested: a generated room map compiles (qbsp, vis, light)
+and plays in newen as BSP30 and as NBSP; a map with rooms at 0, +60000 and -60000 joined by teleporters compiles
+(auto-upgraded) and plays, lit, in every room. Next for big maps, when wanted: a TrenchBroom game configuration
+for newen, coarser lightmaps outdoors (ericw-tools already writes a lightmap-scale BSPX lump; newen would read it),
+VIS hints for big open areas.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit, Linux.

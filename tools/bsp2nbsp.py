@@ -87,14 +87,14 @@ def main():
         models.append(struct.pack('<9f7i', *r))
     out[MODELS] = b''.join(models)
 
-    # "NBSP", version 1, lump count, lumps; each lump 4-byte aligned
-    header = 12 + LUMPS * 8
+    # "NBSP", version 1, the 15 lumps; each lump 4-byte aligned
+    header = 8 + LUMPS * 8
     body = b''
     table = []
     for data in out:
         table.append((header + len(body), len(data)))
         body += data + b'\0' * (-len(data) % 4)
-    f = struct.pack('<4sii', b'NBSP', 1, LUMPS) + b''.join(struct.pack('<ii', o, n) for o, n in table) + body
+    f = struct.pack('<4si', b'NBSP', 1) + b''.join(struct.pack('<ii', o, n) for o, n in table) + body
     open(dst, 'wb').write(f)
     print('wrote %s (%d bytes)%s' % (dst, len(f), ' moved by %g %g %g' % off if moving else ''))
 

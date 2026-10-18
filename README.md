@@ -173,7 +173,8 @@ Phase 1, Half-Life runs:
 
 Phase 2 so far: **big maps.** BSP30 maps work out to ±32768. newen also loads its own extended format, NBSP
 (`docs/NBSP.md`), which has no fixed size or count limits; `tools/bsp2nbsp.py in.bsp out.bsp [x y z]` converts a
-Half-Life map to it (and can move it, for testing). No map compiler writes NBSP yet.
+Half-Life map to it (and can move it, for testing). The map compiler is a separate project,
+`newen-compiler` (ericw-tools with NBSP output): `qbsp -nbsp` or `qbsp -hlbsp`, then `vis` and `light`.
 
 Then: Jolt physics, extended BSP, lights and shadows, particles, captions, dev tools; VGUI2; more games
 (Opposing Force, Blue Shift, CS 1.6, Cry of Fear); co-op, terrain, 64-bit, Linux.
