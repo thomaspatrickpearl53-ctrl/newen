@@ -1155,7 +1155,18 @@ static int ReadShort(reader_t *r)
 	return s;
 }
 
-static float ReadCoord(reader_t *r) { return ReadShort(r) / 8.0f; }
+// temp entities carry full floats (see PF_WriteCoord)
+static float ReadCoord(reader_t *r)
+{
+	if (r->pos + 4 > r->len) {
+		r->bad = true;
+		return 0;
+	}
+	float f;
+	memcpy(&f, r->data + r->pos, 4);
+	r->pos += 4;
+	return f;
+}
 
 static void ReadVec(reader_t *r, vec3_t v)
 {

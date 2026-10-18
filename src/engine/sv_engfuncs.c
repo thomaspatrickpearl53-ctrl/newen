@@ -765,7 +765,16 @@ static void PF_WriteChar(int v)   { signed char c = (signed char)v; MsgWrite(&c,
 static void PF_WriteShort(int v)  { short s = (short)v; MsgWrite(&s, 2); }
 static void PF_WriteLong(int v)   { MsgWrite(&v, 4); }
 static void PF_WriteAngle(float v) { PF_WriteByte((int)(v * 256.0f / 360.0f) & 255); }
-static void PF_WriteCoord(float v) { PF_WriteShort((int)(v * 8.0f)); }
+// GoldSrc sends coordinates as 1/8-unit shorts, which only reach +-4096. Temp entities are read by the
+// engine, so they carry the full float and work on big maps; the client DLL decodes its own messages
+// the GoldSrc way, so those keep the short.
+static void PF_WriteCoord(float v)
+{
+	if (msg_type == SVC_TEMPENTITY)
+		MsgWrite(&v, 4);
+	else
+		PF_WriteShort((int)(v * 8.0f));
+}
 static void PF_WriteString(const char *s) { if (!s) s = ""; MsgWrite(s, (int)strlen(s) + 1); }
 static void PF_WriteEntity(int v) { PF_WriteShort(v); }
 

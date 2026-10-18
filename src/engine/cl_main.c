@@ -910,9 +910,6 @@ void CL_QueueMessage(int type, const unsigned char *data, int len)
 		memcpy(m->data, data, len);
 }
 
-#define SVC_TEMPENTITY 23
-#define SVC_WEAPONANIM 35
-#define SVC_ROOMTYPE   37
 
 pfnUserMsgHook CL_FindMessageHook(const char *name)
 {

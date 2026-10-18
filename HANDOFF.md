@@ -418,4 +418,16 @@ Ask the owner what comes next.
 
 ### After Phase 1
 Phase 2: Jolt physics, extended BSP format plus compiler changes, lights/shadows, particles, captions, dev tools.
+
+**Phase 2 started with big maps (owner's choice, 2026-10-18): check +-32768, then plan the extended BSP format and
+compiler changes with the owner before building.** The check, done: `tools/bspshift.py <in.bsp> <out.bsp> x y z`
+moves a whole map (geometry, bounds, texture alignment so lightmaps stay valid, entity origins; maps with origin
+brushes are refused). `c1a3b` moved by +-28000 (to +-31968, in `bin/userdata/valve/maps/far_pos|far_neg.bsp`)
+plays the same as the original: walking, jumping, collision, a zombie's AI, bullets, decals, sparks, sound,
+save/load. Found and fixed: temp entity coordinates were GoldSrc's 1/8-unit shorts (+-4096), so explosions and
+other effects wrapped; they carry full floats now (engine-read only, `PF_WriteCoord`/`ReadCoord`). Limits that
+are in the stock game code, not ours: `hl.dll`'s `IsInWorld` deletes grenades, satchels, snarks and gibs outside
++-4096; `client.dll` reads the damage direction (and spectator positions) as +-4096 shorts. Stock Half-Life
+maps already pass 4096 (`lambda_bunker` reaches x 9000, `c2a2c` z -9000). BSP30 itself stops at +-32767 (node and
+leaf bounds are shorts).
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit, Linux.

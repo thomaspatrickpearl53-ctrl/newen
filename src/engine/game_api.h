@@ -228,6 +228,11 @@ typedef enum { force_exactfile, force_model_samebounds, force_model_specifybound
 #define MSG_ONE_UNRELIABLE 8
 #define MSG_SPEC           9
 
+// engine messages newen reads itself (the rest go to the client DLL's hooks)
+#define SVC_TEMPENTITY 23
+#define SVC_WEAPONANIM 35
+#define SVC_ROOMTYPE   37
+
 typedef unsigned int CRC32_t;
 
 // ---------------------------------------------------------------- engine functions (engine -> DLL)
