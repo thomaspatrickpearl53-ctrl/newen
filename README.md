@@ -171,5 +171,9 @@ Phase 1, Half-Life runs:
 5. **Client** - load `client.dll` and `vgui.dll`, HUD, view model, input, events, effects, decals, beams, titles *(done)*; VGUI mouse input *(next)*
 6. **Single player** - sound, level changes, saved games *(done)*
 
+Phase 2 so far: **big maps.** BSP30 maps work out to ±32768. newen also loads its own extended format, NBSP
+(`docs/NBSP.md`), which has no fixed size or count limits; `tools/bsp2nbsp.py in.bsp out.bsp [x y z]` converts a
+Half-Life map to it (and can move it, for testing). No map compiler writes NBSP yet.
+
 Then: Jolt physics, extended BSP, lights and shadows, particles, captions, dev tools; VGUI2; more games
 (Opposing Force, Blue Shift, CS 1.6, Cry of Fear); co-op, terrain, 64-bit, Linux.

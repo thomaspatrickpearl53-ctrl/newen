@@ -430,4 +430,16 @@ are in the stock game code, not ours: `hl.dll`'s `IsInWorld` deletes grenades, s
 +-4096; `client.dll` reads the damage direction (and spectator positions) as +-4096 shorts. Stock Half-Life
 maps already pass 4096 (`lambda_bunker` reaches x 9000, `c2a2c` z -9000). BSP30 itself stops at +-32767 (node and
 leaf bounds are shorts).
+
+**Extended format, done (owner said go with the recommendations, 2026-10-18): NBSP, see `docs/NBSP.md`.** BSP30's
+lumps with 32-bit indices and float bounds, plus a lump count so later features can add lumps. `bsp.c` reads both:
+`GetNodes/GetFaces/GetLeafs/GetEdges/GetMarkSurfaces/GetClipnodes` hand out the wide structs and widen BSP30 lumps
+into scratch copies freed after the load. `tools/bsp2nbsp.py in out [x y z]` converts (and optionally moves) a
+BSP30 map. Tested: converted `c2a5` renders pixel-identical; `c1a3b` converted and moved to +60000 and to -120000
+plays the same as the original (walking, jumping, a zombie, explosion, bullets). Not done: **a compiler that
+writes NBSP.** The plan is to modify VHLT (the compilers GoldSrc mappers use), but its license isn't confirmed:
+it continues Zoner's tools, which came from Valve's tools under the HL SDK license (free, non-commercial, HL mods),
+so it's probably the same. Check the license in its own download before starting, and ask the owner which map
+editor they use (editors have their own size limits). Lightmap scale is still BSP30's fixed 16 units; a later
+lump can change that when lighting work needs it.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit, Linux.

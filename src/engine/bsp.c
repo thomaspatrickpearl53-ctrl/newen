@@ -18,6 +18,11 @@ enum {
 typedef struct { int fileofs, filelen; } lump_t;
 typedef struct { int version; lump_t lumps[HEADER_LUMPS]; } dheader_t;
 
+// newen's extended format (NBSP, docs/NBSP.md): BSP30's lumps with 32-bit indices and float bounds, and a lump
+// count so more lumps can follow. Header: "NBSP", version, number of lumps, then the lumps.
+#define NBSP_IDENT   (('P' << 24) | ('S' << 16) | ('B' << 8) | 'N')
+#define NBSP_VERSION 1
+
 #pragma pack(push, 1)
 typedef struct { float normal[3]; float dist; int type; } dplane_t;
 typedef struct { int planenum; short children[2]; short mins[3], maxs[3]; unsigned short firstface, numfaces; } dnode_t;
@@ -29,16 +34,45 @@ typedef struct { int contents; int visofs; short mins[3], maxs[3];
 typedef struct { unsigned short v[2]; } dedge_t;
 typedef struct { int planenum; short children[2]; } dclipnode_t;
 typedef struct { float mins[3], maxs[3]; float origin[3]; int headnode[4]; int visleafs; int firstface, numfaces; } dmodel_t;
+
+// the wide versions: NBSP stores these; BSP30's are widened into them as they load
+typedef struct { int planenum; int children[2]; float mins[3], maxs[3]; int firstface, numfaces; } wnode_t;
+typedef struct { int planenum; int side; int firstedge; int numedges; int texinfo;
+                 unsigned char styles[4]; int lightofs; } wface_t;
+typedef struct { int contents; int visofs; float mins[3], maxs[3];
+                 int firstmarksurface, nummarksurfaces; unsigned char ambient_level[4]; } wleaf_t;
+typedef struct { unsigned int v[2]; } wedge_t;
+typedef struct { int planenum; int children[2]; } wclipnode_t;
 #pragma pack(pop)
 
 static unsigned char *file_base;
 static size_t file_size;
-static dheader_t *header;
+static lump_t lumps[HEADER_LUMPS];
+static qboolean wide;   // NBSP
 static const char *load_error;
+
+// widened copies of BSP30 lumps, freed when the load is over
+static void **scratch;
+static int scratch_count;
+
+static void *Scratch(size_t size)
+{
+	scratch = Mem_Realloc(scratch, sizeof(void *) * (scratch_count + 1));
+	return scratch[scratch_count++] = Mem_Alloc(size ? size : 1);
+}
+
+static void FreeScratch(void)
+{
+	for (int i = 0; i < scratch_count; i++)
+		Mem_Free(scratch[i]);
+	Mem_Free(scratch);
+	scratch = NULL;
+	scratch_count = 0;
+}
 
 static void *LumpData(int lump, size_t elemsize, int *count)
 {
-	lump_t *l = &header->lumps[lump];
+	lump_t *l = &lumps[lump];
 	if (l->fileofs < 0 || l->filelen < 0 || (size_t)l->fileofs + (size_t)l->filelen > file_size) {
 		load_error = va("lump %d is outside the file", lump);
 		*count = 0;
@@ -51,6 +85,119 @@ static void *LumpData(int lump, size_t elemsize, int *count)
 	}
 	*count = elemsize ? (int)(l->filelen / elemsize) : l->filelen;
 	return file_base + l->fileofs;
+}
+
+static wnode_t *GetNodes(int *n)
+{
+	if (wide)
+		return LumpData(LUMP_NODES, sizeof(wnode_t), n);
+	dnode_t *d = LumpData(LUMP_NODES, sizeof(dnode_t), n);
+	if (!d)
+		return NULL;
+	wnode_t *w = Scratch(sizeof(wnode_t) * *n);
+	for (int i = 0; i < *n; i++) {
+		w[i].planenum = d[i].planenum;
+		w[i].children[0] = d[i].children[0];
+		w[i].children[1] = d[i].children[1];
+		for (int j = 0; j < 3; j++) {
+			w[i].mins[j] = d[i].mins[j];
+			w[i].maxs[j] = d[i].maxs[j];
+		}
+		w[i].firstface = d[i].firstface;
+		w[i].numfaces = d[i].numfaces;
+	}
+	return w;
+}
+
+static wface_t *GetFaces(int *n)
+{
+	if (wide)
+		return LumpData(LUMP_FACES, sizeof(wface_t), n);
+	dface_t *d = LumpData(LUMP_FACES, sizeof(dface_t), n);
+	if (!d)
+		return NULL;
+	wface_t *w = Scratch(sizeof(wface_t) * *n);
+	for (int i = 0; i < *n; i++) {
+		w[i].planenum = d[i].planenum;
+		w[i].side = d[i].side;
+		w[i].firstedge = d[i].firstedge;
+		w[i].numedges = d[i].numedges;
+		w[i].texinfo = d[i].texinfo;
+		memcpy(w[i].styles, d[i].styles, 4);
+		w[i].lightofs = d[i].lightofs;
+	}
+	return w;
+}
+
+static wleaf_t *GetLeafs(int *n)
+{
+	if (wide)
+		return LumpData(LUMP_LEAFS, sizeof(wleaf_t), n);
+	dleaf_t *d = LumpData(LUMP_LEAFS, sizeof(dleaf_t), n);
+	if (!d)
+		return NULL;
+	wleaf_t *w = Scratch(sizeof(wleaf_t) * *n);
+	for (int i = 0; i < *n; i++) {
+		w[i].contents = d[i].contents;
+		w[i].visofs = d[i].visofs;
+		for (int j = 0; j < 3; j++) {
+			w[i].mins[j] = d[i].mins[j];
+			w[i].maxs[j] = d[i].maxs[j];
+		}
+		w[i].firstmarksurface = d[i].firstmarksurface;
+		w[i].nummarksurfaces = d[i].nummarksurfaces;
+		memcpy(w[i].ambient_level, d[i].ambient_level, 4);
+	}
+	return w;
+}
+
+static wedge_t *GetEdges(int *n)
+{
+	if (wide)
+		return LumpData(LUMP_EDGES, sizeof(wedge_t), n);
+	dedge_t *d = LumpData(LUMP_EDGES, sizeof(dedge_t), n);
+	if (!d)
+		return NULL;
+	wedge_t *w = Scratch(sizeof(wedge_t) * *n);
+	for (int i = 0; i < *n; i++) {
+		w[i].v[0] = d[i].v[0];
+		w[i].v[1] = d[i].v[1];
+	}
+	return w;
+}
+
+static int *GetMarkSurfaces(int *n)
+{
+	if (wide)
+		return LumpData(LUMP_MARKSURFACES, sizeof(int), n);
+	unsigned short *d = LumpData(LUMP_MARKSURFACES, sizeof(unsigned short), n);
+	if (!d)
+		return NULL;
+	int *w = Scratch(sizeof(int) * *n);
+	for (int i = 0; i < *n; i++)
+		w[i] = d[i];
+	return w;
+}
+
+static wclipnode_t *GetClipnodes(int *n)
+{
+	if (wide)
+		return LumpData(LUMP_CLIPNODES, sizeof(wclipnode_t), n);
+	dclipnode_t *d = LumpData(LUMP_CLIPNODES, sizeof(dclipnode_t), n);
+	if (!d)
+		return NULL;
+	wclipnode_t *w = Scratch(sizeof(wclipnode_t) * *n);
+	for (int i = 0; i < *n; i++) {
+		w[i].planenum = d[i].planenum;
+		for (int j = 0; j < 2; j++) {
+			int ch = d[i].children[j];
+			// children are 16-bit; positive values past 32767 come out negative but aren't contents
+			if (ch < -15 && *n > 32767)
+				ch = (unsigned short)ch;
+			w[i].children[j] = ch;
+		}
+	}
+	return w;
 }
 
 // ---------------------------------------------------------------- entities
@@ -300,9 +447,9 @@ static qboolean LoadFaces(void)
 {
 	int nverts, nedges, nsurfedges, nfaces, ntexinfo;
 	float   (*verts)[3] = LumpData(LUMP_VERTEXES, sizeof(float) * 3, &nverts);
-	dedge_t  *edges = LumpData(LUMP_EDGES, sizeof(dedge_t), &nedges);
+	wedge_t  *edges = GetEdges(&nedges);
 	int      *surfedges = LumpData(LUMP_SURFEDGES, sizeof(int), &nsurfedges);
-	dface_t  *faces = LumpData(LUMP_FACES, sizeof(dface_t), &nfaces);
+	wface_t  *faces = GetFaces(&nfaces);
 	dtexinfo_t *ti = LumpData(LUMP_TEXINFO, sizeof(dtexinfo_t), &ntexinfo);
 	if (load_error)
 		return false;
@@ -333,9 +480,9 @@ static qboolean LoadFaces(void)
 	world.surfaces = Mem_Alloc(sizeof(msurface_t) * (nfaces ? nfaces : 1));
 
 	for (int i = 0; i < nfaces; i++) {
-		dface_t *f = &faces[i];
+		wface_t *f = &faces[i];
 		msurface_t *s = &world.surfaces[i];
-		if (f->planenum >= world.numplanes || f->texinfo < 0 || f->texinfo >= ntexinfo || f->numedges < 3 ||
+		if (f->planenum < 0 || f->planenum >= world.numplanes || f->texinfo < 0 || f->texinfo >= ntexinfo || f->numedges < 3 ||
 			f->firstedge < 0 || f->firstedge + f->numedges > nsurfedges) {
 			s->numverts = 0;
 			continue;
@@ -359,12 +506,12 @@ static qboolean LoadFaces(void)
 		double mins[2] = { 1e30, 1e30 }, maxs[2] = { -1e30, -1e30 };
 		for (int j = 0; j < f->numedges; j++) {
 			int e = surfedges[f->firstedge + j];
-			int v;
+			unsigned v;
 			if (e >= 0)
 				v = (e < nedges) ? edges[e].v[0] : 0;
 			else
 				v = (-e < nedges) ? edges[-e].v[1] : 0;
-			if (v >= nverts)
+			if (v >= (unsigned)nverts)
 				v = 0;
 			worldvert_t *wv = &world.verts[world.numverts++];
 			VectorCopy(verts[v], wv->xyz);
@@ -550,9 +697,9 @@ static qboolean LoadTree(void)
 	if (!LoadTextures() || !LoadFaces())
 		return false;
 
-	unsigned short *mark = LumpData(LUMP_MARKSURFACES, sizeof(unsigned short), &nmark);
-	dleaf_t *leafs = LumpData(LUMP_LEAFS, sizeof(dleaf_t), &nleafs);
-	dnode_t *nodes = LumpData(LUMP_NODES, sizeof(dnode_t), &nnodes);
+	int *mark = GetMarkSurfaces(&nmark);
+	wleaf_t *leafs = GetLeafs(&nleafs);
+	wnode_t *nodes = GetNodes(&nnodes);
 	dmodel_t *models = LumpData(LUMP_MODELS, sizeof(dmodel_t), &nmodels);
 	if (load_error)
 		return false;
@@ -564,7 +711,7 @@ static qboolean LoadTree(void)
 	world.nummarksurfaces = nmark;
 	world.marksurfaces = Mem_Alloc(sizeof(msurface_t *) * (nmark ? nmark : 1));
 	for (int i = 0; i < nmark; i++)
-		world.marksurfaces[i] = mark[i] < world.numsurfaces ? &world.surfaces[mark[i]] : &world.surfaces[0];
+		world.marksurfaces[i] = mark[i] >= 0 && mark[i] < world.numsurfaces ? &world.surfaces[mark[i]] : &world.surfaces[0];
 
 	world.numleafs = nleafs;
 	world.leafs = Mem_Alloc(sizeof(mnode_t) * nleafs);
@@ -576,6 +723,8 @@ static qboolean LoadTree(void)
 			l->maxs[j] = leafs[i].maxs[j];
 		}
 		int first = leafs[i].firstmarksurface, n = leafs[i].nummarksurfaces;
+		if (first < 0 || n < 0)
+			first = n = 0;
 		if (first + n > nmark)
 			n = first < nmark ? nmark - first : 0;
 		l->marksurfaces = world.marksurfaces + (first < nmark ? first : 0);
@@ -596,8 +745,8 @@ static qboolean LoadTree(void)
 		n->plane = (nodes[i].planenum >= 0 && nodes[i].planenum < nplanes) ? &world.planes[nodes[i].planenum] : &world.planes[0];
 		n->firstsurface = nodes[i].firstface;
 		n->numsurfaces = nodes[i].numfaces;
-		if (n->firstsurface + n->numsurfaces > world.numsurfaces)
-			n->numsurfaces = 0;
+		if (n->firstsurface < 0 || n->numsurfaces < 0 || n->firstsurface + n->numsurfaces > world.numsurfaces)
+			n->firstsurface = n->numsurfaces = 0;
 		for (int j = 0; j < 2; j++) {
 			int c = nodes[i].children[j];
 			if (c >= 0)
@@ -611,7 +760,7 @@ static qboolean LoadTree(void)
 
 	// collision hulls: 1-3 from the clipnodes lump, 0 from the render nodes
 	int nclip;
-	dclipnode_t *clip = LumpData(LUMP_CLIPNODES, sizeof(dclipnode_t), &nclip);
+	wclipnode_t *clip = GetClipnodes(&nclip);
 	if (load_error)
 		return false;
 	world.numclipnodes = nclip;
@@ -621,10 +770,7 @@ static qboolean LoadTree(void)
 		c->planenum = (clip[i].planenum >= 0 && clip[i].planenum < nplanes) ? clip[i].planenum : 0;
 		for (int j = 0; j < 2; j++) {
 			int ch = clip[i].children[j];
-			// children are 16-bit; positive values past 32767 come out negative but aren't contents
-			if (ch < -15 && nclip > 32767)
-				ch = (unsigned short)ch;
-			c->children[j] = (ch >= nclip) ? CONTENTS_SOLID : ch;
+			c->children[j] = (ch >= nclip || ch < -15) ? CONTENTS_SOLID : ch;
 		}
 	}
 	world.clipnodes0 = Mem_Alloc(sizeof(mclipnode_t) * (nnodes ? nnodes : 1));
@@ -799,7 +945,7 @@ qboolean BSP_Load(const char *mapname)
 		Con_Errorf("Map %s not found\n", path);
 		return false;
 	}
-	if (size < sizeof(dheader_t)) {
+	if (size < sizeof(dheader_t) && !(size >= 12 && *(int *)data == NBSP_IDENT)) {
 		Mem_Free(data);
 		Con_Errorf("%s is too small to be a map\n", path);
 		return false;
@@ -809,17 +955,29 @@ qboolean BSP_Load(const char *mapname)
 	double start = Sys_FloatTime();
 	file_base = data;
 	file_size = size;
-	header = (dheader_t *)data;
 	load_error = NULL;
 
-	if (header->version != BSPVERSION) {
-		Con_Errorf("%s is BSP version %d, expected %d (Half-Life)\n", path, header->version, BSPVERSION);
+	const int *h = (const int *)data;
+	if (h[0] == NBSP_IDENT) {
+		// "NBSP", version, lump count, lumps; lumps past the ones known here are for later features
+		if (h[1] != NBSP_VERSION || h[2] < HEADER_LUMPS || 12 + (size_t)h[2] * sizeof(lump_t) > size) {
+			Con_Errorf("%s is NBSP version %d with %d lumps; this engine reads version %d\n", path, h[1], h[2], NBSP_VERSION);
+			Mem_Free(data);
+			return false;
+		}
+		wide = true;
+		memcpy(lumps, data + 12, sizeof(lumps));
+	} else if (h[0] == BSPVERSION) {
+		wide = false;
+		memcpy(lumps, ((dheader_t *)data)->lumps, sizeof(lumps));
+	} else {
+		Con_Errorf("%s is BSP version %d, expected %d (Half-Life) or NBSP\n", path, h[0], BSPVERSION);
 		Mem_Free(data);
 		return false;
 	}
 	// Blue Shift stores the planes and entities lumps the other way round
-	{
-		lump_t *l0 = &header->lumps[LUMP_ENTITIES], *l1 = &header->lumps[LUMP_PLANES];
+	if (!wide) {
+		lump_t *l0 = &lumps[LUMP_ENTITIES], *l1 = &lumps[LUMP_PLANES];
 		if (l0->filelen % sizeof(dplane_t) == 0 && l1->fileofs >= 0 && (size_t)l1->fileofs < size &&
 			data[l1->fileofs] == '{' && l0->fileofs >= 0 && (size_t)l0->fileofs < size && data[l0->fileofs] != '{') {
 			lump_t tmp = *l0;
@@ -841,9 +999,9 @@ qboolean BSP_Load(const char *mapname)
 		Wad_LoadList(BSP_ValueForKey(&world.entities[0], "wad"));
 
 	qboolean ok = LoadTree();
+	FreeScratch();
 	Mem_Free(data);
 	file_base = NULL;
-	header = NULL;
 	if (!ok) {
 		Con_Errorf("Couldn't load %s: %s\n", path, load_error ? load_error : "unknown error");
 		BSP_Free();
