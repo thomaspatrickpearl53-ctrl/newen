@@ -169,7 +169,7 @@ Phase 1, Half-Life runs:
 3. **Models and sprites** - MDL (no fixed limits), SPR, HD model textures *(done)*
 4. **Server** - load `hl.dll`, engine functions, collision, entity physics, player movement, Lua game API *(done)*
 5. **Client** - load `client.dll` and `vgui.dll`, HUD, view model, input, events, effects, decals, beams, titles *(done)*; VGUI mouse input *(next)*
-6. **Single player** - sound, level changes, saved games *(done)*; the hl-lua API *(next)*
+6. **Single player** - sound, level changes, saved games *(done)*
 
 Then: Jolt physics, extended BSP, lights and shadows, particles, captions, dev tools; VGUI2; more games
 (Opposing Force, Blue Shift, CS 1.6, Cry of Fear); co-op, terrain, 64-bit, Linux.

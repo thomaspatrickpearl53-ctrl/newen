@@ -16,7 +16,8 @@ movement sound through our own mixer on SDL audio, sentences with lip movement, 
 changes (6b): the player and what's at the landmark (weapons, followers) go on to the next map, and a map visited before
 comes back as it was left; the opening tram ride runs. Saved games (6c): save/load, F6/F9, an autosave at every level
 change, and dying reloads the last save. The owner's reported bugs are fixed. 5c is done: dynamic lights, VGUI
-mouse input, titles in Steam GoldSrc's font. Next, in the owner's order ("all of Phase 1"): 6d (the hl-lua API).
+mouse input, titles in Steam GoldSrc's font. That finishes Phase 1 as the owner picked it: 6d (copying hl-lua's
+API) was dropped on 2026-10-18 (see section 1).
 
 ---
 
@@ -28,7 +29,8 @@ the engine itself** so any GoldSrc game can be scripted. "newen" is a placeholde
 
 The owner already has a separate project, **Half-Life: Lua** (`%USERPROFILE%\hl-lua`, v0.10.0). It's a
 Garry's Mod-style Lua 5.4 mod built inside the HL SDK's `hl.dll`/`client.dll`. newen is meant to eventually run
-those DLLs unchanged and to offer the same Lua API at engine level, so hl-lua addons port over. Don't modify the
+those DLLs unchanged. The owner **doesn't need hl-lua addons to port over** (said 2026-10-18), so newen's own Lua
+doesn't have to copy hl-lua's API; it grows its own way (GMod-style names are still the default). Don't modify the
 hl-lua folder from this project.
 
 ## 2. Decisions already made (don't relitigate)
@@ -43,7 +45,7 @@ hl-lua folder from this project.
 | **Game interface headers are our own** (`game_api.h`, `client_api.h`), written from the public HL SDK layout, not copied from the SDK | Owner's choice (step 4). Keeps newen free of the SDK license; size asserts guard the layout |
 | **VGUI1 is hosted, not reimplemented**: the engine loads Half-Life's own `vgui.dll` and provides the drawing surface | The stock client.dll imports 548 vgui.dll functions and builds its viewport on an engine panel at `HUD_VidInit`. vgui.dll exports its vtables, so the layout is read from the binary (no SDK headers) |
 | **Never write into the Half-Life folder** | All writes go to `bin/userdata/<game>/` |
-| **Lua in the engine**, GMod-style API names (`hook.Add`, `concommand.Add`, `CreateConVar`, `surface.*`...) | Same names as hl-lua so addons move over |
+| **Lua in the engine**, GMod-style API names (`hook.Add`, `concommand.Add`, `CreateConVar`, `surface.*`...) | Familiar GMod-style names. Matching hl-lua exactly isn't required any more (owner, 2026-10-18) |
 | **No hardcoded limits** where avoidable: growable arrays; remaining limits become cvars | The owner wants the engine to "be able to do a lot" |
 | **Original files load unchanged**; new capability comes through extensions (HD overrides, extended formats) | Compatibility first |
 | Order: **Half-Life first**, then VGUI2, then other games (Cry of Fear last) | Owner's explicit choice |
@@ -410,8 +412,9 @@ also lists any in the Half-Life folder's `valve/save`). Tested: save in c1a0d, m
 armor), `kill` then fire reloads the last save, `+load test1` from the command line, and walking back to c1a0 after a
 load finds it as it was left.
 
-**Next, in the owner's order:** the reported bugs, 5c, 6d the hl-lua Lua API on the engine. The GoldSrc network
-protocol is left for multiplayer.
+**Phase 1 is done** in the owner's order (the reported bugs, 5c). 6d, the hl-lua Lua API on the engine, was
+dropped: the owner doesn't need hl-lua addons to run on newen. The GoldSrc network protocol is left for multiplayer.
+Ask the owner what comes next.
 
 ### After Phase 1
 Phase 2: Jolt physics, extended BSP format plus compiler changes, lights/shadows, particles, captions, dev tools.
