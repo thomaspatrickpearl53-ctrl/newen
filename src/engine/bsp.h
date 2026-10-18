@@ -137,6 +137,7 @@ extern unsigned char lightgammatable[1024];   // summed light (0..1023) to displ
 // lightstyles (r_world.c)
 extern int  lightstyle_value[64];
 void        R_SetLightStyle(int style, const char *pattern);
+const char *R_LightStylePattern(int style);
 void        R_AnimateLightStyles(double time);
 // true if any leaf the box touches is in the current view's PVS (r_world.c)
 qboolean    R_BoxVisible(const vec3_t mins, const vec3_t maxs);

@@ -94,6 +94,25 @@ Settings: `fov` (Hor+ widescreen), `r_texturemode trilinear|bilinear|nearest` an
 `r_applyfilters`), `r_texgamma` and `r_lightgamma` (brightness curves, applied on map load), `r_wateralpha`,
 `r_fullbright`, `r_lightmap`, `r_novis`, `r_speeds`.
 
+## Level changes
+
+Walking into a level change takes you to the next map with what you carry, and anything at the landmark comes along
+(monsters following you, items); going back to a map finds it as you left it. `changelevel <map> [landmark]` does the
+same from the console; `levelstates` lists the maps this game remembers. `map` starts a new game.
+
+## Sound
+
+Every sound the game and client make plays through newen's own mixer: positional (distance and stereo direction),
+sentences (soldiers, scientists, the HEV suit) with the speaker's mouth moving, the game's music (`cd play <track>`,
+or `mp3 play <file>`) from `media/*.mp3`, and room echo where the map sets it (muffled under water). A `.flac` or
+`.ogg` file next to a `.wav` (same name) is played instead of it, for HD sound packs.
+
+- Cvars: `volume`, `MP3Volume`, `snd_rate` (44100 or 48000, at start), `s_mixahead`, `s_maxchannels`, `room_type`,
+  `s_show` (1 = channel count, 2 = every sound that starts). `-nosound` turns sound off.
+- Commands: `play <sound>`, `playvol <sound> <volume>`, `speak <sentence or words>`, `stopsound`, `soundlist`,
+  `soundinfo`, `cd play|loop|stop|pause|resume`, `mp3 play|loop|stop`, `s_record [file.wav]` (records what you hear
+  into `bin/userdata/<game>/`; again stops).
+
 ## Console
 
 `` ` `` opens the console. Tab completes, Up and Down walk through history, PgUp/PgDn and the mouse wheel scroll,
@@ -144,7 +163,7 @@ Phase 1, Half-Life runs:
 3. **Models and sprites** - MDL (no fixed limits), SPR, HD model textures *(done)*
 4. **Server** - load `hl.dll`, engine functions, collision, entity physics, player movement, Lua game API *(done)*
 5. **Client** - load `client.dll` and `vgui.dll`, HUD, view model, input, events, effects, decals, beams, titles *(done)*; VGUI mouse input *(next)*
-6. Single player - loopback server, save/load, level changes, stereo and HQ audio, Half-Life: Lua API
+6. **Single player** - sound, level changes *(done)*; save/load, the hl-lua API *(next)*
 
 Then: Jolt physics, extended BSP, lights and shadows, particles, captions, dev tools; VGUI2; more games
 (Opposing Force, Blue Shift, CS 1.6, Cry of Fear); co-op, terrain, 64-bit, Linux.

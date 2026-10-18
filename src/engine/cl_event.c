@@ -134,9 +134,13 @@ void CL_ClearEvents(void)
 // ---------------------------------------------------------------- the event API
 
 static void EV_PlaySound(int ent, float *origin, int channel, const char *sample, float volume, float attenuation,
-	int flags, int pitch) {}   // sound arrives in step 6
-static void EV_StopSound(int ent, int channel, const char *sample) {}
-static void EV_StopAllSounds(int entnum, int entchannel) {}
+	int flags, int pitch)
+{
+	S_StartSound(ent, channel, sample, origin, volume, attenuation, flags, pitch);
+}
+
+static void EV_StopSound(int ent, int channel, const char *sample) { S_StopSound(ent, channel, sample); }
+static void EV_StopAllSounds(int entnum, int entchannel) { S_StopSound(entnum, entchannel, NULL); }
 
 static int EV_FindModelIndex(const char *name) { return sv.active ? SV_ModelIndex(name) : 0; }
 static int EV_IsLocal(int playernum) { return playernum == 0; }

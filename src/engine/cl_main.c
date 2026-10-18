@@ -429,9 +429,18 @@ static void GetPlayerInfo(int ent_num, hud_player_info_t *info)
 	info->m_nSteamID = 0;
 }
 
-static void PlaySoundByName(const char *s, float vol) {}
-static void PlaySoundByIndex(int i, float vol) {}
-static void PlaySoundByNameAtLocation(const char *s, float vol, float *org) {}
+static void PlaySoundByName(const char *s, float vol) { S_LocalSound(s, vol); }
+
+static void PlaySoundByIndex(int i, float vol)
+{
+	if (i > 0 && i < sv.num_sounds)
+		S_LocalSound(sv.sound_precache[i], vol);
+}
+
+static void PlaySoundByNameAtLocation(const char *s, float vol, float *org)
+{
+	S_StartSound(0, 0, s, org, vol, 0.8f, 0, 100);   // ATTN_NORM
+}
 static client_textmessage_t *TextMessageGet(const char *name) { return CL_TextMessageGet(name); }
 
 static void ClAngleVectors(const float *a, float *f, float *r, float *u) { AngleVectors(a, f, r, u); }
@@ -824,6 +833,7 @@ void CL_QueueMessage(int type, const unsigned char *data, int len)
 
 #define SVC_TEMPENTITY 23
 #define SVC_WEAPONANIM 35
+#define SVC_ROOMTYPE   37
 
 pfnUserMsgHook CL_FindMessageHook(const char *name)
 {
@@ -851,6 +861,8 @@ static void DispatchMessages(void)
 				CLIENT_CALL(name, fn(name, len, data));
 		} else if (type == SVC_WEAPONANIM && len >= 2) {
 			CL_SetViewModelAnim(data[0], data[1]);
+		} else if (type == SVC_ROOMTYPE && len >= 2) {
+			Cvar_SetValue("room_type", (float)(short)(data[0] | (data[1] << 8)));
 		} else if (type == SVC_TEMPENTITY) {
 			CL_ParseTempEntity(data, len);
 		}
@@ -992,8 +1004,7 @@ qboolean CL_BuildViewModel(rentity_t *r)
 	memset(r, 0, sizeof(*r));
 	r->model = cl_viewent.model;
 	VectorCopy(cl_viewent.origin, r->origin);
-	VectorCopy(cl_viewent.angles, r->angles);
-	r->angles[0] = -r->angles[0];   // the renderer flips studio pitch again; the view model is already right
+	VectorCopy(cl_viewent.angles, r->angles);   // the client's V_CalcRefdef already set the studio pitch
 	r->sequence = cl_viewent.curstate.sequence;
 	r->frame = 0;
 	r->framerate = cl_viewent.curstate.framerate ? cl_viewent.curstate.framerate : 1;
@@ -1140,6 +1151,7 @@ void CL_MapEnded(void)
 	CL_ClearTempEnts();
 	CL_ClearEvents();
 	CL_ClearView();
+	S_StopAllSounds();
 	R_ClearParticles();
 	R_ClearBeams();
 	for (int i = 0; i < msgqueue_count; i++)

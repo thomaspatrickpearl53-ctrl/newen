@@ -154,7 +154,27 @@ static int AddVisibleTempEnt(cl_entity_t *e)
 	return CL_AddVisibleEntity(e);
 }
 
-static void TempEntPlaySound(void *t, float damp) {}   // sound arrives in step 6
+// bounce sounds by the temp entity's hitSound (GoldSrc's BOUNCE_ numbers)
+static void TempEntPlaySound(void *tent, float damp)
+{
+	TEMPENTITY *t = tent;
+	static const struct { const char *fmt; int count; float attn; } bounce[] = {
+		{ NULL, 0, 0 },
+		{ "debris/glass%d.wav", 4, 0.8f },     // BOUNCE_GLASS
+		{ "debris/metal%d.wav", 6, 0.8f },     // BOUNCE_METAL
+		{ "debris/flesh%d.wav", 7, 0.8f },     // BOUNCE_FLESH
+		{ "debris/wood%d.wav", 4, 0.8f },      // BOUNCE_WOOD
+		{ "weapons/ric%d.wav", 5, 0.8f },      // BOUNCE_SHRAP
+		{ "player/pl_shell%d.wav", 3, 2.0f },  // BOUNCE_SHELL
+		{ "debris/concrete%d.wav", 3, 0.8f },  // BOUNCE_CONCRETE
+		{ "weapons/sshell%d.wav", 3, 2.0f },   // BOUNCE_SHOTSHELL
+	};
+	if (!t || t->hitSound <= 0 || t->hitSound >= (int)(sizeof(bounce) / sizeof(bounce[0])))
+		return;
+	float vol = damp > 0 && damp < 1 ? 0.8f * damp + 0.2f : 0.8f;
+	S_StartSound(0, 0, va(bounce[t->hitSound].fmt, CL_RandomInt(1, bounce[t->hitSound].count)), t->entity.origin, vol,
+		bounce[t->hitSound].attn, 0, CL_RandomInt(90, 124));
+}
 
 static void UpdateTempEnts(void)
 {
@@ -348,7 +368,8 @@ static TEMPENTITY *R_TempModel(float *pos, float *dir, float *angles, float life
 	if (!t)
 		return NULL;
 	t->flags = FTENT_COLLIDEWORLD | FTENT_GRAVITY | FTENT_ROTATE;
-	t->hitSound = soundtype;
+	// TE_BOUNCE_SHELL (1), TE_BOUNCE_SHOTSHELL (2)
+	t->hitSound = soundtype == 1 ? BOUNCE_SHELL : soundtype == 2 ? BOUNCE_SHOTSHELL : 0;
 	VectorCopy(dir, t->entity.baseline.origin);   // velocity
 	VectorCopy(angles, t->entity.angles);
 	for (int i = 0; i < 3; i++)
@@ -602,7 +623,9 @@ static void R_BreakModel(float *pos, float *size, float *dir, float random, floa
 		TEMPENTITY *t = CL_TempEntAlloc(p, m);
 		if (!t)
 			return;
-		t->hitSound = flags & 0x0f;
+		t->hitSound = (flags & BREAK_GLASS) ? BOUNCE_GLASS : (flags & BREAK_METAL) ? BOUNCE_METAL :
+			(flags & BREAK_FLESH) ? BOUNCE_FLESH : (flags & BREAK_WOOD) ? BOUNCE_WOOD :
+			(flags & BREAK_CONCRETE) ? BOUNCE_CONCRETE : 0;
 		if (m->type == mod_sprite)
 			t->entity.curstate.frame = (float)CL_RandomInt(0, frames - 1);
 		else
@@ -613,7 +636,7 @@ static void R_BreakModel(float *pos, float *size, float *dir, float random, floa
 			for (int k = 0; k < 3; k++)
 				t->entity.baseline.angles[k] = CL_Random(-256, 255);
 		}
-		if (CL_RandomInt(0, 255) < 100 && (flags & 0x04))   // BREAK_SMOKE
+		if (CL_RandomInt(0, 255) < 100 && (flags & BREAK_SMOKE))
 			t->flags |= FTENT_SMOKETRAIL;
 		if (flags & BREAK_TRANS) {
 			t->entity.curstate.rendermode = kRenderTransTexture;
@@ -841,7 +864,10 @@ static void R_KillAttachedTents(int client)
 			t->die = (float)cl_time;   // the client removes it on its next update
 }
 
-static void R_RicochetSound(float *pos) {}   // sound arrives in step 6
+static void R_RicochetSound(float *pos)
+{
+	S_StartSound(0, 0, va("weapons/ric%d.wav", CL_RandomInt(1, 5)), pos, 1, 0.8f, 0, 100);
+}
 static void R_RocketFlare(float *pos)
 {
 	TEMPENTITY *t = CL_TempEntAlloc(pos, SpriteByName("sprites/animglow01.spr"));

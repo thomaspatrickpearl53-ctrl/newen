@@ -238,6 +238,20 @@ qboolean CL_HasClient(void);
 void     CL_MapStarted(void);
 void     CL_MapEnded(void);
 
+// ---------------------------------------------------------------- snd_main.c
+void     S_Init(void);
+void     S_Shutdown(void);
+void     S_Update(const float *origin, const float *right);   // once a frame, after the view is known
+// entnum: the entity it belongs to (-1 = nowhere: full volume); origin NULL = follow the entity;
+// sample "!NAME" plays a sentence; attn 0 = everywhere; flags/pitch as in GoldSrc (SND_STOP...)
+void     S_StartSound(int entnum, int channel, const char *sample, const float *origin, float vol, float attn, int flags, int pitch);
+void     S_StopSound(int entnum, int channel, const char *sample);   // sample NULL = any
+void     S_StopAllSounds(void);
+void     S_LocalSound(const char *sample, float vol);
+void     S_PreloadSound(const char *sample);             // at precache time
+int      S_MouthOpen(int entnum);                    // 0..64, from the entity's voice
+void     S_FadeVolume(float percent, float fadeout, float hold, float fadein);
+
 // ---------------------------------------------------------------- draw.c
 void Draw_Init(void);
 void Draw_Shutdown(void);

@@ -187,7 +187,10 @@ int SV_PrecacheSound(const char *name)
 	if (!name || !*name)
 		return 0;
 	qboolean added;
-	return FindOrAdd(&sv.sound_precache, &sv.num_sounds, name, &added);
+	int i = FindOrAdd(&sv.sound_precache, &sv.num_sounds, name, &added);
+	if (added && name[0] != '!')
+		S_PreloadSound(name);   // loaded now, not at the first shot
+	return i;
 }
 
 int SV_PrecacheGeneric(const char *name)
@@ -408,12 +411,15 @@ static void ParseEntity(const bspentity_t *be, qboolean isworld)
 	}
 }
 
-static void ConnectLocalClient(void)
+// restored: the player came over from the previous level, so it isn't spawned again
+static void ConnectLocalClient(qboolean restored)
 {
 	edict_t *pl = EDICT_NUM(1);
-	ED_ClearEdict(pl);
-	pl->v.netname = SV_AllocString("Player");
-	pl->v.colormap = 1;
+	if (!restored) {
+		ED_ClearEdict(pl);
+		pl->v.netname = SV_AllocString("Player");
+		pl->v.colormap = 1;
+	}
 	Q_strncpy(sv.clientinfo[0], "\\name\\Player\\model\\gordon\\topcolor\\30\\bottomcolor\\6", sizeof(sv.clientinfo[0]));
 	char reject[128] = "";
 	if (!gEntityInterface.pfnClientConnect(pl, "Player", "loopback", reject)) {
@@ -423,7 +429,8 @@ static void ConnectLocalClient(void)
 	}
 	gEntityInterface.pfnClientUserInfoChanged(pl, sv.clientinfo[0]);
 	gGlobals.time = (float)sv.time;
-	gEntityInterface.pfnClientPutInServer(pl);
+	if (!restored)
+		gEntityInterface.pfnClientPutInServer(pl);
 	sv.client_spawned = true;
 }
 
@@ -448,7 +455,7 @@ void SV_Deactivate(void)
 	sv.client_spawned = false;
 }
 
-qboolean SV_SpawnServer(const char *mapname)
+qboolean SV_SpawnServer(const char *mapname, const char *oldmap, const char *landmark)
 {
 	SV_Deactivate();
 	if (!sv_game_loaded || !world.loaded)
@@ -458,6 +465,7 @@ qboolean SV_SpawnServer(const char *mapname)
 	sv.time = 1.0;
 	sv.maxclients = 1;
 	sv.restarting = false;
+	sv.changing = false;
 	Q_strncpy(sv.mapname, mapname, sizeof(sv.mapname));
 	Q_strncpy(sv.modelname, world.name, sizeof(sv.modelname));
 	sv.max_edicts = (int)sv_maxedicts->value;
@@ -495,21 +503,31 @@ qboolean SV_SpawnServer(const char *mapname)
 	ent->v.solid = SOLID_BSP;
 	ent->v.movetype = MOVETYPE_PUSH;
 
-	gEntityInterface.pfnResetGlobalState();
+	// a new game forgets the levels and the game's global state (env_global); a level change keeps both
+	if (!oldmap) {
+		SV_ClearLevelStates();
+		gEntityInterface.pfnResetGlobalState();
+	}
+	if (landmark && *landmark)
+		gGlobals.startspot = SV_AllocString(landmark);
 	SV_ExecuteServerCommands();
 	SV_InitWorld();
-	for (int i = 0; i < world.numentities; i++)
-		ParseEntity(&world.entities[i], i == 0);
+	qboolean revisit = oldmap && SV_RestoreLevelState(mapname);
+	if (!revisit)
+		for (int i = 0; i < world.numentities; i++)
+			ParseEntity(&world.entities[i], i == 0);
+	qboolean player = oldmap && SV_RestoreTransition(oldmap, landmark);
 
 	gEntityInterface.pfnServerActivate(sv.edicts, sv.num_edicts, sv.maxclients);
 	sv.active = true;
-	// two frames so everything settles (doors close, monsters drop to the floor)
-	for (int i = 0; i < 2; i++) {
+	// two frames so everything settles (doors close, monsters drop to the floor); a level that comes
+	// back as it was left is already settled
+	for (int i = 0; i < (revisit ? 0 : 2); i++) {
 		sv.frametime = 0.1f;
 		gGlobals.frametime = 0.1f;
 		SV_Physics();
 	}
-	ConnectLocalClient();
+	ConnectLocalClient(player);
 	sv.loading = false;
 	LuaG_CheckNewEntities();
 	if (SV_LocalPlayer())
@@ -575,7 +593,8 @@ void SV_Frame(double frametime)
 // ---------------------------------------------------------------- rendering bridge
 
 void R_ClearBrushEntities(void);
-void R_AddBrushEntity(int submodel, const vec3_t origin, const vec3_t angles, int rendermode, int renderamt, const int color[3]);
+void R_AddBrushEntity(int submodel, const vec3_t origin, const vec3_t angles, int rendermode, int renderamt, const int color[3],
+	int frame);
 void R_ClearFrameEntities(void);
 rentity_t *R_AddFrameEntity(void);
 extern refdef_t r_refdef;
@@ -605,7 +624,7 @@ void SV_SetupRenderEntities(void)
 		}
 		int color[3] = { (int)e->v.rendercolor[0], (int)e->v.rendercolor[1], (int)e->v.rendercolor[2] };
 		if (m->type == mod_brush) {
-			R_AddBrushEntity(m->submodel, e->v.origin, e->v.angles, e->v.rendermode, (int)e->v.renderamt, color);
+			R_AddBrushEntity(m->submodel, e->v.origin, e->v.angles, e->v.rendermode, (int)e->v.renderamt, color, (int)e->v.frame);
 			continue;
 		}
 		rentity_t *r = R_AddFrameEntity();
@@ -628,6 +647,7 @@ void SV_SetupRenderEntities(void)
 			r->framerate = e->v.framerate;
 			r->animtime = r_refdef.time - (sv.time - e->v.animtime);
 			CL_EntityStudioEvents(i, r);   // muzzle flashes and sparks from the model's animation
+			r->mouth = (unsigned char)S_MouthOpen(i);
 		} else {
 			r->framerate = 0;   // the game animates sprites itself
 			r->animtime = r_refdef.time;
@@ -806,6 +826,7 @@ void SV_Init(void)
 	Cmd_AddCommand("noclip", Noclip_f, "toggles flying through walls");
 	Cmd_AddCommand("kill", Kill_f, "kills the player");
 	Cmd_AddCommand("reload", Reload_f, "restarts the current map");
+	SV_InitSave();
 
 	if (COM_CheckParm("-nogamedll")) {
 		Con_Printf("Game DLL disabled (-nogamedll)\n");

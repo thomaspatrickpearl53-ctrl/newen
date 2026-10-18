@@ -70,7 +70,18 @@ enum {
 #define TE_EXPLFLAG_NOSOUND     4
 #define TE_EXPLFLAG_NOPARTICLES 8
 
-#define BREAK_TRANS 0x10
+// R_BreakModel flags (the material picks the bounce sound)
+#define BREAK_GLASS    0x01
+#define BREAK_METAL    0x02
+#define BREAK_FLESH    0x04
+#define BREAK_WOOD     0x08
+#define BREAK_SMOKE    0x10
+#define BREAK_TRANS    0x20
+#define BREAK_CONCRETE 0x40
+
+// temp entity bounce sounds (TEMPENTITY hitSound)
+enum { BOUNCE_GLASS = 1, BOUNCE_METAL, BOUNCE_FLESH, BOUNCE_WOOD, BOUNCE_SHRAP, BOUNCE_SHELL, BOUNCE_CONCRETE,
+	BOUNCE_SHOTSHELL };
 
 void        CL_InitTempEnts(void);
 void        CL_InitEfxAPI(efx_api_t *api);

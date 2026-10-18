@@ -66,6 +66,7 @@ typedef struct {
 	char       localinfo[512];
 	qboolean   client_spawned;
 	qboolean   restarting;        // a reload is queued; the game repeats the request every frame
+	qboolean   changing;          // a level change is queued (the game asks every frame it's touched)
 } server_t;
 
 extern server_t          sv;
@@ -84,7 +85,9 @@ static inline qboolean ED_Linked(const edict_t *e) { return e->area.prev != NULL
 // sv_main.c
 void        SV_Init(void);
 void        SV_Shutdown(void);
-qboolean    SV_SpawnServer(const char *mapname);   // after BSP_Load
+// after BSP_Load. oldmap NULL: a new game. Otherwise a level change from oldmap: the map comes back
+// as it was left if it was visited, and the old map's entities at the landmark (the player) follow.
+qboolean    SV_SpawnServer(const char *mapname, const char *oldmap, const char *landmark);
 void        SV_Deactivate(void);
 void        SV_Frame(double frametime);
 const char *SV_String(string_t s);
@@ -105,6 +108,14 @@ ENTITYINIT  SV_GetEntityInit(const char *classname);
 void       *SV_GetProcAddress(const char *name);
 const char *SV_NameForFunction(unsigned function);
 edict_t    *SV_LocalPlayer(void);
+
+// sv_save.c
+void        SV_InitSave(void);
+void        SV_ClearLevelStates(void);              // a new game forgets the levels
+void        SV_SaveLevelState(void);                // the current level, before leaving it
+qboolean    SV_HasLevelState(const char *map);
+qboolean    SV_RestoreLevelState(const char *map);
+qboolean    SV_RestoreTransition(const char *oldmap, const char *landmark);   // true if the player came
 
 // sv_engfuncs.c
 void        SV_InitEngineFuncs(enginefuncs_t *ef);

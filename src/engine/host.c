@@ -1,5 +1,5 @@
 // newen - startup, main loop, shutdown
-#include "common.h"
+#include "gl_local.h"   // the view (r_refdef) for sound
 
 double   host_realtime;
 double   host_frametime;
@@ -96,6 +96,7 @@ void Host_Init(int argc, char **argv)
 	Vid_Init();
 	Draw_Init();
 	R_Init();
+	S_Init();
 	Lua_Init();
 	CL_Init();
 	SV_Init();
@@ -177,6 +178,7 @@ void Host_Frame(void)
 
 	Vid_BeginFrame();
 	R_RenderView();
+	S_Update(r_refdef.origin, r_refdef.right);
 	Draw_Begin2D();
 	CL_DrawHUD();
 	Lua_DrawOverlay();
@@ -201,6 +203,7 @@ void Host_Shutdown(void)
 	Lua_Shutdown();
 	CL_Shutdown();
 	SV_Shutdown();
+	S_Shutdown();
 	R_Shutdown();
 	Draw_Shutdown();
 	Vid_Shutdown();

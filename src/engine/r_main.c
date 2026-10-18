@@ -189,17 +189,18 @@ static void PlaceCamera(void)
 	}
 }
 
-static void Map_f(void)
+// oldmap NULL: a new game; otherwise a level change (the server carries the player over)
+static void LoadMap(const char *mapname, const char *oldmap, const char *landmark)
 {
-	if (Cmd_Argc() < 2) {
-		Con_Printf("usage: map <name>   (\"maps\" lists them)\n");
-		return;
-	}
-	char name[64];
-	Q_strncpy(name, Cmd_Argv(1), sizeof(name));
+	char name[64], old[64] = "", mark[64] = "";
+	Q_strncpy(name, mapname, sizeof(name));
 	size_t n = strlen(name);
 	if (n > 4 && !stricmp(name + n - 4, ".bsp"))
 		name[n - 4] = 0;
+	if (oldmap)
+		Q_strncpy(old, oldmap, sizeof(old));
+	if (landmark)
+		Q_strncpy(mark, landmark, sizeof(mark));
 
 	Lua_RunHookString("WorldUnloaded", current_map);
 	// models belong to the map they were loaded for (as in GoldSrc)
@@ -215,11 +216,37 @@ static void Map_f(void)
 	Q_strncpy(current_map, name, sizeof(current_map));
 	R_NewMap();
 	CL_MapStarted();   // the client gets ready before the spawn messages reach it, as in GoldSrc
-	SV_SpawnServer(name);
+	SV_SpawnServer(name, oldmap ? old : NULL, mark);
 	PlaceCamera();
 	if (Con_IsVisible())
 		Con_ToggleConsole();
 	Lua_RunHookString("WorldLoaded", current_map);
+}
+
+static void Map_f(void)
+{
+	if (Cmd_Argc() < 2) {
+		Con_Printf("usage: map <name>   (\"maps\" lists them)\n");
+		return;
+	}
+	LoadMap(Cmd_Argv(1), NULL, NULL);
+}
+
+// changelevel <map> [landmark]: keeps the game going into another map; without a server it's "map"
+static void Changelevel_f(void)
+{
+	if (Cmd_Argc() < 2) {
+		Con_Printf("usage: changelevel <map> [landmark]\n");
+		return;
+	}
+	if (!SV_Active()) {
+		LoadMap(Cmd_Argv(1), NULL, NULL);
+		return;
+	}
+	char old[64];
+	Q_strncpy(old, current_map, sizeof(old));
+	SV_SaveLevelState();
+	LoadMap(Cmd_Argv(1), old, Cmd_Argc() > 2 ? Cmd_Argv(2) : "");
 }
 
 static void Disconnect_f(void)
@@ -318,6 +345,8 @@ void R_Init(void)
 	m_pitch = Cvar_Get("m_pitch", "0.022", FCVAR_ARCHIVE, "mouse pitch scale (negative inverts)");
 	m_yaw = Cvar_Get("m_yaw", "0.022", FCVAR_ARCHIVE, "mouse yaw scale");
 	Cmd_AddCommand("map", Map_f, "map <name> - loads a map");
+	Cmd_AddCommand("changelevel", Changelevel_f, "changelevel <map> [landmark] - goes on to another map, keeping the game");
+	Cmd_AddCommand("changelevel2", Changelevel_f, "the same as changelevel (what the game's level triggers use)");
 	Cmd_AddCommand("maps", Maps_f, "lists maps, optionally filtered");
 	Cmd_AddCommand("disconnect", Disconnect_f, "unloads the map");
 	Cmd_AddCommand("viewpos", Viewpos_f, "prints the camera position");

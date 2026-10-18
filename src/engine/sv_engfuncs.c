@@ -204,14 +204,17 @@ static void PF_SetSize(edict_t *e, const float *mins, const float *maxs)
 		SV_SetMinMaxSize(e, mins, maxs);
 }
 
+// trigger_changelevel: done at the start of the next frame, ahead of anything else queued (the game
+// asks again every frame the player touches it)
 static void PF_ChangeLevel(const char *s1, const char *s2)
 {
-	static double last;
-	if (sv.time - last < 1)
+	if (!s1 || !*s1 || sv.changing)
 		return;
-	last = sv.time;
-	Con_Printf("The game asked for a level change to %s (landmark %s); level changes arrive in step 6\n",
-		s1 ? s1 : "?", s2 ? s2 : "none");
+	sv.changing = true;
+	if (s2 && *s2)
+		Cbuf_InsertText(va("changelevel2 %s %s\n", s1, s2));
+	else
+		Cbuf_InsertText(va("changelevel %s\n", s1));
 }
 
 static void PF_GetSpawnParms(edict_t *ent) {}
@@ -399,9 +402,12 @@ static edict_t *PF_EntitiesInPVS(edict_t *pplayer)
 	memcpy(pvs, PVSForPoint(view), row);
 	for (int i = 1; i < sv.num_edicts; i++) {
 		edict_t *e = EDICT_NUM(i);
-		if (e->free || !e->v.modelindex)
+		if (e->free)
 			continue;
-		if (!EdictInPVS(e, pvs))
+		// something that follows another (a held weapon: no model, not linked) is where its leader is;
+		// level changes find the player's weapons this way
+		const edict_t *where = (e->v.movetype == MOVETYPE_FOLLOW && e->v.aiment) ? e->v.aiment : e;
+		if (!EdictInPVS(where, pvs))
 			continue;
 		e->v.chain = chain;
 		chain = e;
@@ -498,8 +504,16 @@ static void PF_SetOrigin(edict_t *e, const float *org)
 }
 
 // sound arrives in step 6
-static void PF_EmitSound(edict_t *entity, int channel, const char *sample, float volume, float attenuation, int fFlags, int pitch) {}
-static void PF_EmitAmbientSound(edict_t *entity, float *pos, const char *samp, float vol, float attenuation, int fFlags, int pitch) {}
+// one process: sounds go straight to the mixer, which follows the entity
+static void PF_EmitSound(edict_t *entity, int channel, const char *sample, float volume, float attenuation, int fFlags, int pitch)
+{
+	S_StartSound(entity ? NUM_FOR_EDICT(entity) : 0, channel, sample, NULL, volume, attenuation, fFlags, pitch);
+}
+
+static void PF_EmitAmbientSound(edict_t *entity, float *pos, const char *samp, float vol, float attenuation, int fFlags, int pitch)
+{
+	S_StartSound(entity ? NUM_FOR_EDICT(entity) : 0, 6, samp, pos, vol, attenuation, fFlags, pitch);   // CHAN_STATIC
+}
 
 // ---------------------------------------------------------------- traces
 
@@ -1021,7 +1035,11 @@ static int PF_CompareFileTime(const char *f1, const char *f2, int *cmp)
 
 static void PF_GetGameDir(char *out) { strcpy(out, FS_GameDir()); }
 static void PF_Cvar_RegisterVariable(cvar_t *var) { Cvar_RegisterExternal(var); }
-static void PF_FadeClientVolume(const edict_t *e, int fadePercent, int fadeOutSeconds, int holdTime, int fadeInSeconds) {}
+static void PF_FadeClientVolume(const edict_t *e, int fadePercent, int fadeOutSeconds, int holdTime, int fadeInSeconds)
+{
+	if (e && e == SV_LocalPlayer())
+		S_FadeVolume((float)fadePercent, (float)fadeOutSeconds, (float)holdTime, (float)fadeInSeconds);
+}
 static void PF_SetClientMaxspeed(const edict_t *e, float speed) { if (e) ((edict_t *)e)->v.maxspeed = speed; }
 static edict_t *PF_CreateFakeClient(const char *name) { return NULL; }
 static void PF_RunPlayerMove(edict_t *fake, const float *va, float fm, float sm, float um, unsigned short buttons,
@@ -1088,7 +1106,10 @@ static int PF_GetPlayerUserId(edict_t *e)
 }
 
 static void PF_BuildSoundMsg(edict_t *entity, int channel, const char *sample, float volume, float attenuation, int fFlags,
-	int pitch, int dest, int type, const float *origin, edict_t *ed) {}
+	int pitch, int dest, int type, const float *origin, edict_t *ed)
+{
+	S_StartSound(entity ? NUM_FOR_EDICT(entity) : 0, channel, sample, origin, volume, attenuation, fFlags, pitch);
+}
 static int PF_IsDedicatedServer(void) { return 0; }
 static unsigned PF_GetPlayerWONId(edict_t *e) { return 0xFFFFFFFFu; }
 static void PF_Info_RemoveKey(char *s, const char *key) { if (s && InfoBufferSize(s)) Info_RemoveKey(s, key); }

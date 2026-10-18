@@ -374,7 +374,11 @@ static char *PM_memfgets(unsigned char *mem, int size, int *pos, char *out, int 
 	return out;
 }
 
-static void PM_PlaySound(int channel, const char *sample, float volume, float attenuation, int flags, int pitch) {}
+// footsteps, jumps, ladders, water: the player's own sounds
+static void PM_PlaySound(int channel, const char *sample, float volume, float attenuation, int flags, int pitch)
+{
+	S_StartSound(pm->player_index + 1, channel, sample, NULL, volume, attenuation, flags, pitch);
+}
 void CL_PlaybackEvent(int flags, const edict_t *invoker, unsigned short index, float delay, const float *origin,
 	const float *angles, float f1, float f2, int i1, int i2, int b1, int b2);
 

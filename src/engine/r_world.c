@@ -33,6 +33,11 @@ void R_SetLightStyle(int style, const char *pattern)
 	Q_strncpy(lightstyle_pattern[style], pattern ? pattern : "", sizeof(lightstyle_pattern[0]));
 }
 
+const char *R_LightStylePattern(int style)
+{
+	return style >= 0 && style < 64 ? lightstyle_pattern[style] : "";
+}
+
 void R_AnimateLightStyles(double time)
 {
 	int frame = (int)(time * 10.0);
@@ -394,6 +399,7 @@ typedef struct {
 	vec3_t origin, angles;
 	int    rendermode, renderamt;
 	int    color[3];
+	int    frame;       // non-zero: the "+a" alternate textures (a pressed button, a lit sign)
 	float  dist;
 } brushent_t;
 
@@ -422,7 +428,8 @@ void R_ClearBrushEntities(void)
 	brushents_count = 0;
 }
 
-void R_AddBrushEntity(int submodel, const vec3_t origin, const vec3_t angles, int rendermode, int renderamt, const int color[3])
+void R_AddBrushEntity(int submodel, const vec3_t origin, const vec3_t angles, int rendermode, int renderamt, const int color[3],
+	int frame)
 {
 	if (submodel <= 0 || submodel >= world.numsubmodels)
 		return;
@@ -437,6 +444,7 @@ void R_AddBrushEntity(int submodel, const vec3_t origin, const vec3_t angles, in
 	VectorCopy(angles, b->angles);
 	b->rendermode = rendermode;
 	b->renderamt = rendermode == kRenderNormal ? 255 : renderamt;
+	b->frame = frame;
 	for (int i = 0; i < 3; i++)
 		b->color[i] = color[i];
 }
@@ -461,7 +469,7 @@ void R_BuildBrushEntities(void)
 		sscanf(BSP_ValueForKey(e, "angles"), "%f %f %f", &angles[0], &angles[1], &angles[2]);
 		sscanf(BSP_ValueForKey(e, "rendercolor"), "%d %d %d", &color[0], &color[1], &color[2]);
 		const char *amt = BSP_ValueForKey(e, "renderamt");
-		R_AddBrushEntity(m, origin, angles, atoi(BSP_ValueForKey(e, "rendermode")), *amt ? atoi(amt) : 255, color);
+		R_AddBrushEntity(m, origin, angles, atoi(BSP_ValueForKey(e, "rendermode")), *amt ? atoi(amt) : 255, color, 0);
 	}
 }
 
@@ -515,7 +523,7 @@ static void DrawBrushEntity(const brushent_t *b)
 		msurface_t *s = &world.surfaces[m->firstface + i];
 		if (!s->numverts || (s->flags & SURF_SKY) || !SurfaceFacing(s, local))
 			continue;
-		AddDrawSurf(s, 0);
+		AddDrawSurf(s, b->frame);
 	}
 
 	float alpha = 1.0f;

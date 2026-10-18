@@ -62,6 +62,7 @@ add_executable(newen WIN32
 	src/engine/sv_world.c
 	src/engine/sv_phys.c
 	src/engine/sv_pmove.c
+	src/engine/sv_save.c
 	src/engine/cl_input.c
 	src/engine/cl_main.c
 	src/engine/cl_event.c
@@ -72,9 +73,14 @@ add_executable(newen WIN32
 	src/engine/r_part.c
 	src/engine/r_beam.c
 	src/engine/r_decal.c
+	src/engine/snd_main.c
+	src/engine/snd_mem.c
+	src/engine/snd_codecs.c
 	src/engine/vgui_bridge.c
 )
-target_include_directories(newen PRIVATE src/engine third_party/stb)
+target_include_directories(newen PRIVATE src/engine third_party/stb third_party/dr_libs)
+# the vendored decoders aren't ours: no warnings from them
+set_source_files_properties(src/engine/snd_codecs.c PROPERTIES COMPILE_OPTIONS "/W0")
 target_compile_definitions(newen PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_link_libraries(newen PRIVATE lua54 SDL2main SDL2 opengl32 winmm gdi32 advapi32 dbghelp)
 if(MSVC)

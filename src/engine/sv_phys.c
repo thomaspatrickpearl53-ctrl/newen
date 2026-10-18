@@ -204,7 +204,7 @@ static trace_t PushEntity(edict_t *ent, const vec3_t push)
 
 // ---------------------------------------------------------------- pushers (doors, plats, trains)
 
-typedef struct { edict_t *ent; vec3_t origin; } pushed_t;
+typedef struct { edict_t *ent; vec3_t origin, angles; } pushed_t;
 static pushed_t *pushed;
 static int pushed_cap;
 
@@ -269,6 +269,13 @@ static qboolean PushMove(edict_t *pusher, float movetime)
 			continue;
 		if (check->v.mins[0] == check->v.maxs[0])
 			continue;   // points don't block
+		// stuck where it was pushed to: it can stay where it was, if that's free
+		VectorCopy(pushed[npushed - 1].origin, check->v.origin);
+		SV_LinkEdict(check, false);
+		if (!SV_TestEntityPosition(check)) {
+			npushed--;
+			continue;
+		}
 		if (check->v.solid == SOLID_NOT || check->v.solid == SOLID_TRIGGER) {
 			// corpses get squashed flat instead
 			VectorClear(check->v.mins);
@@ -284,13 +291,18 @@ static qboolean PushMove(edict_t *pusher, float movetime)
 			SV_LinkEdict(pushed[i].ent, false);
 		}
 		gGlobals.time = (float)sv.time;
+		if (developer->value > 1)
+			Con_Printf("%s %d blocked by %s %d at %.0f %.0f %.0f\n", SV_String(pusher->v.classname), NUM_FOR_EDICT(pusher),
+				SV_String(check->v.classname), NUM_FOR_EDICT(check), check->v.origin[0], check->v.origin[1], check->v.origin[2]);
 		gEntityInterface.pfnBlocked(pusher, check);
 		return false;
 	}
 	return true;
 }
 
-// rotating pushers turn, and stop when something is in the way (riders aren't carried round yet)
+// rotating pushers turn their riders (and anything they now overlap) round their origin; a rider also
+// turns with them, the player's view included. Something stuck stops the turn and the game hears
+// about it.
 static qboolean PushRotate(edict_t *pusher, float movetime)
 {
 	if (!pusher->v.avelocity[0] && !pusher->v.avelocity[1] && !pusher->v.avelocity[2]) {
@@ -306,20 +318,77 @@ static qboolean PushRotate(edict_t *pusher, float movetime)
 	if (pusher->v.solid == SOLID_NOT)
 		return true;
 
+	// the turn as axes: a point v goes to v[0]*f - v[1]*r + v[2]*u
+	vec3_t f, r, u;
+	AngleVectors(amove, f, r, u);
+	if (pushed_cap < sv.num_edicts) {
+		pushed_cap = sv.max_edicts;
+		pushed = Mem_Realloc(pushed, sizeof(*pushed) * pushed_cap);
+	}
+	int npushed = 0;
+	edict_t *pl = SV_LocalPlayer();
 	for (int e = 1; e < sv.num_edicts; e++) {
 		edict_t *check = EDICT_NUM(e);
 		if (!Pushable(check, pusher) || check->v.solid == SOLID_NOT)
 			continue;
-		if (check->v.absmin[0] >= pusher->v.absmax[0] || check->v.absmin[1] >= pusher->v.absmax[1] ||
-			check->v.absmin[2] >= pusher->v.absmax[2] || check->v.absmax[0] <= pusher->v.absmin[0] ||
-			check->v.absmax[1] <= pusher->v.absmin[1] || check->v.absmax[2] <= pusher->v.absmin[2])
+		qboolean rider = (check->v.flags & FL_ONGROUND) && check->v.groundentity == pusher;
+		if (!rider) {
+			if (check->v.absmin[0] >= pusher->v.absmax[0] || check->v.absmin[1] >= pusher->v.absmax[1] ||
+				check->v.absmin[2] >= pusher->v.absmax[2] || check->v.absmax[0] <= pusher->v.absmin[0] ||
+				check->v.absmax[1] <= pusher->v.absmin[1] || check->v.absmax[2] <= pusher->v.absmin[2])
+				continue;
+			if (SV_TestEntityPosition(check) != pusher)
+				continue;
+		}
+		pushed[npushed].ent = check;
+		VectorCopy(check->v.origin, pushed[npushed].origin);
+		VectorCopy(check->v.angles, pushed[npushed].angles);
+		npushed++;
+
+		vec3_t v, turned, move;
+		VectorSubtract(check->v.origin, pusher->v.origin, v);
+		for (int k = 0; k < 3; k++)
+			turned[k] = v[0] * f[k] - v[1] * r[k] + v[2] * u[k];
+		VectorSubtract(turned, v, move);
+		int solid = pusher->v.solid;
+		pusher->v.solid = SOLID_NOT;
+		PushEntity(check, move);
+		pusher->v.solid = solid;
+		check->v.angles[1] += amove[1];
+		if (check == pl) {
+			// the view turns with the ride
+			check->v.v_angle[1] += amove[1];
+			cl_viewangles[1] += amove[1];
+		}
+
+		edict_t *block = SV_TestEntityPosition(check);
+		if (!block || check->v.mins[0] == check->v.maxs[0])
 			continue;
-		if (SV_TestEntityPosition(check) != pusher)
+		// stuck where it was turned to: it can stay where it was, if that's free
+		VectorCopy(pushed[npushed - 1].origin, check->v.origin);
+		SV_LinkEdict(check, false);
+		if (!SV_TestEntityPosition(check)) {
+			npushed--;
 			continue;
+		}
+		// blocked: put everything back and tell the game
 		VectorCopy(oldangles, pusher->v.angles);
 		SV_LinkEdict(pusher, false);
 		pusher->v.ltime -= movetime;
+		for (int i = npushed - 1; i >= 0; i--) {
+			edict_t *p = pushed[i].ent;
+			VectorCopy(pushed[i].origin, p->v.origin);
+			if (p == pl) {
+				p->v.v_angle[1] -= amove[1];
+				cl_viewangles[1] -= amove[1];
+			}
+			VectorCopy(pushed[i].angles, p->v.angles);
+			SV_LinkEdict(p, false);
+		}
 		gGlobals.time = (float)sv.time;
+		if (developer->value > 1)
+			Con_Printf("%s %d blocked by %s %d at %.0f %.0f %.0f\n", SV_String(pusher->v.classname), NUM_FOR_EDICT(pusher),
+				SV_String(check->v.classname), NUM_FOR_EDICT(check), check->v.origin[0], check->v.origin[1], check->v.origin[2]);
 		gEntityInterface.pfnBlocked(pusher, check);
 		return false;
 	}
@@ -354,7 +423,8 @@ static void Physics_Pusher(edict_t *ent)
 			PushMove(ent, movetime);
 		}
 	}
-	if (thinktime > oldltime && thinktime <= ent->v.ltime) {
+	// FL_ALWAYSTHINK: the game steers it every frame (func_tracktrain aims 0.1 s ahead of where it is)
+	if (thinktime > oldltime && ((ent->v.flags & FL_ALWAYSTHINK) || thinktime <= ent->v.ltime)) {
 		ent->v.nextthink = 0;
 		gGlobals.time = (float)sv.time;
 		gEntityInterface.pfnThink(ent);

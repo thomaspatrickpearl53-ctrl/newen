@@ -643,6 +643,56 @@ typedef struct playermove_s {
 	struct msurface_s *(*PM_TraceSurface)(int ground, float *vstart, float *vend);
 } playermove_t;
 
+// ---------------------------------------------------------------- save/restore (level changes, saved games)
+
+// The game writes and reads entities itself (pfnSave/pfnRestore); the engine owns this structure:
+// the data buffer, a token table for field names, and one ENTITYTABLE entry per edict
+#define FENTTABLE_PLAYER   0x80000000
+#define FENTTABLE_REMOVED  0x40000000
+#define FENTTABLE_MOVEABLE 0x20000000
+#define FENTTABLE_GLOBAL   0x10000000
+
+typedef struct {
+	int      id;              // edict number when saved
+	edict_t *pent;
+	int      location;        // offset of its data in pBaseData
+	int      size;
+	int      flags;           // FENTTABLE_, plus a bit per level transition it's part of
+	string_t classname;
+} ENTITYTABLE;
+
+#define MAX_LEVEL_CONNECTIONS 16
+
+typedef struct {
+	char     mapName[32];
+	char     landmarkName[32];
+	edict_t *pentLandmark;
+	vec3f_t  vecLandmarkOrigin;
+} LEVELLIST;
+
+typedef struct saverestore_s {
+	char        *pBaseData;
+	char        *pCurrentData;
+	int          size;
+	int          bufferSize;
+	int          tokenSize;
+	int          tokenCount;
+	char       **pTokens;      // sparse hash of field names (pointers into the game DLL)
+	int          currentIndex; // the ENTITYTABLE entry being saved or restored
+	int          tableCount;
+	int          connectionCount;
+	ENTITYTABLE *pTable;
+	LEVELLIST    levelList[MAX_LEVEL_CONNECTIONS];
+	int          fUseLandmark;
+	char         szLandmarkName[20];
+	vec3f_t      vecLandmarkOffset;
+	float        time;
+	char         szCurrentMapName[32];
+} SAVERESTOREDATA;
+
+_Static_assert(sizeof(ENTITYTABLE) == 24 && sizeof(LEVELLIST) == 80, "save/restore table layout");
+_Static_assert(offsetof(SAVERESTOREDATA, fUseLandmark) == 44 + 16 * 80, "SAVERESTOREDATA layout");
+
 typedef void (__stdcall *GIVEFNPTRSTODLL)(enginefuncs_t *engfuncs, globalvars_t *globals);
 typedef int  (*APIFUNCTION)(DLL_FUNCTIONS *functionTable, int interfaceVersion);
 typedef int  (*APIFUNCTION2)(DLL_FUNCTIONS *functionTable, int *interfaceVersion);
