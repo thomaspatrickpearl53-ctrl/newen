@@ -603,6 +603,78 @@ void SV_Frame(double frametime)
 
 // ---------------------------------------------------------------- rendering bridge
 
+// Walking monsters move in steps, when they think (about 10 times a second). Like GoldSrc's client,
+// the renderer slides them from where they were drawn to the new place over the time between steps,
+// and turns them the same way. A big jump (a teleport, a respawn) isn't slid.
+typedef struct {
+	int    serial;
+	vec3_t from, to, afrom, ato;
+	double start, dur, changed;
+	qboolean valid;
+} steplerp_t;
+
+static steplerp_t *steplerps;
+static int steplerps_cap;
+static cvar_t *r_steplerp;
+
+static float AngleDelta(float a, float b)
+{
+	float d = fmodf(b - a, 360.0f);
+	if (d > 180) d -= 360;
+	if (d < -180) d += 360;
+	return d;
+}
+
+static void StepLerpAt(const steplerp_t *l, double now, vec3_t org, vec3_t ang)
+{
+	float f = l->dur > 0 ? (float)((now - l->start) / l->dur) : 1;
+	if (f > 1) f = 1;
+	if (f < 0) f = 0;
+	for (int k = 0; k < 3; k++) {
+		org[k] = l->from[k] + (l->to[k] - l->from[k]) * f;
+		ang[k] = l->afrom[k] + AngleDelta(l->afrom[k], l->ato[k]) * f;
+	}
+}
+
+static void StepLerp(int i, const edict_t *e, vec3_t org, vec3_t ang)
+{
+	if (steplerps_cap < sv.max_edicts) {
+		steplerps = Mem_Realloc(steplerps, sizeof(steplerp_t) * sv.max_edicts);
+		memset(steplerps + steplerps_cap, 0, sizeof(steplerp_t) * (sv.max_edicts - steplerps_cap));
+		steplerps_cap = sv.max_edicts;
+	}
+	steplerp_t *l = &steplerps[i];
+	double now = sv.time;
+	if (!l->valid || l->serial != e->serialnumber || now < l->changed) {
+		l->valid = true;
+		l->serial = e->serialnumber;
+		VectorCopy(e->v.origin, l->from);
+		VectorCopy(e->v.origin, l->to);
+		VectorCopy(e->v.angles, l->afrom);
+		VectorCopy(e->v.angles, l->ato);
+		l->start = l->changed = now;
+		l->dur = 0;
+	}
+	if (e->v.origin[0] != l->to[0] || e->v.origin[1] != l->to[1] || e->v.origin[2] != l->to[2] ||
+		e->v.angles[0] != l->ato[0] || e->v.angles[1] != l->ato[1] || e->v.angles[2] != l->ato[2]) {
+		vec3_t cur, curang, d;
+		StepLerpAt(l, now, cur, curang);
+		VectorSubtract(e->v.origin, cur, d);
+		if (DotProduct(d, d) > 128 * 128 || (e->v.effects & EF_NOINTERP)) {
+			VectorCopy(e->v.origin, cur);
+			VectorCopy(e->v.angles, curang);
+		}
+		VectorCopy(cur, l->from);
+		VectorCopy(curang, l->afrom);
+		VectorCopy(e->v.origin, l->to);
+		VectorCopy(e->v.angles, l->ato);
+		double gap = now - l->changed;
+		l->dur = gap < 0.05 ? 0.05 : gap > 0.25 ? 0.25 : gap;
+		l->start = l->changed = now;
+	}
+	StepLerpAt(l, now, org, ang);
+}
+
 void R_ClearBrushEntities(void);
 void R_AddBrushEntity(int submodel, const vec3_t origin, const vec3_t angles, int rendermode, int renderamt, const int color[3],
 	int frame);
@@ -640,8 +712,12 @@ void SV_SetupRenderEntities(void)
 		}
 		rentity_t *r = R_AddFrameEntity();
 		r->model = m;
-		VectorCopy(e->v.origin, r->origin);
-		VectorCopy(e->v.angles, r->angles);
+		if (e->v.movetype == MOVETYPE_STEP && r_steplerp->value) {
+			StepLerp(i, e, r->origin, r->angles);
+		} else {
+			VectorCopy(e->v.origin, r->origin);
+			VectorCopy(e->v.angles, r->angles);
+		}
 		r->sequence = e->v.sequence;
 		r->frame = e->v.frame;
 		r->body = e->v.body;
@@ -815,6 +891,7 @@ void SV_Init(void)
 	sv_stopspeed = Cvar_Get("sv_stopspeed", "100", FCVAR_SERVER, "speed below which friction stops you");
 	sv_bounce = Cvar_Get("sv_bounce", "1", FCVAR_SERVER, "bounce factor for MOVETYPE_BOUNCE");
 	sv_maxedicts = Cvar_Get("sv_maxedicts", "2048", FCVAR_ARCHIVE, "edicts per map (GoldSrc: 900); applies on map load");
+	r_steplerp = Cvar_Get("r_steplerp", "1", FCVAR_ARCHIVE, "slides walking monsters between their steps (0 = draw them where the game has them)");
 	deathmatch = Cvar_Get("deathmatch", "0", FCVAR_SERVER, "deathmatch game");
 	coop = Cvar_Get("coop", "0", FCVAR_SERVER, "cooperative game");
 	teamplay = Cvar_Get("teamplay", "0", FCVAR_SERVER, "team deathmatch");

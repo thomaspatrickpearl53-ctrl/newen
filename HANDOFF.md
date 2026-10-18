@@ -15,8 +15,9 @@ lasers), explosions, decals, titles.txt messages, screen fades and shakes. Sound
 movement sound through our own mixer on SDL audio, sentences with lip movement, the CD music as MP3s, room echo. Level
 changes (6b): the player and what's at the landmark (weapons, followers) go on to the next map, and a map visited before
 comes back as it was left; the opening tram ride runs. Saved games (6c): save/load, F6/F9, an autosave at every level
-change, and dying reloads the last save. Next, in the owner's order ("all of Phase 1"): the reported bugs, 5c (dynamic
-lights, VGUI mouse input, title font), 6d (the hl-lua API).
+change, and dying reloads the last save. The owner's reported bugs are fixed except the
+flashlight. Next, in the owner's order ("all of Phase 1"): 5c (dynamic lights, VGUI mouse input, title font), 6d (the
+hl-lua API).
 
 ---
 
@@ -138,7 +139,7 @@ right to them; don't "fix" it.
 
 ## 6. Code map
 
-All engine code is in `src/engine/`, about 24,000 lines. One executable, no DLL split yet.
+All engine code is in `src/engine/`, about 24,100 lines. One executable, no DLL split yet.
 
 | File | Lines | What it does |
 |---|---|---|
@@ -162,17 +163,17 @@ All engine code is in `src/engine/`, about 24,000 lines. One executable, no DLL 
 | `r_world.c` | 710 | Drawing: light style animation and lightmap re-upload of visible changed faces, PVS leaf marking, recursive node walk with frustum culling, surfaces sorted into (texture, lightmap page) batches drawn with `glDrawElements` from the VBO, two texture units (diffuse x lightmap), water (immediate mode, warped UVs, unlit), skybox (Quake 2 face orientation) plus sky faces written to depth only, brush entities from the entity lump with render modes and transparent sorting |
 | `model.h` | 316 | Studio (`studiohdr_t` and friends) and sprite file structures written from the documented formats; `model_t` (cache entry; brush models keep the entity text at GoldSrc's offset 384, because the client's spectator code reads it there), `rentity_t` (what the renderer draws, with GoldSrc's render modes), and the model/studio/sprite/light/entity entry points |
 | `model.c` | 615 | Model cache (`Mod_ForName`; failures stay cached as `mod_bad` so they warn once; `Mod_ClearAll` on map change frees everything and its `TF_MODEL` textures). Studio loader: keeps the file in memory, range-checks every table, bone parents and vertex bones, loads `<name>T.mdl` textures and `<name>NN.mdl` sequence groups, decodes strips/fans into one triangle list per mesh, HD texture overrides. Sprite loader: palette per `texFormat`, single frames and groups. `mdlinfo`, `modellist` |
-| `r_studio.c` | 635 | Bone setup (RLE anim values, quaternion slerp between frames, 2-way sequence blending, bone controllers and mouth, motion bone zeroed, pitch flipped like GoldSrc), CPU skinning, GoldSrc-style lighting (ambient + shade from `R_LightPoint`, light from above, lambert 1.5 wrap; flatshade, fullbright), chrome UVs from the view axes, masked and additive meshes, entity render modes |
+| `r_studio.c` | 640 | Bone setup (RLE anim values, quaternion slerp between frames, 2-way sequence blending, bone controllers and mouth, motion bone zeroed, pitch flipped like GoldSrc), CPU skinning, GoldSrc-style lighting (ambient + shade from `R_LightPoint`, light from above, lambert 1.5 wrap; flatshade, fullbright), chrome UVs from the view axes, masked and additive meshes, entity render modes |
 | `r_sprite.c` | 165 | Sprite frames (groups by interval), the 5 orientation types, render modes, glows (constant screen size, hidden by `R_LineBlocked` with GoldSrc's 8-unit tolerance, no depth test) |
 | `r_light.c` | 104 | `R_LightPoint` (trace down 2048 units through the BSP, read the lightmap sample with light styles, same gamma table as the lightmaps) and `R_LineBlocked` (segment vs solid leaves) |
 | `r_ents.c` | 343 | The renderer's entity list: built from the entity lump (model keys plus a temporary classname-to-model preview table), frustum + PVS culling (`R_BoxVisible` in `r_world.c`), opaque first, then translucent far to near. `mdlview`, `r_entlist` |
 | `game_api.h` | 711 | Clean-room GoldSrc game interface: `entvars_t`, `edict_t`, `globalvars_t`, `TraceResult`, `KeyValueData`, `enginefuncs_t` (159 entries in order, plus 32 reserved slots in case a newer DLL copies a bigger table), `DLL_FUNCTIONS`, `NEW_DLL_FUNCTIONS`, constants. Static asserts check the sizes (entvars 676, edict 804) |
 | `server.h` | 177 | Server state (`sv`: edicts, precache lists, client info), `trace_t`/`hull_t`, entry points of the `sv_*.c` files |
-| `sv_main.c` | 863 | Loads the game DLL (`liblist.gam` `gamedll`, `GiveFnptrsToDll` is stdcall, `GetEntityAPI2`/`GetEntityAPI`, optional `GetNewDLLFunctions`), string pool (`string_t` = offset from an empty `pStringBase`), edict alloc/free (0.5 s reuse delay), precache lists (model 1 = world, 2.. = `*n`), map spawn (class export, `KeyValue`, `Spawn`; "angle" becomes "angles"), `ServerActivate`, 2 settling frames, local client connect, the ghost player, `SV_SetupRenderEntities` (edicts to the renderer every frame), commands `edicts`, `status`, `god`, `notarget`, `tracetest`, unknown commands to `pfnClientCommand` |
+| `sv_main.c` | 940 | Loads the game DLL (`liblist.gam` `gamedll`, `GiveFnptrsToDll` is stdcall, `GetEntityAPI2`/`GetEntityAPI`, optional `GetNewDLLFunctions`), string pool (`string_t` = offset from an empty `pStringBase`), edict alloc/free (0.5 s reuse delay), precache lists (model 1 = world, 2.. = `*n`), map spawn (class export, `KeyValue`, `Spawn`; "angle" becomes "angles"), `ServerActivate`, 2 settling frames, local client connect, the ghost player, `SV_SetupRenderEntities` (edicts to the renderer every frame), commands `edicts`, `status`, `god`, `notarget`, `tracetest`, unknown commands to `pfnClientCommand` |
 | `sv_engfuncs.c` | 1392 | Every `enginefuncs_t` function. Real: precache, models, traces (line, hull, toss, model, texture), PVS (`FindClientInPVS`, `EntitiesInPVS`, fat PVS, `CheckVisibility`), entity search, private data, cvars (game cvars via `Cvar_RegisterExternal`), info strings, bone/attachment positions, CRC32, random, files, the game's own command buffer (`ServerCommand`/`ServerExecute`), `NameForFunction` via the DLL's export table. Stubs: sound, messages, events, deltas, voice, save/restore helpers |
 | `sv_world.c` | 433 | Collision: hulls from the BSP clipnodes (hull 0 built from the render nodes in `bsp.c`), box hull, `SV_HullPointContents`, `RecursiveHullCheck`, rotated brush entities, `SV_Move` (world + every linked edict: owner, monsterclip, ignore-glass, `ShouldCollide`), linking (`pfnSetAbsBox`, touched leafs for PVS, brush-shaped trigger touches) |
 | `sv_phys.c` | 781 | `SV_Physics`: `StartFrame`, then per movetype: push (move and rotate, blocking, riders), step (gravity, ground friction), toss/bounce/fly/missile, noclip, follow; think timing (`ltime` for pushers), `FL_KILLME` removal; monster movement: `SV_movestep` (step up/down 18), `SV_CheckBottom`, `SV_MoveToOrigin`, `SV_DropToFloor` |
-| `sv_pmove.c` | 758 | Player movement: fills `playermove_t` (player state, movevars from the `sv_*` cvars, physinfo, physents = world + solid entities within ~256 units, moveents = water/ladder brushes), all the pm callbacks (player traces against physents with the pm hull numbering stand/duck/point/large mapped to BSP hulls 1/3/0/2, `PM_TestPlayerPosition`, point contents incl. content brushes, `PM_HullForBsp`, `PM_TraceModel` into GoldSrc's trace_t layout, `memfgets`, files), then per command `CmdStart`, `PlayerPreThink`, think, `PM_Move`, copy back, link with trigger touches, touch what the move hit, `PlayerPostThink`, `CmdEnd` |
+| `sv_pmove.c` | 764 | Player movement: fills `playermove_t` (player state, movevars from the `sv_*` cvars, physinfo, physents = world + solid entities within ~256 units, moveents = water/ladder brushes), all the pm callbacks (player traces against physents with the pm hull numbering stand/duck/point/large mapped to BSP hulls 1/3/0/2, `PM_TestPlayerPosition`, point contents incl. content brushes, `PM_HullForBsp`, `PM_TraceModel` into GoldSrc's trace_t layout, `memfgets`, files), then per command `CmdStart`, `PlayerPreThink`, think, `PM_Move`, copy back, link with trigger touches, touch what the move hit, `PlayerPostThink`, `CmdEnd` |
 | `sv_save.c` | 687 | Level states: the game saves its entities into a `SAVERESTOREDATA` (data buffer that grows if the game fills it, token table, one `ENTITYTABLE` entry per edict); `pfnParmsChangeLevel` lists this map's connections and marks the entities in each transition. A level change keeps every visited map's state in memory; the next map restores its own state if it has one (without the player), then the old map's marked entities and the player, moved by the landmark offset. Globals (env_global, the tram) restore with `globalEntity` into the new map's copy. Saved games: `save/<name>.sav` in the game's userdata folder holds every level state (field-name tokens as strings), the game's global state (`pfnSaveGlobalState`) and the skill; loading replaces the remembered levels, runs `ResetGlobalState` + `RestoreGlobalState` and restores the current level with the player (`fUseLandmark` with no offset, so the player isn't sent to a spawn point). `save`, `load`, `autosave`, `saves`, `levelstates` |
 | `cl_input.c` | 139 | **Temporary** (client.dll's job in GoldSrc): `+forward/+back/+moveleft/+moveright/+moveup/+movedown/+jump/+duck/+attack/+attack2/+use/+reload/+speed/+alt1/+showscores` and `impulse`, the `cl_*speed` cvars, `CL_CreateCmd` builds a `usercmd_t` each frame. `cl_viewangles` is the look direction (mouse) |
 | `lua_local.h` | 17 | What `lua_host.c` shares with `lua_game.c`: `Lua_GetState`, `Lua_Call`, `Lua_Hook`, `LuaG_PushEntity` |
@@ -233,15 +234,21 @@ opens.
 
 ## 8. Known issues and shortcuts (fix when convenient)
 
-- **Owner-reported bugs (not fixed yet)**: monsters walk jerkily (their origin only changes when they think, about
-  10 times a second, and `SV_SetupRenderEntities` draws it as is; GoldSrc's client interpolates step-moving
-  entities); monsters look too bright (model lighting in `r_studio.c` was tuned by eye); you can't get off ladders
-  (`PM_TraceModel` in `sv_pmove.c` traces with the player's hull, so the trace towards the ladder centre starts
-  inside it and returns no plane); the flashlight (F) shows its HUD icon but gives no light (the game sets
-  `EF_DIMLIGHT` on the player and GoldSrc's engine lights the spot it points at with a dynamic light; newen doesn't
-  draw dynamic lights yet). Fixed: the view model tilted the wrong way when looking up or down (`CL_BuildViewModel`
-  flipped the pitch the client's V_CalcRefdef had already set). Fixed: buttons, chargers and signs never switched to
-  their "+a" textures (brush entities were drawn with frame 0; `R_AddBrushEntity` takes the entity's frame now).
+- **Owner-reported bugs.** Open: the flashlight (F) shows its HUD icon but gives no light (the game sets
+  `EF_DIMLIGHT` on the player and GoldSrc's engine lights the spot it points at with a dynamic light; dynamic lights are
+  part of 5c). Fixed:
+  - Monsters walked jerkily: they only move when they think (about 10 times a second). `SV_SetupRenderEntities` now
+    slides `MOVETYPE_STEP` entities from where they were drawn to the new place over the time between steps, turning
+    them too (`StepLerp`; `r_steplerp 0` turns it off; jumps over 128 units and `EF_NOINTERP` aren't slid).
+  - Monsters looked too bright: model light is now GoldSrc's split, a tenth from every side and the rest from above
+    (`r_studio_ambient 0.1`, `r_studio_shade 0.9`), and the share goes through the light curve (`r_lightgamma`) before
+    it multiplies the floor's brightness, so sides and undersides are darker.
+  - You couldn't get off ladders: `PM_TraceModel` traced with the player's box, which starts inside the ladder and
+    finds no surface; it uses the point hull now, as GoldSrc does.
+  - The view model tilted the wrong way when looking up or down (`CL_BuildViewModel` flipped the pitch the client's
+    V_CalcRefdef had already set).
+  - Buttons, chargers and signs never switched to their "+a" textures (brush entities were drawn with frame 0;
+    `R_AddBrushEntity` takes the entity's frame now).
 - Without a game DLL, brush entities are placed from the entity lump (`R_BuildBrushEntities`) with a hardcoded list
   of hidden classes (`HiddenClass`).
 - Without a game DLL, the free camera reads WASD directly (`Key_IsDown`), not through bindings. With one, `map`

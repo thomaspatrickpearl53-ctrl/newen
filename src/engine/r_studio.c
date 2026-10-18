@@ -432,7 +432,9 @@ static void EnsureArrays(int nverts, int nnorms, int ntris)
 }
 
 typedef struct {
-	vec3_t ambient, shade;      // 0..1 per channel
+	vec3_t color;               // the light at the floor below, as the world shows it (0..1)
+	float  ambient, shade;      // shares of it: everywhere, and from above
+	float  invgamma;            // the share is light, not brightness: it goes through the light curve
 	vec3_t lightvec;            // direction the light travels
 	float  alpha;
 	qboolean fullbright;
@@ -444,11 +446,11 @@ static void SetupLighting(const rentity_t *e, studiolight_t *l)
 	l->fullbright = r_fullbright_ref->value != 0 || !world.lightdata;
 	vec3_t p = { e->origin[0], e->origin[1], e->origin[2] + 1 };
 	R_LightPoint(p, c);
-	float a = r_studio_ambient->value, s = r_studio_shade->value;
-	for (int i = 0; i < 3; i++) {
-		l->ambient[i] = c[i] * a;
-		l->shade[i] = c[i] * s;
-	}
+	VectorCopy(c, l->color);
+	l->ambient = r_studio_ambient->value;
+	l->shade = r_studio_shade->value;
+	float g = Cvar_VariableValue("r_lightgamma");
+	l->invgamma = g > 0.1f ? 1.0f / g : 1.0f;
 	// GoldSrc lights models from straight above when there are no dynamic lights
 	VectorSet(l->lightvec, 0, 0, -1);
 }
@@ -470,8 +472,10 @@ static void LightNormal(const studiolight_t *l, const vec3_t n, int texflags, fl
 		lightcos = (lightcos + (r - 1.0f)) / r;
 		k = 1.0f - (lightcos > 0 ? lightcos : 0);
 	}
+	float f = l->ambient + l->shade * k;
+	f = f > 0 ? powf(f, l->invgamma) : 0;
 	for (int i = 0; i < 3; i++) {
-		float v = l->ambient[i] + l->shade[i] * k;
+		float v = l->color[i] * f;
 		out[i] = v > 1 ? 1 : v;
 	}
 }
@@ -629,7 +633,8 @@ void R_StudioDrawModel(rentity_t *e)
 void R_StudioInit(void)
 {
 	r_studio_lambert = Cvar_Get("r_studio_lambert", "1.5", 0, "how far model lighting wraps around the sides (GoldSrc: 1.5)");
-	r_studio_ambient = Cvar_Get("r_studio_ambient", "0.6", 0, "share of the floor light that lights every side of a model");
-	r_studio_shade = Cvar_Get("r_studio_shade", "0.5", 0, "share of the floor light that comes from above");
+	// GoldSrc's split: a tenth of the light reaches every side, the rest comes from above
+	r_studio_ambient = Cvar_Get("r_studio_ambient", "0.1", 0, "share of the floor light that lights every side of a model");
+	r_studio_shade = Cvar_Get("r_studio_shade", "0.9", 0, "share of the floor light that comes from above");
 	r_fullbright_ref = Cvar_Get("r_fullbright", "0", 0, "1 = no lightmaps");
 }

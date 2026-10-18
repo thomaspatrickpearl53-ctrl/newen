@@ -227,10 +227,16 @@ static void *PM_HullForBsp(physent_t *pe, float *offset)
 	return &hull;
 }
 
+// A line, not the player's box (pm_shared traces from the player to the middle of a ladder to find
+// which way it faces; with the box the trace starts inside the ladder and finds no surface, and you
+// can't get off it)
 static float PM_TraceModel(physent_t *pe, float *start, float *end, gs_trace_t *trace)
 {
 	vec3_t offset, start_l, end_l;
+	int saved = pm->usehull;
+	pm->usehull = 2;   // the point hull
 	hull_t *hull = PM_HullForBsp(pe, offset);
+	pm->usehull = saved;
 	VectorSubtract(start, offset, start_l);
 	VectorSubtract(end, offset, end_l);
 	trace_t t;
