@@ -15,9 +15,8 @@ lasers), explosions, decals, titles.txt messages, screen fades and shakes. Sound
 movement sound through our own mixer on SDL audio, sentences with lip movement, the CD music as MP3s, room echo. Level
 changes (6b): the player and what's at the landmark (weapons, followers) go on to the next map, and a map visited before
 comes back as it was left; the opening tram ride runs. Saved games (6c): save/load, F6/F9, an autosave at every level
-change, and dying reloads the last save. The owner's reported bugs are fixed. Dynamic lights and VGUI mouse
-input (part of 5c) are in. Next, in the owner's order ("all of Phase 1"): the title font (the rest of 5c), 6d (the
-hl-lua API).
+change, and dying reloads the last save. The owner's reported bugs are fixed. 5c is done: dynamic lights, VGUI
+mouse input, titles in Steam GoldSrc's font. Next, in the owner's order ("all of Phase 1"): 6d (the hl-lua API).
 
 ---
 
@@ -153,7 +152,7 @@ All engine code is in `src/engine/`, about 24,100 lines. One executable, no DLL 
 | `keys.c` | 221 | Bindings (`bind`, `unbind`, `bindlist`); routing: `` ` `` -> console, console open -> console, then Lua `KeyEvent` hook, then bindings. `+cmd` bindings get the key number appended like GoldSrc |
 | `filesystem.c` | 324 | Search paths (see the comment at the top), finding Half-Life, `FS_LoadFile`, `FS_ListFiles` (merged, sorted), `FS_OpenWrite` (write dir only), `path`, `dir` |
 | `vid_sdl.c` | 341 | SDL window and GL 2.1 compatibility context, key/mouse mapping to GoldSrc key numbers, relative mouse for mouse look (or a hidden, confined cursor for `m_rawinput 0`), window focus, vsync, `vid_restart`, `screenshot` (TGA) |
-| `draw.c` / `font_win.c` | 106 / 77 | 2D: filled rects and console text. The font is rasterized from a Windows font with GDI into an alpha atlas (ASCII 32-126, monospace) |
+| `draw.c` / `font_win.c` | 106 / 155 | 2D: filled rects and console text. Fonts are rasterized from Windows fonts with GDI into alpha atlases (ASCII 32-126): monospace for the console, proportional for titles |
 | `lua_host.c` | 950 | The Lua VM (see section 7) |
 | `mathlib.h` | 61 | vec3 macros, `AngleVectors` (Quake conventions) |
 | `gl_local.h` | 87 | Renderer-internal: GL extension pointers (`qglActiveTexture`, buffers), texture API, WAD API, `refdef_t` |
@@ -282,8 +281,7 @@ opens.
   speakers) and `s_record`, then look at the WAV (loudness over time, `ffmpeg ... showspectrumpic`).
 - **Client shortcuts (after 5b)**: the client's studio renderer is never
   used (the engine draws models; HUD_GetStudioModelInterface only gets the API table); `cl_lw` is 0 (no client-side
-  weapon prediction, so the server's weapon entities are shown, e.g. the egon's CBeam); titles.txt text uses the
-  console font (GoldSrc draws titles bigger); spray logos aren't loaded; `PlayerInfo_SetValueForKey` and `SetMousePos`
+  weapon prediction, so the server's weapon entities are shown, e.g. the egon's CBeam); spray logos aren't loaded; `PlayerInfo_SetValueForKey` and `SetMousePos`
   are no-ops; VGUI gets the mouse but not the keyboard (the client's
   menus take number keys through `HUD_Key_Event` anyway). The view model is drawn with depth range 0-0.3.
 - **Macros evaluate their arguments more than once** (`VectorCopy` and friends in `mathlib.h`): never put `++` or a
@@ -378,7 +376,10 @@ title. Fixed on the way: the client's pm_shared was never initialised (its asser
 world model's entity text wasn't where the client reads it, the HUD's additive sprites ignored alpha (the crosshair
 was a white box).
 
-**5c, in progress:** dynamic lights and VGUI mouse input are done; titles in a bigger font are next.
+**5c, done:** dynamic lights (`cl_tent.c` keeps them, `r_light.c` adds them to lightmaps and model light), VGUI mouse
+input (`vgui_bridge.c`), and the title font: the client's `DrawCharacter`/`GetScreenInfo` use a proportional
+Trebuchet MS, 18 tall at 480 lines scaled with the screen, weight 600, drawn additively, like Steam GoldSrc's
+"CreditsFont" (`cl_titlefont`; `Font_RasterizeProportional` in `font_win.c`).
 
 The original plan for step 5:
 `client.dll`: `F` export/`Initialize(cl_enginefunc_t*)`, `HUD_*` callbacks, `cl_enginefunc_t`, triangle API, event API, efx API, studio interface (model rendering moves to the client), demo API, net API stubs, **VGUI1** (`vgui.dll` from the HL folder, `VGui_*` interfaces), view model, HUD sprites (`hud.txt`), `+forward` and other movement commands registered by the client.

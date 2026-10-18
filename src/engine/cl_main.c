@@ -273,6 +273,55 @@ static void FillRGBABlend(int x, int y, int w, int h, int r, int g, int b, int a
 	glColor4f(1, 1, 1, 1);
 }
 
+// ---------------------------------------------------------------- the title font
+
+// The client draws titles.txt messages and the credits one character at a time. Steam GoldSrc uses
+// its "CreditsFont" for that: Trebuchet MS, 18 tall at 480 lines and scaled with the screen,
+// semi-bold, antialiased. It's drawn additively: the client fades text by darkening its colour.
+static struct {
+	int built_for;   // screen height the atlas was made for
+	char face[64];
+	fontatlas_t atlas;
+	GLuint tex;
+} tfont;
+
+static cvar_t *cl_titlefont;
+
+static qboolean TitleFont(void)
+{
+	if (!cl_titlefont)
+		return false;
+	if (tfont.built_for == vid_height && !strcmp(tfont.face, cl_titlefont->string))
+		return tfont.tex != 0;
+	tfont.built_for = vid_height;
+	Q_strncpy(tfont.face, cl_titlefont->string, sizeof(tfont.face));
+	Mem_Free(tfont.atlas.alpha);
+	if (!tfont.tex)
+		glGenTextures(1, &tfont.tex);
+	int tall = (18 * vid_height + 240) / 480;
+	if (tall < 12)
+		tall = 12;
+	if (!Font_RasterizeProportional(cl_titlefont->string, tall, 600, &tfont.atlas)) {
+		glDeleteTextures(1, &tfont.tex);
+		tfont.tex = 0;
+		return false;
+	}
+	glBindTexture(GL_TEXTURE_2D, tfont.tex);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA8, tfont.atlas.width, tfont.atlas.height, 0, GL_ALPHA, GL_UNSIGNED_BYTE, tfont.atlas.alpha);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	return true;
+}
+
+static int TitleCharWidth(int ch)
+{
+	return ch >= 32 && ch < 127 ? tfont.atlas.advance[ch] : 0;
+}
+
 static int GetScreenInfo(SCREENINFO *s)
 {
 	if (!s || s->iSize != sizeof(SCREENINFO))
@@ -280,9 +329,15 @@ static int GetScreenInfo(SCREENINFO *s)
 	s->iWidth = vid_width;
 	s->iHeight = vid_height;
 	s->iFlags = SCRINFO_SCREENFLASH;
-	s->iCharHeight = Draw_LineHeight();
-	for (int i = 0; i < 256; i++)
-		s->charWidths[i] = (short)Draw_CharWidth();
+	if (TitleFont()) {
+		s->iCharHeight = tfont.atlas.cell_h;
+		for (int i = 0; i < 256; i++)
+			s->charWidths[i] = (short)TitleCharWidth(i);
+	} else {
+		s->iCharHeight = Draw_LineHeight();
+		for (int i = 0; i < 256; i++)
+			s->charWidths[i] = (short)Draw_CharWidth();
+	}
 	return 1;
 }
 
@@ -295,10 +350,34 @@ static void SetCrosshair(HSPRITE_t h, wrect_t rc, int r, int g, int b)
 
 static int DrawCharacter(int x, int y, int ch, int r, int g, int b)
 {
-	char s[2] = { (char)ch, 0 };
-	if (ch > 32 && ch < 127)
-		Draw_String((float)x, (float)y, s, r, g, b, 255);
-	return Draw_CharWidth();
+	ch &= 255;
+	if (!TitleFont()) {
+		char s[2] = { (char)ch, 0 };
+		if (ch > 32 && ch < 127)
+			Draw_String((float)x, (float)y, s, r, g, b, 255);
+		return Draw_CharWidth();
+	}
+	if (ch > 32 && ch < 127) {
+		const fontatlas_t *a = &tfont.atlas;
+		int i = ch - 32, cx = (i % 16) * a->cell_w, cy = (i / 16) * a->cell_h;
+		float s0 = (float)cx / a->width, s1 = (float)(cx + a->cell_w) / a->width;
+		float t0 = (float)cy / a->height, t1 = (float)(cy + a->cell_h) / a->height;
+		int x0 = x - a->pad;
+		glEnable(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, tfont.tex);
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+		glColor4ub((GLubyte)r, (GLubyte)g, (GLubyte)b, 255);
+		glBegin(GL_QUADS);
+		glTexCoord2f(s0, t0); glVertex2i(x0, y);
+		glTexCoord2f(s1, t0); glVertex2i(x0 + a->cell_w, y);
+		glTexCoord2f(s1, t1); glVertex2i(x0 + a->cell_w, y + a->cell_h);
+		glTexCoord2f(s0, t1); glVertex2i(x0, y + a->cell_h);
+		glEnd();
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glColor4f(1, 1, 1, 1);
+	}
+	return TitleCharWidth(ch);
 }
 
 static int DrawConsoleString(int x, int y, const char *s)
@@ -1177,6 +1256,7 @@ void CL_Init(void)
 	Cvar_Get("sv_allow_shaders", "1", FCVAR_SERVER, NULL);
 	// the 25th anniversary client reads raw mouse movement from SDL when this is on (an engine cvar there)
 	Cvar_Get("m_rawinput", "1", FCVAR_ARCHIVE, "1 = the client reads raw mouse movement (SDL relative mode)");
+	cl_titlefont = Cvar_Get("cl_titlefont", "Trebuchet MS", FCVAR_ARCHIVE, "font face for titles and credits (applies at the next map)");
 	// client-side weapon prediction: not supported yet, so off (the server's weapon effects are shown)
 	Cvar_Get("cl_lw", "0", FCVAR_READONLY, "client-side weapon prediction (not supported yet)");
 	crosshair = Cvar_Get("crosshair", "1", FCVAR_ARCHIVE, "draws the crosshair");

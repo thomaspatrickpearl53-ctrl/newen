@@ -271,10 +271,15 @@ int  Draw_LineHeight(void);
 // font_win.c - rasterizes a system font into an 8-bit alpha atlas (ASCII 32..126)
 typedef struct {
 	int width, height;          // atlas size
-	int cell_w, cell_h;         // monospace cell
+	int cell_w, cell_h;         // monospace cell; for proportional fonts, the cell every glyph sits in
+	int pad;                    // proportional: where the pen starts inside a cell (room for overhangs)
+	short advance[128];         // proportional: how far each character moves the pen
 	unsigned char *alpha;       // width*height
 } fontatlas_t;
 qboolean Font_Rasterize(const char *face, int pixel_height, fontatlas_t *out);
+// a proportional font like VGUI2's: cell height in pixels, weight 400 normal .. 700 bold, antialiased.
+// Character c is in the cell at column (c-32)%16, row (c-32)/16.
+qboolean Font_RasterizeProportional(const char *face, int tall, int weight, fontatlas_t *out);
 
 // ---------------------------------------------------------------- lua_host.c
 void     Lua_Init(void);
