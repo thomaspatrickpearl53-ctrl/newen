@@ -15,9 +15,9 @@ lasers), explosions, decals, titles.txt messages, screen fades and shakes. Sound
 movement sound through our own mixer on SDL audio, sentences with lip movement, the CD music as MP3s, room echo. Level
 changes (6b): the player and what's at the landmark (weapons, followers) go on to the next map, and a map visited before
 comes back as it was left; the opening tram ride runs. Saved games (6c): save/load, F6/F9, an autosave at every level
-change, and dying reloads the last save. The owner's reported bugs are fixed. Dynamic lights (part of 5c)
-are in. Next, in the owner's order ("all of Phase 1"): the rest of 5c (VGUI mouse input, title font), 6d (the hl-lua
-API).
+change, and dying reloads the last save. The owner's reported bugs are fixed. Dynamic lights and VGUI mouse
+input (part of 5c) are in. Next, in the owner's order ("all of Phase 1"): the title font (the rest of 5c), 6d (the
+hl-lua API).
 
 ---
 
@@ -180,7 +180,7 @@ All engine code is in `src/engine/`, about 24,100 lines. One executable, no DLL 
 | `lua_game.c` | 1202 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
 | `client_api.h` | 710 | Clean-room client interface: `cl_enginefunc_t` (the SDK order, plus the later Steam/HL25 additions and 32 reserved slots), `cl_entity_t` (3000 bytes), `entity_state_t` (340), `ref_params_t`, `client_data_t`, `SCREENINFO`, `client_sprite_t`, the client export table. The tri/efx/event/demo/net/voice API tables are padded arrays of stubs for now |
 | `cl_main.c` | 1265 | Loads client.dll (after vgui.dll), every `cl_enginefunc_t` function (HUD sprites with `hud.txt` parsing and normal/holes/additive drawing, FillRGBA (additive, like GoldSrc), text, cvars/commands, user message hooks, player info, entities for the client, `V_CalcRefdef` with `ref_params_t`, the view model, crosshair, center print), the user-message queue (game DLL messages are buffered in `sv_engfuncs.c` and dispatched at the start of the client frame; `svc_weaponanim` sets the view model animation, `svc_temp_entity` goes to `cl_tent.c`, unhooked ScreenFade/ScreenShake to `cl_view.c`), the API tables from the files below, `CL_CrashFilter` (with `CLIENT_CALL` in `cl_local.h`: a crash in the client logs its stack and turns the client off instead of killing the engine), `HUD_PlayerMoveInit` at the first map (the client's pm_shared needs its texture types before any event) |
-| `vgui_bridge.c` | 386 | Hosts vgui.dll: constructs `App(true)`, a full-screen root `Panel` and a `SurfaceBase` with our own 35-slot vtable (thiscall via `__fastcall` + dummy EDX), OpenGL drawing for rects, textures and text (glyphs from vgui's own `Font::getCharRGBA`), paint/clip stack from `getAbsExtents/getClipRect/getInset`. App's `main` and `platTick` are stubbed in a copied vtable. VGUI1 alpha is transparency (0 = opaque) |
+| `vgui_bridge.c` | 441 | Hosts vgui.dll: constructs `App(true)`, a full-screen root `Panel` and a `SurfaceBase` with our own 35-slot vtable (thiscall via `__fastcall` + dummy EDX), OpenGL drawing for rects, textures and text (glyphs from vgui's own `Font::getCharRGBA`), paint/clip stack from `getAbsExtents/getClipRect/getInset`. App's `main` and `platTick` are stubbed in a copied vtable. VGUI1 alpha is transparency (0 = opaque). Mouse input: the client shows the cursor through `setCursor` (anything but `dc_none`) when a menu wants it; then `VGUI_WantsMouse` turns off mouse look and `vid_sdl.c` sends motion, buttons and the wheel to App's `internal*` methods instead of key bindings. vgui reads the cursor back through `GetMousePos`, so that returns the position last passed in |
 | `cl_local.h` | 173 | What the client-side files share: client exports and time, `CLIENT_CALL`, TE_ numbers, the effect entry points |
 | `cl_event.c` | 235 | Events: `PlaybackEvent` (game, pm_shared or client) builds `event_args_t` (players shoot along `v_angle`), queued with delay and `FEV_UPDATE`, fired by name to the client's hooks in `CL_Frame`. The event API: traces through `sv_pmove.c`'s client view (every solid entity), `EV_KillEvents` marks instead of removing (it's called from inside hooks). FEV_NOTHOST events are played too (no client-side prediction) |
 | `cl_tent.c` | 1547 | Temp entities in fixed blocks (the client keeps pointers) on free/active lists; `HUD_TempEntUpdate` moves them and hands back visible ones. The whole efx API (models, sprites, muzzle flashes, sparks, blood, gibs, bubbles, projectiles, player attachments), `svc_temp_entity` parsing (all TE_ types), client events in model animations (5000+, fired by frame range with the last frame kept in `latched`), view model attachments every frame, `CL_GetEntityPoint` ("entity:attachment" packing) |
@@ -280,12 +280,12 @@ opens.
   images); the CD track table (`cd_tracks` in `snd_main.c`) is from memory of the Steam release, check it against the
   game; sounds keep playing during the console. Test sound with `SDL_AUDIODRIVER=dummy` (nothing comes out of the
   speakers) and `s_record`, then look at the WAV (loudness over time, `ffmpeg ... showspectrumpic`).
-- **Client shortcuts (after 5b)**: dynamic lights
-  are allocated but not drawn (muzzle flash and explosion light, TE_DLIGHT); the client's studio renderer is never
+- **Client shortcuts (after 5b)**: the client's studio renderer is never
   used (the engine draws models; HUD_GetStudioModelInterface only gets the API table); `cl_lw` is 0 (no client-side
   weapon prediction, so the server's weapon entities are shown, e.g. the egon's CBeam); titles.txt text uses the
   console font (GoldSrc draws titles bigger); spray logos aren't loaded; `PlayerInfo_SetValueForKey` and `SetMousePos`
-  are no-ops; VGUI input (clicking menus) isn't wired up. The view model is drawn with depth range 0-0.3.
+  are no-ops; VGUI gets the mouse but not the keyboard (the client's
+  menus take number keys through `HUD_Key_Event` anyway). The view model is drawn with depth range 0-0.3.
 - **Macros evaluate their arguments more than once** (`VectorCopy` and friends in `mathlib.h`): never put `++` or a
   call with side effects inside them. `VectorCopy(a, out[count++])` in the decal clipper advanced by 3 and corrupted
   the heap on every bullet hole.
@@ -378,7 +378,7 @@ title. Fixed on the way: the client's pm_shared was never initialised (its asser
 world model's entity text wasn't where the client reads it, the HUD's additive sprites ignored alpha (the crosshair
 was a white box).
 
-**5c, next:** VGUI mouse input (clicking VGUI menus), titles in a bigger font, dynamic lights.
+**5c, in progress:** dynamic lights and VGUI mouse input are done; titles in a bigger font are next.
 
 The original plan for step 5:
 `client.dll`: `F` export/`Initialize(cl_enginefunc_t*)`, `HUD_*` callbacks, `cl_enginefunc_t`, triangle API, event API, efx API, studio interface (model rendering moves to the client), demo API, net API stubs, **VGUI1** (`vgui.dll` from the HL folder, `VGui_*` interfaces), view model, HUD sprites (`hud.txt`), `+forward` and other movement commands registered by the client.

@@ -214,6 +214,12 @@ void     Vid_GetWindowCenter(int *x, int *y);   // screen coordinates
 qboolean Vid_HasFocus(void);
 void     Vid_SetCapturedCursor(qboolean on);   // hidden and confined, but not relative
 
+// VGUI1 input (vgui_bridge.c): while a menu shows the cursor the mouse goes to it
+qboolean VGUI_WantsMouse(void);
+void     VGUI_MouseMove(int x, int y);
+void     VGUI_MouseButton(int button, qboolean down, qboolean dbl);
+void     VGUI_MouseWheel(int delta);
+
 // ---------------------------------------------------------------- r_main.c
 void        R_Init(void);
 void        R_Shutdown(void);

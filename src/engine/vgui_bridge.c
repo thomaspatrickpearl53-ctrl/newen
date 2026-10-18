@@ -20,6 +20,8 @@ typedef void (__fastcall *set4_t)(void *self, void *edx, int a, int b, int c, in
 typedef int  (__fastcall *int_t)(void *self, void *edx);
 typedef void (__fastcall *abc_t)(void *self, void *edx, int ch, int *a, int *b, int *c);
 typedef void (__fastcall *rgba_t)(void *self, void *edx, int ch, int x, int y, int w, int h, unsigned char *rgba);
+typedef void (__fastcall *int_ptr_t)(void *self, void *edx, int a, void *p);
+typedef void (__fastcall *int2_ptr_t)(void *self, void *edx, int a, int b, void *p);
 
 static HMODULE vgui;
 static unsigned char *app, *root, *surface;
@@ -32,6 +34,10 @@ static void_t panel_solveTraverse, panel_paintTraverse, app_externalTick;
 static abc_t  font_getCharABCwide;
 static rgba_t font_getCharRGBA;
 static int_t  font_getTall, font_getId;
+static int_t  cursor_getDefaultCursor;
+static int2_ptr_t app_cursorMoved;
+static int_ptr_t  app_mousePressed, app_mouseDoublePressed, app_mouseReleased, app_mouseWheeled;
+static qboolean cursor_visible;
 
 static void *Proc(const char *name)
 {
@@ -95,10 +101,21 @@ static void __fastcall S_createPopup(void *s, void *e, void *panel) {}
 static int  __fastcall S_hasFocus(void *s, void *e) { return 1; }
 static int  __fastcall S_isWithin(void *s, void *e, int x, int y) { return 1; }
 static int  __fastcall S_createNewTextureID(void *s, void *e) { return next_texture++; }
-static void __fastcall S_GetMousePos(void *s, void *e, int *x, int *y) { SDL_GetMouseState(x, y); }
+static int mouse_pos[2];   // where the engine last told vgui the cursor is
+static void __fastcall S_GetMousePos(void *s, void *e, int *x, int *y) { *x = mouse_pos[0]; *y = mouse_pos[1]; }
 static void __fastcall S_invalidate(void *s, void *e, void *panel) {}
 static void __fastcall S_enableMouseCapture(void *s, void *e, int b) {}
-static void __fastcall S_setCursor(void *s, void *e, void *cursor) {}
+// vgui sets the cursor every tick; the client hides it (dc_none) unless a menu wants the mouse
+static void __fastcall S_setCursor(void *s, void *e, void *cursor)
+{
+	enum { dc_user, dc_none };
+	qboolean visible = cursor && cursor_getDefaultCursor && cursor_getDefaultCursor(cursor, NULL) != dc_none;
+	if (visible && !cursor_visible)
+		SDL_GetMouseState(&mouse_pos[0], &mouse_pos[1]);   // it may not move before the first click
+	if (visible != cursor_visible)
+		Con_DPrintf("VGUI cursor %s\n", visible ? "shown" : "hidden");
+	cursor_visible = visible;
+}
 static void __fastcall S_swapBuffers(void *s, void *e) {}
 static void __fastcall S_applyChanges(void *s, void *e) {}
 static int  __fastcall S_createPlat(void *s, void *e) { return 1; }
@@ -306,6 +323,12 @@ qboolean VGUI_Init(void)
 	font_getCharRGBA = (rgba_t)Proc("?getCharRGBA@Font@vgui@@UAEXHHHHHPAE@Z");
 	font_getTall = (int_t)Proc("?getTall@Font@vgui@@UAEHXZ");
 	font_getId = (int_t)Proc("?getId@Font@vgui@@UAEHXZ");
+	cursor_getDefaultCursor = (int_t)Proc("?getDefaultCursor@Cursor@vgui@@UAE?AW4DefaultCursor@12@XZ");
+	app_cursorMoved = (int2_ptr_t)Proc("?internalCursorMoved@App@vgui@@UAEXHHPAVSurfaceBase@2@@Z");
+	app_mousePressed = (int_ptr_t)Proc("?internalMousePressed@App@vgui@@UAEXW4MouseCode@2@PAVSurfaceBase@2@@Z");
+	app_mouseDoublePressed = (int_ptr_t)Proc("?internalMouseDoublePressed@App@vgui@@UAEXW4MouseCode@2@PAVSurfaceBase@2@@Z");
+	app_mouseReleased = (int_ptr_t)Proc("?internalMouseReleased@App@vgui@@UAEXW4MouseCode@2@PAVSurfaceBase@2@@Z");
+	app_mouseWheeled = (int_ptr_t)Proc("?internalMouseWheeled@App@vgui@@UAEXHPAVSurfaceBase@2@@Z");
 	if (!app_ctor || !panel_ctor || !surface_ctor || !panel_paintTraverse) {
 		Con_Warnf("%s isn't the VGUI this engine knows\n", path);
 		return false;
@@ -361,6 +384,38 @@ qboolean VGUI_Init(void)
 void *VGUI_GetPanel(void)
 {
 	return root;
+}
+
+// ---------------------------------------------------------------- input
+
+// true while a VGUI menu shows the cursor: the mouse then belongs to VGUI, not to mouse look
+qboolean VGUI_WantsMouse(void)
+{
+	return root && cursor_visible;
+}
+
+void VGUI_MouseMove(int x, int y)
+{
+	mouse_pos[0] = x;
+	mouse_pos[1] = y;
+	if (root && app_cursorMoved)
+		app_cursorMoved(app, NULL, x, y, surface);
+}
+
+// button: 0 left, 1 right, 2 middle (vgui's MouseCode)
+void VGUI_MouseButton(int button, qboolean down, qboolean dbl)
+{
+	if (!root)
+		return;
+	int_ptr_t f = !down ? app_mouseReleased : dbl ? app_mouseDoublePressed : app_mousePressed;
+	if (f)
+		f(app, NULL, button, surface);
+}
+
+void VGUI_MouseWheel(int delta)
+{
+	if (root && app_mouseWheeled)
+		app_mouseWheeled(app, NULL, delta, surface);
 }
 
 // paints every VGUI panel; call in 2D mode after the HUD
