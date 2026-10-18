@@ -67,12 +67,14 @@ static void UpdateLightmap(msurface_t *s)
 {
 	if (!s->samples)
 		return;
-	qboolean changed = false;
+	qboolean lit = s->dlightframe == r_refdef.framecount;
+	qboolean changed = lit || s->dlit;   // a dynamic light is on it, or was last time
 	for (int m = 0; m < 4 && s->styles[m] != 255; m++)
 		if (s->cached_light[m] != lightstyle_value[s->styles[m] & 63])
 			changed = true;
 	if (!changed)
 		return;
+	s->dlit = lit;
 	unsigned char *page = world.lightmap_pixels[s->lm_page];
 	unsigned char *dest = page + (s->lm_y * LM_PAGE + s->lm_x) * 4;
 	BSP_BuildSurfaceLightmap(s, dest, LM_PAGE * 4);
@@ -519,10 +521,12 @@ static void DrawBrushEntity(const brushent_t *b)
 		glRotatef(b->angles[2], 1, 0, 0);
 	}
 
+	R_DlightSpace(b->origin, b->angles);
 	for (int i = 0; i < m->numfaces; i++) {
 		msurface_t *s = &world.surfaces[m->firstface + i];
 		if (!s->numverts || (s->flags & SURF_SKY) || !SurfaceFacing(s, local))
 			continue;
+		R_MarkSurfaceDlights(s);
 		AddDrawSurf(s, b->frame);
 	}
 
@@ -565,6 +569,7 @@ static void DrawBrushEntity(const brushent_t *b)
 	glColor4f(1, 1, 1, 1);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glPopMatrix();
+	R_DlightSpace(NULL, NULL);
 }
 
 static int CompareBrushDist(const void *a, const void *b)
@@ -677,6 +682,7 @@ void R_DrawWorld(void)
 	R_AnimateLightStyles(r_refdef.time);
 	viewleaf = BSP_PointInLeaf(r_refdef.origin);
 	MarkLeaves();
+	R_PushDlights();
 
 	glEnable(GL_DEPTH_TEST);
 	glDepthFunc(GL_LEQUAL);

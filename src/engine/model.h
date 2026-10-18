@@ -305,6 +305,7 @@ qboolean R_SpriteCull(const rentity_t *e);
 // r_light.c
 void     R_LightPoint(const vec3_t p, vec3_t color);    // 0..1+, lightmap light at the floor below p
 qboolean R_LineBlocked(const vec3_t start, const vec3_t end);   // true if world geometry is in the way
+void     R_DlightPoint(const vec3_t p, vec3_t color);          // adds this frame's dynamic lights near p
 
 // r_ents.c
 void     R_InitEntities(void);

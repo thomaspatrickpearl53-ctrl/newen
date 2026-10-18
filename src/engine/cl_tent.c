@@ -207,12 +207,14 @@ static void UpdateTempEnts(void)
 }
 
 static void ComputeAttachments(cl_entity_t *ent, const rentity_t *r);
+static void UpdateDlights(void);
 
 void CL_AddEntities(void)
 {
 	if (!client_ok || !sv.active)
 		return;
 	// the view model's events first, so a muzzle flash shows in the frame that fired it
+	UpdateDlights();
 	rentity_t vr;
 	if (CL_BuildViewModel(&vr)) {
 		// the gun's attachments (barrel, shell port) every frame: beams and effects start there
@@ -898,23 +900,117 @@ static void EfxFireCustomDecal(int tex, int entity, int modelIndex, float *pos, 
 
 static void EfxDecalRemoveAll(int tex) { R_DecalRemoveAll(tex); }
 
-// dynamic lights aren't drawn yet; the client gets somewhere harmless to write
-static dlight_t dlights[32];
-static int dlight_next;
+// ---------------------------------------------------------------- dynamic lights
+
+// The client's (efx CL_AllocDlight) and the engine's own: muzzle flashes, the flashlight, the
+// game's light effects, TE_DLIGHT. A key reuses that light (one per entity); they fade by decay and
+// go when they die. Each frame the live ones go to the renderer.
+#define MAX_CL_DLIGHTS 32
+static dlight_t dlights[MAX_CL_DLIGHTS];
 
 static dlight_t *CL_AllocDlight(int key)
 {
+	dlight_t *d = NULL;
 	if (key)
-		for (int i = 0; i < 32; i++)
-			if (dlights[i].key == key) {
-				memset(&dlights[i], 0, sizeof(dlights[i]));
-				dlights[i].key = key;
-				return &dlights[i];
-			}
-	dlight_t *d = &dlights[dlight_next++ & 31];
+		for (int i = 0; i < MAX_CL_DLIGHTS && !d; i++)
+			if (dlights[i].key == key)
+				d = &dlights[i];
+	for (int i = 0; i < MAX_CL_DLIGHTS && !d; i++)
+		if (dlights[i].die < cl_time || dlights[i].radius <= 0)
+			d = &dlights[i];
+	if (!d)
+		d = &dlights[0];
 	memset(d, 0, sizeof(*d));
 	d->key = key;
 	return d;
+}
+
+static dlight_t *Light(int key, const float *origin, float radius, int r, int g, int b, float life)
+{
+	dlight_t *d = CL_AllocDlight(key);
+	VectorCopy(origin, d->origin);
+	d->radius = radius;
+	d->color.r = (unsigned char)r;
+	d->color.g = (unsigned char)g;
+	d->color.b = (unsigned char)b;
+	d->die = (float)cl_time + life;
+	return d;
+}
+
+// the flashlight: a light where the view meets something, dimmer the further away that is
+static void Flashlight(edict_t *pl)
+{
+	vec3_t end;
+	VectorMA(r_refdef.origin, 2048, r_refdef.forward, end);
+	trace_t tr = SV_Move(r_refdef.origin, zero_vec, zero_vec, end, 0, pl);
+	float dist = tr.fraction * 2048;
+	float bright = dist < 400 ? 1.0f : dist > 1600 ? 0.0f : 1.0f - (dist - 400) / 1200;
+	if (bright <= 0)
+		return;
+	vec3_t org;
+	VectorMA(tr.endpos, 4, tr.plane.normal, org);
+	int v = (int)(255 * bright);
+	Light(-1, org, 100, v, v, v, 0.001f);
+}
+
+static void EntityLights(void)
+{
+	edict_t *pl = SV_LocalPlayer();
+	for (int i = 1; i < sv.num_edicts; i++) {
+		edict_t *e = EDICT_NUM(i);
+		if (e->free || !e->v.effects)
+			continue;
+		int fx = e->v.effects;
+		if (fx & EF_MUZZLEFLASH) {
+			// at the gun, roughly: in front and above the origin
+			vec3_t f, org;
+			AngleVectors(e->v.angles, f, NULL, NULL);
+			VectorMA(e->v.origin, 18, f, org);
+			org[2] += 16;
+			Light(i, org, 200.0f + CL_RandomInt(0, 31), 255, 220, 160, 0.1f);
+			e->v.effects &= ~EF_MUZZLEFLASH;   // once per shot, as GoldSrc's server clears it after sending
+		}
+		if (fx & EF_BRIGHTLIGHT) {
+			vec3_t org = { e->v.origin[0], e->v.origin[1], e->v.origin[2] + 16 };
+			Light(i, org, 400.0f + CL_RandomInt(0, 31), 255, 255, 255, 0.001f);
+		}
+		if (fx & EF_DIMLIGHT) {
+			if (e == pl)
+				Flashlight(pl);
+			else
+				Light(i, e->v.origin, 200.0f + CL_RandomInt(0, 31), 255, 255, 255, 0.001f);
+		}
+		if (fx & EF_LIGHT)
+			Light(i, e->v.origin, 200, 255, 255, 255, 0.001f);
+	}
+	// the gun in your hands (the client's EV_MuzzleFlash sets it)
+	if (cl_viewent.curstate.effects & EF_MUZZLEFLASH) {
+		Light(-2, cl_viewent.attachment[0], 200.0f + CL_RandomInt(0, 31), 255, 220, 160, 0.1f);
+		cl_viewent.curstate.effects &= ~EF_MUZZLEFLASH;
+	}
+}
+
+static void UpdateDlights(void)
+{
+	static double last;
+	float ft = (float)(cl_time - last);
+	last = cl_time;
+	if (ft < 0 || ft > 0.25f)
+		ft = 0;
+	R_ClearDlights();
+	EntityLights();
+	for (int i = 0; i < MAX_CL_DLIGHTS; i++) {
+		dlight_t *d = &dlights[i];
+		if (d->radius <= 0 || d->die < cl_time)
+			continue;
+		d->radius -= d->decay * ft;
+		if (d->radius <= 0)
+			continue;
+		float c[3] = { d->color.r / 255.0f, d->color.g / 255.0f, d->color.b / 255.0f };
+		if (!c[0] && !c[1] && !c[2])
+			c[0] = c[1] = c[2] = 1;   // the client set no colour: white
+		R_AddDlight(d->origin, d->radius, c, d->minlight);
+	}
 }
 
 static void R_MultiGunshot(float *org, float *dir, float *noise, int count, int decalCount, int *decals)
@@ -1297,18 +1393,25 @@ void CL_ParseTempEntity(const unsigned char *data, int len)
 		R_StreakSplash(pos, dir, color, count, (float)speed, -vel, vel);
 		break;
 	}
-	case TE_DLIGHT:
+	case TE_DLIGHT: {
 		ReadVec(r, pos);
-		for (int i = 0; i < 6; i++)
-			ReadByte(r);   // radius, color, life, decay: dynamic lights aren't drawn yet
+		float radius = ReadByte(r) * 10.0f;
+		int cr = ReadByte(r), cg = ReadByte(r), cb = ReadByte(r);
+		life = ReadByte(r) * 0.1f;
+		float decay = ReadByte(r) * 10.0f;
+		Light(0, pos, radius, cr, cg, cb, life)->decay = decay;
 		break;
-	case TE_ELIGHT:
-		ReadShort(r);
+	}
+	case TE_ELIGHT: {
+		ent = ReadShort(r);
 		ReadVec(r, pos);
-		ReadCoord(r);
-		ReadByte(r); ReadByte(r); ReadByte(r); ReadByte(r);
-		ReadCoord(r);
+		float radius = ReadCoord(r);
+		int cr = ReadByte(r), cg = ReadByte(r), cb = ReadByte(r);
+		life = ReadByte(r) * 0.1f;
+		float decay = ReadCoord(r);
+		Light(ent & 0x0fff, pos, radius, cr, cg, cb, life)->decay = decay;
 		break;
+	}
 	case TE_TEXTMESSAGE: {
 		client_textmessage_t m;
 		memset(&m, 0, sizeof(m));

@@ -446,6 +446,7 @@ static void SetupLighting(const rentity_t *e, studiolight_t *l)
 	l->fullbright = r_fullbright_ref->value != 0 || !world.lightdata;
 	vec3_t p = { e->origin[0], e->origin[1], e->origin[2] + 1 };
 	R_LightPoint(p, c);
+	R_DlightPoint(p, c);
 	VectorCopy(c, l->color);
 	l->ambient = r_studio_ambient->value;
 	l->shade = r_studio_shade->value;

@@ -59,6 +59,9 @@ typedef struct msurface_s {
 	unsigned char *samples;            // RGB, lm_w*lm_h per style; NULL = none
 	int         cached_light[4];       // style values the uploaded lightmap was built with
 	int         visframe;
+	int         dlightframe;           // dynamic lights touch it this frame (with dlightbits)
+	unsigned    dlightbits;
+	qboolean    dlit;                  // its uploaded lightmap has dynamic light in it
 } msurface_t;
 
 // nodes and leafs share the first fields; contents 0 = node, negative = leaf
@@ -138,6 +141,14 @@ extern unsigned char lightgammatable[1024];   // summed light (0..1023) to displ
 extern int  lightstyle_value[64];
 void        R_SetLightStyle(int style, const char *pattern);
 const char *R_LightStylePattern(int style);
+
+// dynamic lights (r_light.c): set each frame, added into the lightmaps of the surfaces they reach
+void        R_ClearDlights(void);
+void        R_AddDlight(const float *origin, float radius, const float *color, float minlight);   // color 0..1
+void        R_PushDlights(void);                                  // marks the world's surfaces they touch
+void        R_DlightSpace(const float *origin, const float *angles);   // a brush entity's space, NULL for the world's
+void        R_MarkSurfaceDlights(msurface_t *s);                  // marks one of a brush entity's surfaces
+void        R_SurfaceDlights(const msurface_t *s, int *blocks);   // adds them to a lightmap being built
 void        R_AnimateLightStyles(double time);
 // true if any leaf the box touches is in the current view's PVS (r_world.c)
 qboolean    R_BoxVisible(const vec3_t mins, const vec3_t maxs);

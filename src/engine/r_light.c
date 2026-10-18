@@ -102,3 +102,152 @@ qboolean R_LineBlocked(const vec3_t start, const vec3_t end)
 		return false;
 	return RecursiveLineBlocked(&world.nodes[0], start, end, 0);
 }
+
+// ---------------------------------------------------------------- dynamic lights
+
+#define MAX_DLIGHTS 32   // one bit each in a surface's dlightbits
+
+typedef struct {
+	vec3_t origin;
+	float  radius, minlight;
+	float  color[3];
+} rdlight_t;
+
+static rdlight_t rdlights[MAX_DLIGHTS];
+static int rdlight_count;
+static vec3_t rdlight_local[MAX_DLIGHTS];   // the lights in the space of what's being drawn
+
+void R_ClearDlights(void)
+{
+	rdlight_count = 0;
+}
+
+void R_AddDlight(const float *origin, float radius, const float *color, float minlight)
+{
+	if (rdlight_count >= MAX_DLIGHTS || radius <= 0)
+		return;
+	rdlight_t *l = &rdlights[rdlight_count++];
+	VectorCopy(origin, l->origin);
+	l->radius = radius;
+	l->minlight = minlight;
+	VectorCopy(color, l->color);
+}
+
+static void MarkLights(const rdlight_t *l, unsigned bit, mnode_t *node, int depth)
+{
+	while (node && node->contents >= 0 && depth < 1024) {
+		float dist = DotProduct(l->origin, node->plane->normal) - node->plane->dist;
+		if (dist > l->radius) {
+			node = node->children[0];
+		} else if (dist < -l->radius) {
+			node = node->children[1];
+		} else {
+			for (int i = 0; i < node->numsurfaces; i++) {
+				msurface_t *s = &world.surfaces[node->firstsurface + i];
+				if (s->dlightframe != r_refdef.framecount) {
+					s->dlightbits = 0;
+					s->dlightframe = r_refdef.framecount;
+				}
+				s->dlightbits |= bit;
+			}
+			MarkLights(l, bit, node->children[0], depth + 1);
+			node = node->children[1];
+		}
+		depth++;
+	}
+}
+
+// Brush entities keep their faces in their own space; their lightmaps are built while they draw,
+// so the lights are moved into that space first (NULL: back to the world's).
+void R_DlightSpace(const float *origin, const float *angles)
+{
+	for (int i = 0; i < rdlight_count; i++) {
+		float *o = rdlight_local[i];
+		VectorCopy(rdlights[i].origin, o);
+		if (!origin)
+			continue;
+		VectorSubtract(o, origin, o);
+		if (angles && (angles[0] || angles[1] || angles[2])) {
+			vec3_t f, r, u, tmp;
+			AngleVectors(angles, f, r, u);
+			VectorCopy(o, tmp);
+			o[0] = DotProduct(tmp, f);
+			o[1] = -DotProduct(tmp, r);
+			o[2] = DotProduct(tmp, u);
+		}
+	}
+}
+
+// a brush entity's face: marked by plane distance (its faces aren't in the world's tree)
+void R_MarkSurfaceDlights(msurface_t *s)
+{
+	for (int i = 0; i < rdlight_count; i++) {
+		float dist = DotProduct(rdlight_local[i], s->plane->normal) - s->plane->dist;
+		if (fabsf(dist) >= rdlights[i].radius)
+			continue;
+		if (s->dlightframe != r_refdef.framecount) {
+			s->dlightbits = 0;
+			s->dlightframe = r_refdef.framecount;
+		}
+		s->dlightbits |= 1u << i;
+	}
+}
+
+void R_PushDlights(void)
+{
+	R_DlightSpace(NULL, NULL);
+	if (!world.numnodes)
+		return;
+	for (int i = 0; i < rdlight_count; i++)
+		MarkLights(&rdlights[i], 1u << i, &world.nodes[0], 0);
+}
+
+// adds light falling off with distance across the face, like Quake's dynamic lights
+void R_SurfaceDlights(const msurface_t *s, int *blocks)
+{
+	const mtexinfo_t *ti = s->texinfo;
+	for (int i = 0; i < rdlight_count; i++) {
+		if (!(s->dlightbits & (1u << i)))
+			continue;
+		const rdlight_t *l = &rdlights[i];
+		const float *lo = rdlight_local[i];
+		float dist = DotProduct(lo, s->plane->normal) - s->plane->dist;
+		float rad = l->radius - fabsf(dist);
+		if (rad < l->minlight)
+			continue;
+		float minlight = rad - l->minlight;
+		vec3_t impact;
+		VectorMA(lo, -dist, s->plane->normal, impact);
+		float ls = DotProduct(impact, ti->vecs[0]) + ti->vecs[0][3] - s->texturemins[0];
+		float lt = DotProduct(impact, ti->vecs[1]) + ti->vecs[1][3] - s->texturemins[1];
+		int *b = blocks;
+		for (int t = 0; t < s->lm_h; t++) {
+			float td = fabsf(lt - t * 16);
+			for (int u = 0; u < s->lm_w; u++, b += 3) {
+				float sd = fabsf(ls - u * 16);
+				float d = sd > td ? sd + td * 0.5f : td + sd * 0.5f;   // cheap distance, as Quake does
+				if (d < minlight) {
+					float add = (rad - d) * 256;
+					for (int c = 0; c < 3; c++)
+						b[c] += (int)(add * l->color[c]);
+				}
+			}
+		}
+	}
+}
+
+// models: the lights near them add to the floor light
+void R_DlightPoint(const vec3_t p, vec3_t color)
+{
+	for (int i = 0; i < rdlight_count; i++) {
+		const rdlight_t *l = &rdlights[i];
+		vec3_t d;
+		VectorSubtract(p, l->origin, d);
+		float dist = VectorLength(d);
+		if (dist >= l->radius)
+			continue;
+		float add = (l->radius - dist) / 255.0f;
+		for (int c = 0; c < 3; c++)
+			color[c] += add * l->color[c];
+	}
+}

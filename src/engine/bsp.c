@@ -456,6 +456,8 @@ void BSP_BuildSurfaceLightmap(msurface_t *s, unsigned char *dest, int stride)
 			lm += size * 3;
 		}
 	}
+	if (s->dlightframe == r_refdef.framecount)
+		R_SurfaceDlights(s, blocks);
 
 	const int *b = blocks;
 	for (int y = 0; y < s->lm_h; y++) {

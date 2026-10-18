@@ -15,9 +15,9 @@ lasers), explosions, decals, titles.txt messages, screen fades and shakes. Sound
 movement sound through our own mixer on SDL audio, sentences with lip movement, the CD music as MP3s, room echo. Level
 changes (6b): the player and what's at the landmark (weapons, followers) go on to the next map, and a map visited before
 comes back as it was left; the opening tram ride runs. Saved games (6c): save/load, F6/F9, an autosave at every level
-change, and dying reloads the last save. The owner's reported bugs are fixed except the
-flashlight. Next, in the owner's order ("all of Phase 1"): 5c (dynamic lights, VGUI mouse input, title font), 6d (the
-hl-lua API).
+change, and dying reloads the last save. The owner's reported bugs are fixed. Dynamic lights (part of 5c)
+are in. Next, in the owner's order ("all of Phase 1"): the rest of 5c (VGUI mouse input, title font), 6d (the hl-lua
+API).
 
 ---
 
@@ -234,9 +234,13 @@ opens.
 
 ## 8. Known issues and shortcuts (fix when convenient)
 
-- **Owner-reported bugs.** Open: the flashlight (F) shows its HUD icon but gives no light (the game sets
-  `EF_DIMLIGHT` on the player and GoldSrc's engine lights the spot it points at with a dynamic light; dynamic lights are
-  part of 5c). Fixed:
+- **Dynamic lights (5c).** `cl_tent.c` keeps the lights (the client's `CL_AllocDlight`, `TE_DLIGHT`, `TE_ELIGHT`,
+  `EF_MUZZLEFLASH`/`EF_BRIGHTLIGHT`/`EF_DIMLIGHT`/`EF_LIGHT`, the view model's flash) and hands the live ones to
+  `r_light.c` each frame. They are added into the lightmaps Quake-style (`R_PushDlights` marks world faces through the
+  BSP tree; brush entities mark their own faces with the lights moved into their space, `R_DlightSpace`) and into model
+  light (`R_DlightPoint`). The flashlight is `EF_DIMLIGHT` on the local player: a light where the view hits something,
+  dimmer with distance. On surfaces that are already bright it is subtle, as in GoldSrc (lightmaps clamp).
+- **Owner-reported bugs.** All fixed, the flashlight by the dynamic lights above. Earlier fixes:
   - Monsters walked jerkily: they only move when they think (about 10 times a second). `SV_SetupRenderEntities` now
     slides `MOVETYPE_STEP` entities from where they were drawn to the new place over the time between steps, turning
     them too (`StepLerp`; `r_steplerp 0` turns it off; jumps over 128 units and `EF_NOINTERP` aren't slid).
