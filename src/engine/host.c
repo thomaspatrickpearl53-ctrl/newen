@@ -54,7 +54,8 @@ static void DefaultBindings(void)
 		"bind CTRL +duck; bind SHIFT +speed; bind e +use; bind r +reload; bind MOUSE1 +attack; bind MOUSE2 +attack2; "
 		"bind TAB +showscores; bind v noclip; bind f \"impulse 100\"; bind q lastinv; bind t \"impulse 201\"; "
 		"bind MWHEELUP invprev; bind MWHEELDOWN invnext; bind 1 slot1; bind 2 slot2; bind 3 slot3; bind 4 slot4; "
-		"bind 5 slot5; bind 6 slot6; bind 7 slot7; bind 8 slot8; bind 9 slot9; bind 0 slot10\n");
+		"bind 5 slot5; bind 6 slot6; bind 7 slot7; bind 8 slot8; bind 9 slot9; bind 0 slot10; "
+		"bind F6 \"save quick\"; bind F9 \"load quick\"\n");
 }
 
 void Host_Init(int argc, char **argv)

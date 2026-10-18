@@ -100,6 +100,11 @@ Walking into a level change takes you to the next map with what you carry, and a
 (monsters following you, items); going back to a map finds it as you left it. `changelevel <map> [landmark]` does the
 same from the console; `levelstates` lists the maps this game remembers. `map` starts a new game.
 
+## Saved games
+
+`save [name]` and `load [name]` (F6 and F9 quick save and load, as "quick"); every level change autosaves; dying and
+pressing fire loads the last save. Saves go to `bin/userdata/<game>/save/`; `saves` lists them.
+
 ## Sound
 
 Every sound the game and client make plays through newen's own mixer: positional (distance and stereo direction),
@@ -163,7 +168,7 @@ Phase 1, Half-Life runs:
 3. **Models and sprites** - MDL (no fixed limits), SPR, HD model textures *(done)*
 4. **Server** - load `hl.dll`, engine functions, collision, entity physics, player movement, Lua game API *(done)*
 5. **Client** - load `client.dll` and `vgui.dll`, HUD, view model, input, events, effects, decals, beams, titles *(done)*; VGUI mouse input *(next)*
-6. **Single player** - sound, level changes *(done)*; save/load, the hl-lua API *(next)*
+6. **Single player** - sound, level changes, saved games *(done)*; the hl-lua API *(next)*
 
 Then: Jolt physics, extended BSP, lights and shadows, particles, captions, dev tools; VGUI2; more games
 (Opposing Force, Blue Shift, CS 1.6, Cry of Fear); co-op, terrain, 64-bit, Linux.

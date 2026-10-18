@@ -190,7 +190,7 @@ static void PlaceCamera(void)
 }
 
 // oldmap NULL: a new game; otherwise a level change (the server carries the player over)
-static void LoadMap(const char *mapname, const char *oldmap, const char *landmark)
+void R_LoadMap(const char *mapname, const char *oldmap, const char *landmark, qboolean loadgame)
 {
 	char name[64], old[64] = "", mark[64] = "";
 	Q_strncpy(name, mapname, sizeof(name));
@@ -216,7 +216,7 @@ static void LoadMap(const char *mapname, const char *oldmap, const char *landmar
 	Q_strncpy(current_map, name, sizeof(current_map));
 	R_NewMap();
 	CL_MapStarted();   // the client gets ready before the spawn messages reach it, as in GoldSrc
-	SV_SpawnServer(name, oldmap ? old : NULL, mark);
+	SV_SpawnServer(name, oldmap ? old : NULL, mark, loadgame);
 	PlaceCamera();
 	if (Con_IsVisible())
 		Con_ToggleConsole();
@@ -229,7 +229,7 @@ static void Map_f(void)
 		Con_Printf("usage: map <name>   (\"maps\" lists them)\n");
 		return;
 	}
-	LoadMap(Cmd_Argv(1), NULL, NULL);
+	R_LoadMap(Cmd_Argv(1), NULL, NULL, false);
 }
 
 // changelevel <map> [landmark]: keeps the game going into another map; without a server it's "map"
@@ -240,13 +240,14 @@ static void Changelevel_f(void)
 		return;
 	}
 	if (!SV_Active()) {
-		LoadMap(Cmd_Argv(1), NULL, NULL);
+		R_LoadMap(Cmd_Argv(1), NULL, NULL, false);
 		return;
 	}
 	char old[64];
 	Q_strncpy(old, current_map, sizeof(old));
 	SV_SaveLevelState();
-	LoadMap(Cmd_Argv(1), old, Cmd_Argc() > 2 ? Cmd_Argv(2) : "");
+	R_LoadMap(Cmd_Argv(1), old, Cmd_Argc() > 2 ? Cmd_Argv(2) : "", false);
+	SV_AutoSave();   // like GoldSrc: every new level starts with an autosave
 }
 
 static void Disconnect_f(void)

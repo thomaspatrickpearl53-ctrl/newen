@@ -87,7 +87,7 @@ void        SV_Init(void);
 void        SV_Shutdown(void);
 // after BSP_Load. oldmap NULL: a new game. Otherwise a level change from oldmap: the map comes back
 // as it was left if it was visited, and the old map's entities at the landmark (the player) follow.
-qboolean    SV_SpawnServer(const char *mapname, const char *oldmap, const char *landmark);
+qboolean    SV_SpawnServer(const char *mapname, const char *oldmap, const char *landmark, qboolean loadgame);
 void        SV_Deactivate(void);
 void        SV_Frame(double frametime);
 const char *SV_String(string_t s);
@@ -116,6 +116,12 @@ void        SV_SaveLevelState(void);                // the current level, before
 qboolean    SV_HasLevelState(const char *map);
 qboolean    SV_RestoreLevelState(const char *map);
 qboolean    SV_RestoreTransition(const char *oldmap, const char *landmark);   // true if the player came
+qboolean    SV_RestoreSavedLevel(const char *map);     // a loaded save's level, the player in it
+void        SV_RestoreGlobalState(void);               // from a loaded save
+void        SV_AutoSave(void);
+const char *SV_LastSave(void);                          // NULL in a new game
+// r_main.c: loads a map and starts the server on it (oldmap: a level change; loadgame: from a save)
+void        R_LoadMap(const char *mapname, const char *oldmap, const char *landmark, qboolean loadgame);
 
 // sv_engfuncs.c
 void        SV_InitEngineFuncs(enginefuncs_t *ef);

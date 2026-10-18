@@ -12,7 +12,10 @@
 // restores its saved state; after that the marked entities of the old map, the player among them,
 // are restored into it, moved by the difference between the two landmarks.
 //
-// The states live in memory for now. Field-name tokens point into the game DLL, which stays loaded.
+// A saved game (save/<name>.sav in the game's userdata folder) is every remembered level plus the
+// game's global state (env_global and the like). Loading one brings all of it back and restores the
+// current level with the player in it. Field-name tokens are kept as our own copies of the strings,
+// so a state read from a file works the same as one made a moment ago.
 #include "server.h"
 
 typedef struct {
@@ -36,13 +39,45 @@ typedef struct {
 static levelstate_t *states;
 static int states_count;
 static cvar_t *sv_savebuffer;
+static char last_save[64];         // what "reload" (after dying) loads
+
+// the game's global state, from a loaded save until the map is up
+static unsigned char *global_data;
+static int global_size;
+static char **global_tokens;
+static int global_tokencount;
+
+static void FreeTokens(char **tokens, int count)
+{
+	for (int i = 0; tokens && i < count; i++)
+		Mem_Free(tokens[i]);
+	Mem_Free(tokens);
+}
+
+static char **CopyTokens(char **src, int count)
+{
+	char **t = Mem_Alloc(sizeof(char *) * (count > 0 ? count : 1));
+	for (int i = 0; i < count; i++)
+		if (src[i])
+			t[i] = Mem_Strdup(src[i]);
+	return t;
+}
 
 static void FreeState(levelstate_t *ls)
 {
 	Mem_Free(ls->data);
-	Mem_Free(ls->tokens);
+	FreeTokens(ls->tokens, ls->tokencount);
 	Mem_Free(ls->ents);
 	memset(ls, 0, sizeof(*ls));
+}
+
+static void FreeGlobal(void)
+{
+	Mem_Free(global_data);
+	FreeTokens(global_tokens, global_tokencount);
+	global_data = NULL;
+	global_tokens = NULL;
+	global_size = global_tokencount = 0;
 }
 
 void SV_ClearLevelStates(void)
@@ -52,6 +87,12 @@ void SV_ClearLevelStates(void)
 	Mem_Free(states);
 	states = NULL;
 	states_count = 0;
+	last_save[0] = 0;   // a new game: dying restarts the map
+}
+
+const char *SV_LastSave(void)
+{
+	return last_save[0] ? last_save : NULL;
 }
 
 static levelstate_t *FindState(const char *map)
@@ -144,8 +185,7 @@ void SV_SaveLevelState(void)
 	ls->data = Mem_Alloc((size_t)sd->size + 1);
 	memcpy(ls->data, sd->pBaseData, (size_t)sd->size);
 	ls->tokencount = sd->tokenCount;
-	ls->tokens = Mem_Alloc(sizeof(char *) * sd->tokenCount);
-	memcpy(ls->tokens, sd->pTokens, sizeof(char *) * sd->tokenCount);
+	ls->tokens = CopyTokens(sd->pTokens, sd->tokenCount);
 	ls->numents = sd->tableCount;
 	ls->ents = Mem_Alloc(sizeof(savedent_t) * (ls->numents > 0 ? ls->numents : 1));
 	for (int i = 0; i < sd->tableCount; i++) {
@@ -167,7 +207,8 @@ void SV_SaveLevelState(void)
 
 // ---------------------------------------------------------------- restoring
 
-typedef enum { RESTORE_LEVEL, RESTORE_TRANSITION } restoremode_t;
+// a level visited before (without the player), a transition's entities, or a whole saved level
+typedef enum { RESTORE_LEVEL, RESTORE_TRANSITION, RESTORE_SAVEGAME } restoremode_t;
 
 // returns how many entities came back; *player is set if the player was one of them
 static int RestoreEntities(levelstate_t *ls, restoremode_t mode, int mask, const vec3_t offset, const char *landmark,
@@ -182,6 +223,8 @@ static int RestoreEntities(levelstate_t *ls, restoremode_t mode, int mask, const
 		sd->fUseLandmark = 1;
 		Q_strncpy(sd->szLandmarkName, landmark, sizeof(sd->szLandmarkName));
 		VectorCopy(offset, sd->vecLandmarkOffset);
+	} else if (mode == RESTORE_SAVEGAME) {
+		sd->fUseLandmark = 1;   // with no offset: everything (the player too) stays exactly where it was
 	}
 
 	// first every entity exists, so references between them resolve
@@ -195,7 +238,9 @@ static int RestoreEntities(levelstate_t *ls, restoremode_t mode, int mask, const
 		if (!s->size || !s->classname[0] || (s->flags & FENTTABLE_REMOVED))
 			continue;
 		qboolean isplayer = (s->flags & FENTTABLE_PLAYER) != 0;
-		if (mode == RESTORE_LEVEL ? isplayer : !(isplayer || (s->flags & mask)))
+		if (mode == RESTORE_LEVEL && isplayer)
+			continue;
+		if (mode == RESTORE_TRANSITION && !(isplayer || (s->flags & mask)))
 			continue;
 		ENTITYINIT init = SV_GetEntityInit(s->classname);
 		if (!init) {
@@ -267,6 +312,40 @@ qboolean SV_RestoreLevelState(const char *map)
 	return true;
 }
 
+// a saved game's current level, the player in it; true if the player came back
+qboolean SV_RestoreSavedLevel(const char *map)
+{
+	levelstate_t *ls = FindState(map);
+	if (!ls)
+		return false;
+	qboolean player = false;
+	static const vec3_t zero = { 0, 0, 0 };
+	int n = RestoreEntities(ls, RESTORE_SAVEGAME, 0, zero, NULL, &player);
+	for (int i = 0; i < 64; i++)
+		R_SetLightStyle(i, ls->styles[i]);
+	Con_DPrintf("Loaded %s: %d entities\n", map, n);
+	return player;
+}
+
+// the global state from the loaded save goes back to the game (after its ResetGlobalState)
+void SV_RestoreGlobalState(void)
+{
+	if (!global_data)
+		return;
+	SAVERESTOREDATA *sd = NewSaveData(global_size + 1, 0, global_tokencount);
+	memcpy(sd->pBaseData, global_data, (size_t)global_size);
+	for (int i = 0; i < global_tokencount; i++)
+		sd->pTokens[i] = global_tokens[i];
+	sd->bufferSize = global_size;
+	sd->size = 0;
+	gGlobals.pSaveData = sd;
+	gEntityInterface.pfnRestoreGlobalState(sd);
+	gGlobals.pSaveData = NULL;
+	memset(sd->pTokens, 0, sizeof(char *) * global_tokencount);   // still ours
+	FreeSaveData(sd);
+	FreeGlobal();
+}
+
 static edict_t *FindLandmark(const char *name)
 {
 	for (int i = 1; i < sv.num_edicts; i++) {
@@ -307,6 +386,288 @@ qboolean SV_RestoreTransition(const char *oldmap, const char *landmark)
 	return player;
 }
 
+// ---------------------------------------------------------------- saved games
+
+#define SAVE_MAGIC   "NEWENSAV"
+#define SAVE_VERSION 1
+
+static void WriteInt(FILE *f, int v) { fwrite(&v, 4, 1, f); }
+static void WriteBytes(FILE *f, const void *p, int n) { WriteInt(f, n); if (n > 0) fwrite(p, 1, (size_t)n, f); }
+static void WriteString(FILE *f, const char *s) { WriteBytes(f, s, (int)strlen(s)); }
+
+static void WriteTokens(FILE *f, char **tokens, int count)
+{
+	int used = 0;
+	for (int i = 0; i < count; i++)
+		used += tokens[i] != NULL;
+	WriteInt(f, count);
+	WriteInt(f, used);
+	for (int i = 0; i < count; i++)
+		if (tokens[i]) {
+			WriteInt(f, i);
+			WriteString(f, tokens[i]);
+		}
+}
+
+typedef struct {
+	const unsigned char *p, *end;
+	qboolean bad;
+} reader_t;
+
+static int ReadInt(reader_t *r)
+{
+	if (r->end - r->p < 4) {
+		r->bad = true;
+		return 0;
+	}
+	int v;
+	memcpy(&v, r->p, 4);
+	r->p += 4;
+	return v;
+}
+
+// a block: a fresh copy (zero-terminated) and its length
+static void *ReadBytes(reader_t *r, int *len)
+{
+	int n = ReadInt(r);
+	if (n < 0 || r->end - r->p < n) {
+		r->bad = true;
+		*len = 0;
+		return Mem_Alloc(1);
+	}
+	unsigned char *b = Mem_Alloc((size_t)n + 1);
+	memcpy(b, r->p, (size_t)n);
+	r->p += n;
+	*len = n;
+	return b;
+}
+
+static void ReadStringTo(reader_t *r, char *out, size_t size)
+{
+	int n;
+	char *s = ReadBytes(r, &n);
+	Q_strncpy(out, s, size);
+	Mem_Free(s);
+}
+
+static char **ReadTokens(reader_t *r, int *count)
+{
+	*count = ReadInt(r);
+	int used = ReadInt(r);
+	if (*count <= 0 || *count > 1 << 20 || used < 0 || used > *count) {
+		r->bad = true;
+		*count = 0;
+		return Mem_Alloc(sizeof(char *));
+	}
+	char **t = Mem_Alloc(sizeof(char *) * *count);
+	for (int k = 0; k < used && !r->bad; k++) {
+		int i = ReadInt(r), n;
+		char *s = ReadBytes(r, &n);
+		if (i >= 0 && i < *count && !t[i])
+			t[i] = s;
+		else
+			Mem_Free(s);
+	}
+	return t;
+}
+
+static qboolean SaveGame(const char *name, qboolean quiet)
+{
+	edict_t *pl = SV_LocalPlayer();
+	if (!sv.active || !sv_game_loaded || !pl) {
+		Con_Printf("Not playing a map\n");
+		return false;
+	}
+	if (pl->v.health <= 0 || pl->v.deadflag) {
+		Con_Printf("Can't save while dead\n");
+		return false;
+	}
+	SV_SaveLevelState();   // the level you're in joins the ones you've been to
+
+	SAVERESTOREDATA *gd = NewSaveData(1024 * 1024, 0, 4096);
+	gGlobals.pSaveData = gd;
+	gEntityInterface.pfnSaveGlobalState(gd);
+	gGlobals.pSaveData = NULL;
+
+	FILE *f = FS_OpenWrite(va("save/%s.sav", name));
+	if (!f) {
+		Con_Printf("Couldn't write save/%s.sav\n", name);
+		FreeSaveData(gd);
+		return false;
+	}
+	fwrite(SAVE_MAGIC, 1, 8, f);
+	WriteInt(f, SAVE_VERSION);
+	WriteString(f, sv.mapname);
+	float skill = Cvar_VariableValue("skill");
+	fwrite(&skill, 4, 1, f);
+	WriteBytes(f, gd->pBaseData, gd->size);
+	WriteTokens(f, gd->pTokens, gd->tokenCount);
+	WriteInt(f, states_count);
+	for (int i = 0; i < states_count; i++) {
+		levelstate_t *ls = &states[i];
+		WriteString(f, ls->map);
+		WriteBytes(f, ls->data, ls->size);
+		WriteTokens(f, ls->tokens, ls->tokencount);
+		WriteInt(f, ls->numents);
+		for (int k = 0; k < ls->numents; k++) {
+			WriteInt(f, ls->ents[k].location);
+			WriteInt(f, ls->ents[k].size);
+			WriteInt(f, ls->ents[k].flags);
+			WriteString(f, ls->ents[k].classname);
+		}
+		WriteInt(f, ls->connections);
+		for (int k = 0; k < ls->connections; k++) {
+			WriteString(f, ls->levels[k].mapName);
+			WriteString(f, ls->levels[k].landmarkName);
+			fwrite(ls->levels[k].vecLandmarkOrigin, 4, 3, f);
+		}
+		for (int k = 0; k < 64; k++)
+			WriteString(f, ls->styles[k]);
+	}
+	fclose(f);
+	FreeSaveData(gd);
+	Q_strncpy(last_save, name, sizeof(last_save));
+	if (!quiet)
+		Con_Printf("Saved %s\n", name);
+	return true;
+}
+
+static qboolean LoadGame(const char *name)
+{
+	size_t len = 0;
+	unsigned char *file = FS_LoadFile(va("save/%s.sav", name), &len);
+	if (!file) {
+		Con_Printf("No saved game called %s\n", name);
+		return false;
+	}
+	reader_t rd = { file + 8, file + len, false }, *r = &rd;
+	if (len < 12 || memcmp(file, SAVE_MAGIC, 8) || ReadInt(r) != SAVE_VERSION) {
+		Con_Printf("%s isn't a newen saved game (or it's from another version)\n", name);
+		Mem_Free(file);
+		return false;
+	}
+	char map[64];
+	ReadStringTo(r, map, sizeof(map));
+	float skill = 1;
+	if (rd.end - rd.p >= 4) {
+		memcpy(&skill, rd.p, 4);
+		rd.p += 4;
+	}
+	unsigned char *gdata;
+	int gsize, gcount;
+	gdata = ReadBytes(r, &gsize);
+	char **gtokens = ReadTokens(r, &gcount);
+
+	int n = ReadInt(r);
+	levelstate_t *loaded = Mem_Alloc(sizeof(levelstate_t) * (n > 0 && n < 4096 ? n : 1));
+	int count = 0;
+	for (int i = 0; i < n && n < 4096 && !rd.bad; i++) {
+		levelstate_t *ls = &loaded[count++];
+		ReadStringTo(r, ls->map, sizeof(ls->map));
+		ls->data = ReadBytes(r, &ls->size);
+		ls->tokens = ReadTokens(r, &ls->tokencount);
+		ls->numents = ReadInt(r);
+		if (ls->numents < 0 || ls->numents > 1 << 20) {
+			rd.bad = true;
+			ls->numents = 0;
+		}
+		ls->ents = Mem_Alloc(sizeof(savedent_t) * (ls->numents > 0 ? ls->numents : 1));
+		for (int k = 0; k < ls->numents && !rd.bad; k++) {
+			ls->ents[k].location = ReadInt(r);
+			ls->ents[k].size = ReadInt(r);
+			ls->ents[k].flags = ReadInt(r);
+			ReadStringTo(r, ls->ents[k].classname, sizeof(ls->ents[k].classname));
+			if (ls->ents[k].location < 0 || ls->ents[k].size < 0 || ls->ents[k].location + ls->ents[k].size > ls->size)
+				rd.bad = true;
+		}
+		ls->connections = ReadInt(r);
+		if (ls->connections < 0 || ls->connections > MAX_LEVEL_CONNECTIONS) {
+			rd.bad = true;
+			ls->connections = 0;
+		}
+		for (int k = 0; k < ls->connections && !rd.bad; k++) {
+			ReadStringTo(r, ls->levels[k].mapName, sizeof(ls->levels[k].mapName));
+			ReadStringTo(r, ls->levels[k].landmarkName, sizeof(ls->levels[k].landmarkName));
+			if (rd.end - rd.p < 12) {
+				rd.bad = true;
+				break;
+			}
+			memcpy(ls->levels[k].vecLandmarkOrigin, rd.p, 12);
+			rd.p += 12;
+		}
+		for (int k = 0; k < 64 && !rd.bad; k++)
+			ReadStringTo(r, ls->styles[k], sizeof(ls->styles[k]));
+	}
+	Mem_Free(file);
+	qboolean found = false;
+	for (int i = 0; i < count; i++)
+		found |= !stricmp(loaded[i].map, map);
+	if (rd.bad || !found) {
+		Con_Printf("save/%s.sav is damaged\n", name);
+		for (int i = 0; i < count; i++)
+			FreeState(&loaded[i]);
+		Mem_Free(loaded);
+		Mem_Free(gdata);
+		FreeTokens(gtokens, gcount);
+		return false;
+	}
+
+	// it's good: it replaces the game in progress
+	SV_ClearLevelStates();
+	states = loaded;
+	states_count = count;
+	FreeGlobal();
+	global_data = gdata;
+	global_size = gsize;
+	global_tokens = gtokens;
+	global_tokencount = gcount;
+	Cvar_SetValue("skill", skill);
+	Q_strncpy(last_save, name, sizeof(last_save));
+	R_LoadMap(map, NULL, NULL, true);
+	return true;
+}
+
+static void Save_f(void)
+{
+	const char *name = Cmd_Argc() > 1 ? Cmd_Argv(1) : "quick";
+	if (strchr(name, '/') || strchr(name, '\\') || strstr(name, "..")) {
+		Con_Printf("A save name can't have / or ..\n");
+		return;
+	}
+	SaveGame(name, false);
+}
+
+static void Load_f(void)
+{
+	const char *name = Cmd_Argc() > 1 ? Cmd_Argv(1) : "quick";
+	if (strchr(name, '/') || strchr(name, '\\') || strstr(name, "..")) {
+		Con_Printf("A save name can't have / or ..\n");
+		return;
+	}
+	char copy[64];
+	Q_strncpy(copy, name, sizeof(copy));   // the map load runs commands; Cmd_Argv won't last
+	LoadGame(copy);
+}
+
+// at each level change, and when the game asks (trigger_autosave)
+void SV_AutoSave(void)
+{
+	if (SV_LocalPlayer() && SV_LocalPlayer()->v.health > 0)
+		SaveGame("autosave", true);
+}
+
+static void AutoSave_f(void) { SV_AutoSave(); }
+
+static void Saves_f(void)
+{
+	char **list;
+	int n = FS_ListFiles("save", "*.sav", &list);
+	for (int i = 0; i < n; i++)
+		Con_Printf("%s\n", list[i]);
+	Con_Printf("%d saved games\n", n);
+	FS_FreeList(list, n);
+}
+
 static void LevelStates_f(void)
 {
 	for (int i = 0; i < states_count; i++)
@@ -319,4 +680,8 @@ void SV_InitSave(void)
 {
 	sv_savebuffer = Cvar_Get("sv_savebuffer", "8", 0, "starting size in MB of the buffer a level is saved into (it grows)");
 	Cmd_AddCommand("levelstates", LevelStates_f, "lists the levels this game remembers");
+	Cmd_AddCommand("save", Save_f, "save [name] - saves the game (\"quick\" if no name; F6)");
+	Cmd_AddCommand("load", Load_f, "load [name] - loads a saved game (\"quick\" if no name; F9)");
+	Cmd_AddCommand("autosave", AutoSave_f, "saves the game as \"autosave\"");
+	Cmd_AddCommand("saves", Saves_f, "lists the saved games");
 }

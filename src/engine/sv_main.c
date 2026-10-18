@@ -455,7 +455,7 @@ void SV_Deactivate(void)
 	sv.client_spawned = false;
 }
 
-qboolean SV_SpawnServer(const char *mapname, const char *oldmap, const char *landmark)
+qboolean SV_SpawnServer(const char *mapname, const char *oldmap, const char *landmark, qboolean loadgame)
 {
 	SV_Deactivate();
 	if (!sv_game_loaded || !world.loaded)
@@ -503,8 +503,12 @@ qboolean SV_SpawnServer(const char *mapname, const char *oldmap, const char *lan
 	ent->v.solid = SOLID_BSP;
 	ent->v.movetype = MOVETYPE_PUSH;
 
-	// a new game forgets the levels and the game's global state (env_global); a level change keeps both
-	if (!oldmap) {
+	// a new game forgets the levels and the game's global state (env_global); a level change keeps
+	// both; a loaded save brings its own
+	if (loadgame) {
+		gEntityInterface.pfnResetGlobalState();
+		SV_RestoreGlobalState();
+	} else if (!oldmap) {
 		SV_ClearLevelStates();
 		gEntityInterface.pfnResetGlobalState();
 	}
@@ -512,11 +516,18 @@ qboolean SV_SpawnServer(const char *mapname, const char *oldmap, const char *lan
 		gGlobals.startspot = SV_AllocString(landmark);
 	SV_ExecuteServerCommands();
 	SV_InitWorld();
-	qboolean revisit = oldmap && SV_RestoreLevelState(mapname);
+	qboolean player = false, revisit = false;
+	if (loadgame) {
+		player = SV_RestoreSavedLevel(mapname);
+		revisit = true;
+	} else if (oldmap) {
+		revisit = SV_RestoreLevelState(mapname);
+	}
 	if (!revisit)
 		for (int i = 0; i < world.numentities; i++)
 			ParseEntity(&world.entities[i], i == 0);
-	qboolean player = oldmap && SV_RestoreTransition(oldmap, landmark);
+	if (oldmap)
+		player = SV_RestoreTransition(oldmap, landmark);
 
 	gEntityInterface.pfnServerActivate(sv.edicts, sv.num_edicts, sv.maxclients);
 	sv.active = true;
@@ -762,7 +773,11 @@ static void Reload_f(void)
 {
 	if (sv.active && !sv.restarting) {
 		sv.restarting = true;
-		Cbuf_InsertText(va("map %s\n", sv.mapname));
+		// GoldSrc loads the last save; in a game that hasn't saved yet the map starts over
+		if (SV_LastSave())
+			Cbuf_InsertText(va("load %s\n", SV_LastSave()));
+		else
+			Cbuf_InsertText(va("map %s\n", sv.mapname));
 	}
 }
 
