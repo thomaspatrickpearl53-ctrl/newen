@@ -159,6 +159,13 @@ Game API (works while a map runs):
   `PlayerInitialSpawn(ply)`, `PlayerDeath(ply)`, `PlayerCommand(ply, cmd, args)` (return true to swallow),
   `StartCommand(ply, cmd)` (change the movement input), `EntityKeyValue(class, key, value)` (return a string to
   change a map's entity keys as it loads).
+- `PlayerHurt(ply, amount, inflictor, attackerGuess, damageBits)` fires after server DLL calls return,
+  including without a client DLL. It snapshots the player's `dmg_take` when the game completes a `Damage`
+  message: an accumulated HUD damage amount, not one event per hit or guaranteed health loss (godmode can
+  still accumulate it). Zero-amount HUD indicator updates are ignored. `inflictor` is the current damage
+  source; `attackerGuess` is its owner when present, otherwise the inflictor, and is only a best guess.
+  Removed entities become `NULL`. The amount retains the field's value without byte wrapping;
+  `damageBits` contains only the HUD-visible flags sent by the game. Return values do not alter damage.
 - `newen_spawn <classname>` (from the example script) spawns an entity where you're looking.
 
 ## Roadmap

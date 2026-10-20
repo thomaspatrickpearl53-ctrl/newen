@@ -1056,6 +1056,88 @@ void LuaG_Open(lua_State *L)
 static int *announced;
 static int announced_cap;
 
+typedef struct {
+	luaent_t player, inflictor, attacker;
+	float amount;
+	unsigned int bits;
+} playerhurt_t;
+
+static playerhurt_t *hurtqueue;
+static int hurt_count, hurt_cap;
+static unsigned int hurt_generation;
+
+static luaent_t HurtHandle(edict_t *e)
+{
+	luaent_t h = { -1, 0 };
+	uintptr_t address = (uintptr_t)e, base = (uintptr_t)sv.edicts;
+	if (!e || !sv.edicts || address < base || address - base >= (size_t)sv.num_edicts * sizeof(*e)
+		|| (address - base) % sizeof(*e) || e->free)
+		return h;
+	h.index = (int)((address - base) / sizeof(*e));
+	h.serial = e->serialnumber;
+	return h;
+}
+
+static edict_t *HurtEntity(luaent_t h)
+{
+	if (!sv.active || !sv.edicts || h.index < 0 || h.index >= sv.num_edicts)
+		return NULL;
+	edict_t *e = EDICT_NUM(h.index);
+	return !e->free && e->serialnumber == h.serial ? e : NULL;
+}
+
+void LuaG_ClearPlayerHurt(void)
+{
+	Mem_Free(hurtqueue);
+	hurtqueue = NULL;
+	hurt_count = hurt_cap = 0;
+	hurt_generation++;
+}
+
+void LuaG_QueuePlayerHurt(edict_t *pl, unsigned int damagebits)
+{
+	// The DLL clears these HUD accumulators as soon as MessageEnd returns.
+	if (!Lua_GetState() || !sv.active || pl->v.dmg_take <= 0)
+		return;
+	if (hurt_count == hurt_cap) {
+		hurt_cap = hurt_cap ? hurt_cap * 2 : 16;
+		hurtqueue = Mem_Realloc(hurtqueue, sizeof(*hurtqueue) * hurt_cap);
+	}
+	playerhurt_t *h = &hurtqueue[hurt_count++];
+	h->player = HurtHandle(pl);
+	h->inflictor = HurtHandle(pl->v.dmg_inflictor);
+	edict_t *inflictor = HurtEntity(h->inflictor);
+	h->attacker = inflictor && inflictor->v.owner ? HurtHandle(inflictor->v.owner) : h->inflictor;
+	h->amount = pl->v.dmg_take;
+	h->bits = damagebits;
+}
+
+void LuaG_FlushPlayerHurt(void)
+{
+	// Detach the batch: Lua may cause more DLL calls, removals or a world change.
+	playerhurt_t *batch = hurtqueue;
+	int count = hurt_count;
+	unsigned int generation = hurt_generation;
+	hurtqueue = NULL;
+	hurt_count = hurt_cap = 0;
+	for (int i = 0; i < count && generation == hurt_generation; i++) {
+		lua_State *L = Lua_GetState();
+		playerhurt_t *h = &batch[i];
+		edict_t *pl = HurtEntity(h->player);
+		if (!L || !pl)
+			continue;
+		int top = lua_gettop(L);
+		LuaG_PushEntity(L, pl);
+		lua_pushnumber(L, h->amount);
+		LuaG_PushEntity(L, HurtEntity(h->inflictor));
+		LuaG_PushEntity(L, HurtEntity(h->attacker));
+		lua_pushinteger(L, (lua_Integer)h->bits);
+		Lua_Hook("PlayerHurt", 5, 0);
+		lua_settop(L, top);
+	}
+	Mem_Free(batch);
+}
+
 static void FireEntityHook(const char *name, edict_t *e)
 {
 	lua_State *L = Lua_GetState();

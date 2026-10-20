@@ -711,6 +711,7 @@ static int PF_PointContents(const float *v) { return SV_PointContents(v); }
 // Messages are built in a buffer and, if the local player should get them, queued for the client
 // DLL (there's one client, in this process)
 void CL_QueueMessage(int type, const unsigned char *data, int len);
+const char *SV_UserMsgName(int type);
 static int msg_dest, msg_type, msg_active;
 static edict_t *msg_ent;
 static unsigned char msg_buf[2048];
@@ -745,6 +746,14 @@ static void PF_MessageEnd(void)
 	default:   // broadcast, all, init, PVS/PAS (one player: always in range)
 		deliver = true;
 		break;
+	}
+	if (deliver && pl && msg_ent == pl && msg_len == 12) {
+		const char *name = SV_UserMsgName(msg_type);
+		if (name && !strcmp(name, "Damage")) {
+			unsigned int bits;
+			memcpy(&bits, msg_buf + 2, sizeof(bits));
+			LuaG_QueuePlayerHurt(pl, bits);
+		}
 	}
 	if (deliver)
 		CL_QueueMessage(msg_type, msg_buf, msg_len);

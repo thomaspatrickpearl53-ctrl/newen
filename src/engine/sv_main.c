@@ -436,6 +436,7 @@ static void ConnectLocalClient(qboolean restored)
 
 void SV_Deactivate(void)
 {
+	LuaG_ClearPlayerHurt();
 	if (!sv.edicts)
 		return;
 	if (sv.active && sv_game_loaded)
@@ -593,6 +594,8 @@ void SV_Frame(double frametime)
 
 	LuaG_CheckNewEntities();
 	static float last_health = 1;
+	LuaG_FlushPlayerHurt();
+	pl = SV_LocalPlayer();
 	if (pl) {
 		if (last_health > 0 && pl->v.health <= 0)
 			LuaG_PlayerDied(pl);
