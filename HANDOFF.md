@@ -4,9 +4,10 @@ Everything someone new needs to pick this project up: what it is, what was decid
 out, how to build and test it, what works, what doesn't, and what comes next. Read `README.md` first for the
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
-Status as of 2026-10-20: **Phase 1 is done. Phase 2 started with big maps: the ±32768 check, the NBSP format,
-the compiler and a TrenchBroom configuration are done (section 9). A design for an optional modern renderer is in
-`docs/RENDERER_PLAN.md`; none of it is built.**
+Status as of 2026-10-22: **Phase 1 is done. Phase 2 started with big maps: the ±32768 check, the NBSP format,
+the compiler and a TrenchBroom configuration are done, and so are closed captions (section 9). Designs for an
+optional modern renderer (`docs/RENDERER_PLAN.md`) and for Half-Life 2 maps (`docs/SOURCE_PLAN.md`) are written;
+neither is built. The state before the rest of Phase 2 is tagged `pre-phase2-v1`.**
 The engine boots, has a full console and engine-level Lua, renders Half-Life maps, models and sprites, and runs the
 stock Steam `hl.dll`: it spawns every map's entities, monsters think, path-find and fight, doors and trains move, and
 the player walks with the DLL's own movement code. Engine Lua can see and change the game. The stock `client.dll` runs
@@ -191,6 +192,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `r_decal.c` | 390 | Decals: one name list shared by the game (`DecalIndex`), the client and messages; decals.wad textures (index = opacity, last palette colour = colour); a decal is clipped to every surface polygon it lands on (texture-aligned), kept per surface in the brush model's own space, drawn after its surface with the lightmap. `r_decals` limit (permanent map decals kept), `decalcount` |
 | `cl_tri.c` | 244 | The triangle API (immediate-mode GL), WorldToScreen/ScreenToWorld from the view matrices captured each frame |
 | `cl_view.c` | 304 | titles.txt (`$position`, `$color`, timing...), TE_TEXTMESSAGE through "__NETMESSAGE__" slots and the client's HudText hook, ScreenFade (GoldSrc's fade timing, modulate) and ScreenShake (`V_CalcShake`/`V_ApplyShake`) |
+| `cl_caption.c` | 586 | Closed captions: `S_StartSound` (and `speak`) hands every started sound to `CC_SoundStarted` with its play time (sentence words with their cuts, pitch and time compression) and its loudness at the listener without the `volume` cvar. The caption comes from `captions/<cc_lang>.txt` then `captions/<cc_lang>_*.txt` (later entries win; exact keys before wildcards): `Tokens` by sentence name or sample path (a one-word sentence also by its recording), else an automatic caption from the words when every word's folder is in `Speakers` (`Words` respell or drop words). Source-style tags `<clr>`, `<sfx>`, `<len>`, `<cr>`. Captions queue and are shown at the next `CC_Draw` (after the HUD) through the Lua hook `CaptionShow`; a repeat of a line on screen only extends it. Its own proportional font atlas (`cc_font`), normal blending, box at 80% of the screen height |
 | `cl_studio.c` | 134 | The studio model API table given to the client at startup (`HUD_GetStudioModelInterface`). The engine still draws models; the table's queries are real (the egon asks `IsHardware`) and its drawing entries do nothing |
 | `snd_local.h` | 40 | What the sound files share: `sfx_t` (16-bit samples at the file's rate, loop start), sentences |
 | `snd_main.c` | 820 | Sound: channels (one sound per entity and channel, except auto and static), placement each frame (entities are followed; distance falloff scaled by attenuation over 1000 units, constant-power panning; the local player's own sounds are flat), mixing ahead `s_mixahead` seconds into SDL's queue with linear resampling (that's also the pitch), sentences word by word (pitch/volume/start/end, time compression skips the end of every 25 ms), mouths (voice loudness, 0..64), music (an MP3 streamed from memory; `cd` maps tracks to `media/*.mp3`), room echo presets for `room_type`, muffling under water, `s_record`, commands |
@@ -221,7 +223,8 @@ opens.
 - Sandboxing: `io`, `dofile`, `loadfile`, `os.execute/remove/rename/exit/tmpname` and `package` paths are removed. `file.*` goes through the FS; writes only go to `userdata/<game>/data/`.
 - **Timeouts**: an instruction-count hook checks a deadline (`lua_timeout`, default 5 s) per outermost call.
 - **Errors**: tracebacks print in red. The same error repeating within 5 s is shown once (so a broken Think hook doesn't spam).
-- Engine-to-Lua hooks: `Initialize`, `Think`, `DrawOverlay` (surface.* only works here), `KeyEvent(name, down, keynum)` (return true to eat the key), `WorldLoaded(map)`, `WorldUnloaded(map)`, `ShutDown`.
+- Engine-to-Lua hooks: `Initialize`, `Think`, `DrawOverlay` (surface.* only works here), `KeyEvent(name, down, keynum)` (return true to eat the key), `WorldLoaded(map)`, `WorldUnloaded(map)`, `ShutDown`, `CaptionShow(key, text, isSfx)` (return a string to change
+  the caption, false to hide it; fired from `CC_Draw`, not from inside the sound call).
 - Game hooks (step 4c, `lua_game.c`, fired from `sv_main.c`/`sv_pmove.c`): `InitPostEntity`, `Tick` (every server
   frame), `OnEntityCreated` (found by scanning edicts after each frame, because the game creates most entities
   without telling the engine; each slot remembers the serial it announced), `EntityRemoved` (from `ED_Free`),
@@ -468,4 +471,20 @@ newen would read it), VIS hints for big open areas.
 **Renderer plan (design only, 2026-10-20): `docs/RENDERER_PLAN.md`.** An optional `r_renderer modern` path
 (per-pixel dynamic lights, normal/specular maps, shadow maps) beside the current renderer, which stays the default.
 Nothing in it is implemented; its section 8 lists the decisions the owner needs to make first.
+
+**Half-Life 2 maps plan (design only, 2026-10-22): `docs/SOURCE_PLAN.md`.** How to bring the owner's NewenSource
+project (`%USERPROFILE%\Documents\Codex\2026-10-18\let\outputs\NewenSource`, read only) into newen:
+Source maps load beside GoldSrc ones without the HL DLLs, Jolt for their physics. Its section 11 lists the owner's
+decisions. The owner chose to do the rest of Phase 2 first (2026-10-22).
+
+**Closed captions, done (owner's pick and recommendations, 2026-10-22).** See `cl_caption.c` in the code map and
+README's "Closed captions". The owner chose automatic captions from word sentences plus a caption file that
+overrides them. `base/captions/english.txt` ships the automatic setup (VOX, HEV, soldiers), word fixes, a few
+sound-effect lines and one hand-tidied announcement. The single-recording dialogue (scientists, guards, Barney, the
+tram voice) has no text yet: transcribing Valve's lines was left out on purpose; the owner or the community adds
+them in `captions/english_*.txt`. Tested on c1a0d (`speak`, `cc_emit` of HEV, VOX, soldier and explosion lines, an
+add-on file with a wildcard sentence key, the Lua hook changing and hiding lines, `captions.Add` in red,
+`cc_subtitles 1` hiding effects, fading out) and c0a0/c1a0 (no stray captions; that opening's speech is all single
+recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
+read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit, Linux.

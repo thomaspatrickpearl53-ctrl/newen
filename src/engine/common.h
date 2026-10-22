@@ -258,6 +258,13 @@ void     S_PreloadSound(const char *sample);             // at precache time
 int      S_MouthOpen(int entnum);                    // 0..64, from the entity's voice
 void     S_FadeVolume(float percent, float fadeout, float hold, float fadein);
 
+// ---------------------------------------------------------------- cl_caption.c
+void     CC_Init(void);
+void     CC_Shutdown(void);
+void     CC_Draw(void);                                  // 2D, after the HUD
+void     CC_Add(const char *text, float seconds, int r, int g, int b);   // a caption of its own (Lua); tags allowed
+void     CC_Clear(void);
+
 // ---------------------------------------------------------------- draw.c
 void Draw_Init(void);
 void Draw_Shutdown(void);

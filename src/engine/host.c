@@ -98,6 +98,7 @@ void Host_Init(int argc, char **argv)
 	Draw_Init();
 	R_Init();
 	S_Init();
+	CC_Init();
 	Lua_Init();
 	CL_Init();
 	SV_Init();
@@ -182,6 +183,7 @@ void Host_Frame(void)
 	S_Update(r_refdef.origin, r_refdef.right);
 	Draw_Begin2D();
 	CL_DrawHUD();
+	CC_Draw();
 	Lua_DrawOverlay();
 	Con_Draw();
 	DrawFPS();
@@ -202,6 +204,7 @@ void Host_Shutdown(void)
 	if (host_initialized)
 		WriteConfig();
 	Lua_Shutdown();
+	CC_Shutdown();
 	CL_Shutdown();
 	SV_Shutdown();
 	S_Shutdown();

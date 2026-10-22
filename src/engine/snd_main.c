@@ -11,6 +11,7 @@
 // pitch, volume, start/end cut and time compression. Music (the cd and mp3 commands) is an MP3
 // streamed from memory. room_type picks an echo preset, and being underwater muffles everything.
 // A speaking entity's mouth opens with the loudness of its voice channel.
+// Every sound that starts is handed to the closed captions (cl_caption.c) with its length and loudness.
 #include "snd_local.h"
 #include "server.h"
 #include "dr_mp3.h"
@@ -103,6 +104,8 @@ static channel_t *AllocChannel(void)
 	FreeChannel(best);
 	return best;
 }
+
+static void Caption(channel_t *ch);
 
 // the next word of a sentence that exists; false when the sentence is over
 static qboolean StartWord(channel_t *ch, int i)
@@ -230,11 +233,14 @@ void S_StartSound(int entnum, int entchannel, const char *sample, const float *o
 		ch->sentence = sentence;
 		if (!StartWord(ch, 0))
 			FreeChannel(ch);
+		else
+			Caption(ch);
 		return;
 	}
 	ch->sfx = sfx;
 	ch->pos = 0;
 	ch->endpos = sfx->frames;
+	Caption(ch);
 }
 
 void S_PreloadSound(const char *sample)
@@ -268,6 +274,8 @@ static void SpeakText(const char *text, float vol)
 	ch->own_sentence = true;
 	if (!StartWord(ch, 0))
 		FreeChannel(ch);
+	else
+		Caption(ch);
 }
 
 int S_MouthOpen(int entnum)
@@ -306,28 +314,72 @@ static float FadeFactor(void)
 
 // ---------------------------------------------------------------- placement
 
+// false for sounds heard the same everywhere: no attenuation, no entity, or the local player's own
+static qboolean IsPlaced(const channel_t *ch)
+{
+	edict_t *pl = SV_LocalPlayer();
+	qboolean mine = pl && ch->entnum == NUM_FOR_EDICT(pl);
+	return !(ch->attn <= 0 || ch->entnum < 0 || mine);
+}
+
+// distance falloff of a placed sound (1 close by, 0 out of earshot); dir gets the way to it
+static float Falloff(const channel_t *ch, vec3_t dir)
+{
+	VectorSubtract(ch->origin, listener_origin, dir);
+	float dist = VectorNormalize(dir) * (ch->attn / NOMINAL_CLIP_DIST);
+	return dist >= 1 ? 0 : 1 - dist;
+}
+
 static void Spatialize(channel_t *ch, float master)
 {
 	float vol = ch->vol * ch->wordvol * master;
-	edict_t *pl = SV_LocalPlayer();
-	qboolean mine = pl && ch->entnum == NUM_FOR_EDICT(pl);
-	if (ch->attn <= 0 || ch->entnum < 0 || mine) {
+	if (!IsPlaced(ch)) {
 		ch->left = ch->right = vol;
 		return;
 	}
 	vec3_t d;
-	VectorSubtract(ch->origin, listener_origin, d);
-	float dist = VectorNormalize(d) * (ch->attn / NOMINAL_CLIP_DIST);
-	if (dist >= 1) {
+	float falloff = Falloff(ch, d);
+	if (falloff <= 0) {
 		ch->left = ch->right = 0;
 		return;
 	}
 	// constant power: the same loudness wherever it is around you, 1.0 each side straight ahead
 	float pan = DotProduct(listener_right, d);
 	float a = (pan + 1) * (M_PI_F / 4);
-	float scale = vol * (1 - dist) * 1.41421356f;
+	float scale = vol * falloff * 1.41421356f;
 	ch->left = scale * cosf(a);
 	ch->right = scale * sinf(a);
+}
+
+// seconds a sound plays at its pitch; a sentence's words with their cuts, pitch and time compression
+static float PlayTime(const channel_t *ch)
+{
+	double t = 0;
+	if (ch->sentence) {
+		for (int i = 0; i < ch->sentence->numwords; i++) {
+			const voxword_t *w = &ch->sentence->words[i];
+			sfx_t *s = S_FindSfx(w->sample);
+			if (!s || s->rate <= 0)
+				continue;
+			int end = w->end > 0 ? w->end : 100;
+			double part = (double)s->frames * (end - w->start) / 100.0 / s->rate;
+			part *= 100.0 / (w->pitch > 0 ? w->pitch : 100) * (1 - w->timecompress / 100.0);
+			if (part > 0)
+				t += part;
+		}
+	} else if (ch->sfx && ch->sfx->rate > 0) {
+		t = (double)ch->sfx->frames / ch->sfx->rate;
+	}
+	return (float)(t * 100.0 / (ch->pitch > 0 ? ch->pitch : 100));
+}
+
+// how loud it is where the listener stands, without the volume setting (captions are for people
+// who may have the sound turned down)
+static void Caption(channel_t *ch)
+{
+	vec3_t d;
+	float gain = ch->vol * (IsPlaced(ch) ? Falloff(ch, d) : 1);
+	CC_SoundStarted(ch->sentence ? ch->sentence->name : ch->sfx->name, ch->sentence, PlayTime(ch), gain);
 }
 
 // ---------------------------------------------------------------- music

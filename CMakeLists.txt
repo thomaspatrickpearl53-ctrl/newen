@@ -70,6 +70,7 @@ add_executable(newen WIN32
 	src/engine/cl_tri.c
 	src/engine/cl_studio.c
 	src/engine/cl_view.c
+	src/engine/cl_caption.c
 	src/engine/r_part.c
 	src/engine/r_beam.c
 	src/engine/r_decal.c

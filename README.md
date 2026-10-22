@@ -119,6 +119,23 @@ or `mp3 play <file>`) from `media/*.mp3`, and room echo where the map sets it (m
   `soundinfo`, `cd play|loop|stop|pause|resume`, `mp3 play|loop|stop`, `s_record [file.wav]` (records what you hear
   into `bin/userdata/<game>/`; again stops).
 
+## Closed captions
+
+Speech and sounds can be shown as captions in a box near the bottom of the screen, in the speaker's colour,
+for as long as the sound plays. Only sounds loud enough to hear where you stand get one.
+
+- Sentences built from spoken words (the VOX announcer, the HEV suit, soldiers' radio) are captioned
+  automatically from their words. Everything else needs a line in the caption file.
+- `base/captions/english.txt` is the caption file (its comments explain the format: `Tokens` are lines by
+  sentence name or sound path, `Speakers` are colours and which word folders are captioned automatically,
+  `Words` respell or drop words). Add your own lines in `captions/english_<anything>.txt` in a game folder,
+  `bin/userdata/<game>/` or an addon; it loads after the main file and wins. Plain ASCII text only for now.
+- Half-Life's single-recording dialogue (scientists, guards, the tram voice) has no captions yet: the
+  shipped file only has the automatic captions, a few sound effects and examples.
+- Cvars: `closecaption` (1 = on), `cc_subtitles` (1 = speech only, no `[Explosion]`-style effects), `cc_lang`
+  (`english`), `cc_lines` (most lines on screen), `cc_linger` (seconds after the sound), `cc_minvolume`, `cc_font`.
+- Commands: `cc_emit <sentence, sound path or text>` (shows a caption), `cc_reload`, `cc_flush`.
+
 ## Console
 
 `` ` `` opens the console. Tab completes, Up and Down walk through history, PgUp/PgDn and the mouse wheel scroll,
@@ -138,7 +155,8 @@ Ctrl+L clears it. Useful commands: `cmdlist`, `cvarlist`, `find <text>`, `path`,
 API so far: `hook.Add/Remove/Run` (events: `Initialize`, `Think`, `DrawOverlay`, `KeyEvent`, `ShutDown`),
 `timer.Simple/Create/Remove/...`, `concommand.Add/Remove`, `CreateConVar/GetConVar`, `RunConsoleCommand`,
 `surface.SetDrawColor/DrawRect/DrawOutlinedRect/SetTextColor/SetTextPos/DrawText/GetTextSize`,
-`draw.SimpleText/RoundedBox`, `Color`, `input.IsKeyDown/GetKeyName/GetKeyCode`, `file.Read/Write/Exists/Find`,
+`draw.SimpleText/RoundedBox`, `Color`, `captions.Add(text, [seconds], [color])/Clear` (hook
+`CaptionShow(key, text, isSfx)`: return a string to change a caption, false to hide it), `input.IsKeyDown/GetKeyName/GetKeyCode`, `file.Read/Write/Exists/Find`,
 `engine.GetGameDir/Version/GetMap` (hooks `WorldLoaded`, `WorldUnloaded` get the map name), `CurTime/RealTime/FrameTime/SysTime/ScrW/ScrH`, `print/Msg/MsgN/include/PrintTable`.
 The names follow Garry's Mod and Half-Life: Lua so addons can move over.
 
@@ -183,5 +201,7 @@ Phase 2 so far: **big maps.** BSP30 maps work out to ±32768. newen also loads i
 Half-Life map to it (and can move it, for testing). The map compiler is a separate project,
 `newen-compiler` (ericw-tools with NBSP output): `qbsp -nbsp` or `qbsp -hlbsp`, then `vis` and `light`.
 
-Then: Jolt physics, extended BSP, lights and shadows, particles, captions, dev tools; VGUI2; more games
+Closed captions are done too (see above).
+
+Then: Jolt physics, lights and shadows, particles, dev tools; Half-Life 2 maps (`docs/SOURCE_PLAN.md`, planned); VGUI2; more games
 (Opposing Force, Blue Shift, CS 1.6, Cry of Fear); co-op, terrain, 64-bit, Linux.

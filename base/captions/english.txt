@@ -1,0 +1,92 @@
+// newen closed captions, English.
+//
+// Tokens: a sentence name from sound/sentences.txt ("HG_ALERT0") or a sound path ("weapons/explode3.wav",
+// * matches anything), then the caption. Tags: <clr:r,g,b> colour, <sfx> a sound effect (hidden by
+// cc_subtitles 1), <len:seconds> how long it stays, <cr> a new line.
+// Speakers: sound directories whose sentences are built from spoken words; those sentences are captioned
+// from their words automatically, in the speaker's colour. A Tokens entry replaces the automatic caption.
+// Words: how a word file is written in automatic captions; "" leaves the word out (beeps, clicks).
+//
+// Add your own lines in another file, captions/english_<anything>.txt, in a game folder, in
+// bin/userdata/<game>/ or in an addon: it loads after this one and its entries win.
+// Only plain ASCII text for now.
+"lang"
+{
+	"Language" "english"
+
+	"Speakers"
+	{
+		"vox"		"<clr:140,230,140>"	// the Black Mesa announcement system
+		"fvox"		"<clr:255,170,60>"	// the HEV suit
+		"hgrunt"	"<clr:200,220,140>"	// soldiers' radio
+	}
+
+	"Words"
+	{
+		// sounds, not words
+		"bizwarn"	""
+		"bloop"		""
+		"buzwarn"	""
+		"dadeda"	""
+		"deeoo"		""
+		"doop"		""
+		"woop"		""
+		"vox_login"	""
+		"beep"		""
+		"bell"		""
+		"blip"		""
+		"boop"		""
+		"buzz"		""
+		"fuzz"		""
+		"hiss"		""
+		"flatline"	""
+		"clik"		""
+		"uhh"		""
+		// whole recordings, not words: they need a Tokens line of their own
+		"c?a*_*"	""
+		"hg_*"		""
+		"gr_*"		""
+		"hev_logon"	""
+		"hev_shutdown"	""
+
+		// spellings
+		"freeman"	"Freeman"
+		"gordon"	"Gordon"
+		"mesa"		"Mesa"
+		"lambda"	"Lambda"
+		"sargeant"	"sergeant"
+		"fourty"	"forty"
+		"invallid"	"invalid"
+		"resevoir"	"reservoir"
+		"ventillation"	"ventilation"
+		"onehundred"	"one hundred"
+		"twentyfive"	"twenty-five"
+		"innsuficient_medical"	"insufficient medical"
+		"innsufficient_medical"	"insufficient medical"
+		"torniquette_applied"	"tourniquet applied"
+		"yessir"	"yes sir"
+		"tenmeters"	"ten meters"
+		"fivemeters"	"five meters"
+		"twentymeters"	"twenty meters"
+		"thirtymeters"	"thirty meters"
+		"fortymeters"	"forty meters"
+		"fiftymeters"	"fifty meters"
+		"sixtymeters"	"sixty meters"
+		"seventymeters"	"seventy meters"
+		"eightymeters"	"eighty meters"
+		"hundredmeters"	"one hundred meters"
+		"onefiftymeters"	"one hundred fifty meters"
+		"twohundredmeters"	"two hundred meters"
+	}
+
+	"Tokens"
+	{
+		// an automatic caption tidied up by hand (the words are the sentence's own)
+		"C1A0_10"	"Doctor Freeman, to Anomalous Materials test lab immediately."
+
+		// sound effects
+		"weapons/explode*"	"<sfx>[Explosion]"
+		"weapons/mortarhit.wav"	"<sfx>[Explosion]"
+		"ambience/siren.wav"	"<sfx>[Siren]"
+	}
+}

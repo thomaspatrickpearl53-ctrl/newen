@@ -38,3 +38,7 @@ void        S_LoadSentences(void);
 sentence_t *S_FindSentence(const char *name);   // "HG_ALERT0" or "#12"
 sentence_t *S_ParseSentence(const char *name, const char *text);   // for "speak"; caller frees with S_FreeSentence
 void        S_FreeSentence(sentence_t *s);
+
+// cl_caption.c: a sound started. key is the sentence name or sample path, sentence its words (NULL
+// for a plain sound), seconds how long it plays, gain how loud it is here (0..1, before "volume")
+void        CC_SoundStarted(const char *key, const sentence_t *sentence, float seconds, float gain);

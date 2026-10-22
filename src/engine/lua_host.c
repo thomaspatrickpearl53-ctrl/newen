@@ -649,6 +649,20 @@ static int l_file_Find(lua_State *Ls)
 	return 1;
 }
 
+// ---------------------------------------------------------------- captions
+
+// captions.Add(text, [seconds], [color]): a caption line; tags like <clr:r,g,b> work too
+static int l_captions_Add(lua_State *Ls)
+{
+	int r = 255, g = 255, b = 255, a;
+	if (!lua_isnoneornil(Ls, 3))
+		ReadColor(Ls, 3, &r, &g, &b, &a);
+	CC_Add(luaL_checkstring(Ls, 1), (float)luaL_optnumber(Ls, 2, 3), r, g, b);
+	return 0;
+}
+
+static int l_captions_Clear(lua_State *Ls) { CC_Clear(); return 0; }
+
 // ---------------------------------------------------------------- engine
 
 static int l_engine_GetGameDir(lua_State *Ls) { lua_pushstring(Ls, FS_GameDir()); return 1; }
@@ -734,6 +748,11 @@ static void OpenLibs(void)
 		{ NULL, NULL }
 	};
 	Register("engine", engine);
+
+	static const luaL_Reg captions[] = {
+		{ "Add", l_captions_Add }, { "Clear", l_captions_Clear }, { NULL, NULL }
+	};
+	Register("captions", captions);
 
 	static const luaL_Reg convar[] = {
 		{ "GetString", cv_GetString }, { "GetFloat", cv_GetFloat }, { "GetInt", cv_GetInt },
