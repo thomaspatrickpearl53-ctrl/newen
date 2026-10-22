@@ -2,7 +2,10 @@
 //
 // Tokens: a sentence name from sound/sentences.txt ("HG_ALERT0") or a sound path ("weapons/explode3.wav",
 // * matches anything), then the caption. Tags: <clr:r,g,b> colour, <sfx> a sound effect (hidden by
-// cc_subtitles 1), <len:seconds> how long it stays, <cr> a new line.
+// cc_subtitles 1), <len:seconds> how long it stays, <cr> a new line, <at:seconds> the text after it shows
+// that far into the sound (long speeches in parts). A sentence made of whole recordings with no line of its
+// own uses each recording's line, joined ("scientist/hello.wav" "Hello."); tools/make_captions.py makes
+// those from your installed game.
 // Speakers: sound directories whose sentences are built from spoken words; those sentences are captioned
 // from their words automatically, in the speaker's colour. A Tokens entry replaces the automatic caption.
 // Words: how a word file is written in automatic captions; "" leaves the word out (beeps, clicks).

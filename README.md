@@ -130,8 +130,12 @@ for as long as the sound plays. Only sounds loud enough to hear where you stand 
   sentence name or sound path, `Speakers` are colours and which word folders are captioned automatically,
   `Words` respell or drop words). Add your own lines in `captions/english_<anything>.txt` in a game folder,
   `bin/userdata/<game>/` or an addon; it loads after the main file and wins. Plain ASCII text only for now.
-- Half-Life's single-recording dialogue (scientists, guards, the tram voice) has no captions yet: the
-  shipped file only has the automatic captions, a few sound effects and examples.
+- A sentence made of whole recordings (scientists, guards, G-Man, the tram voice) is captioned from each
+  recording's own line (`"scientist/hello.wav" "Hello."`). newen doesn't ship those lines (they're Valve's
+  dialogue); `python tools/make_captions.py` makes them on your machine with whisper.cpp speech recognition
+  from your installed Half-Life, into `bin/userdata/valve/captions/english_whisper.txt` (see the top of the
+  script for what it needs). It's machine transcription: fix any line there or in a file of your own.
+- `<at:seconds>` in a line shows the text after it that far into the sound, so a long speech comes in parts.
 - Cvars: `closecaption` (1 = on), `cc_subtitles` (1 = speech only, no `[Explosion]`-style effects), `cc_lang`
   (`english`), `cc_lines` (most lines on screen), `cc_linger` (seconds after the sound), `cc_minvolume`, `cc_font`.
 - Commands: `cc_emit <sentence, sound path or text>` (shows a caption), `cc_reload`, `cc_flush`.

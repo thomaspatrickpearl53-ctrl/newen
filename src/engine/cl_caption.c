@@ -14,7 +14,7 @@
 //   }
 //
 // Tags: <clr:r,g,b>, <sfx> (a sound effect, hidden by cc_subtitles 1), <len:seconds>, <cr> (new
-// line). Captions queue up while sounds start and are shown at the next frame, after the Lua
+// line), <at:seconds> (the text after it shows that far into the sound, for long recordings). Captions queue up while sounds start and are shown at the next frame, after the Lua
 // hook CaptionShow(key, text, isSfx) may change (return a string) or hide (return false) them.
 #include "snd_local.h"
 #include "gl_local.h"
@@ -36,7 +36,8 @@ typedef struct {
 	int      r, g, b;
 	qboolean sfx;
 	float    seconds;      // how long the sound plays
-	double   end;          // when it starts fading (active captions)
+	double   show_at;      // pending: not before this (a later part of a long recording)
+	double   end;         // when it starts fading (active captions)
 } caption_t;
 
 static cclist_t tokens, words, speakers;
@@ -47,6 +48,7 @@ static cvar_t *closecaption, *cc_subtitles, *cc_lang, *cc_lines, *cc_linger, *cc
 
 #define FADE_TIME 0.5   // seconds a caption takes to fade out
 #define MIN_TIME  1.0   // short sounds still stay up long enough to read
+#define AT_MARK   '\x01'   // ParseTags turns <at:seconds> into AT_MARK seconds AT_MARK
 
 // ---------------------------------------------------------------- the caption file
 
@@ -159,6 +161,11 @@ static qboolean ParseTags(const char *in, strbuf_t *out, caption_t *c)
 					c->seconds = (float)atof(tag + 4);
 				else if (!stricmp(tag, "cr"))
 					SB_Append(out, "\n", 1);
+				else if (!strnicmp(tag, "at:", 3)) {
+					char mark[40];
+					int m = snprintf(mark, sizeof(mark), "%c%g%c", AT_MARK, atof(tag + 3), AT_MARK);
+					SB_Append(out, mark, (size_t)m);
+				}
 				// tags we don't know (Source's <B>, <I>, <norepeat:...>) are dropped
 				in = end + 1;
 				continue;
@@ -223,16 +230,74 @@ static qboolean AutoCaption(const sentence_t *s, strbuf_t *out)
 	return true;
 }
 
-static void Queue(const char *key, const char *text, const caption_t *c)
+// a sentence of whole recordings ("scientist/youneedmedic, letstrythis"): each recording's own line
+// by its path, joined; false if any recording has none
+static qboolean RecordingCaption(const sentence_t *s, strbuf_t *out, caption_t *c)
+{
+	strbuf_t part = { 0 };
+	SB_Clear(out);
+	qboolean ok = true;
+	for (int i = 0; i < s->numwords && ok; i++) {
+		char dir[64], word[64];
+		SplitSample(s->words[i].sample, dir, sizeof(dir), word, sizeof(word));
+		if (!stricmp(word, "_comma") || !stricmp(word, "_period"))
+			continue;   // the recordings' lines bring their own punctuation
+		const char *line = Find(&tokens, s->words[i].sample);
+		if (!line) {
+			ok = false;
+		} else if (ParseTags(line, &part, c)) {
+			if (out->len)
+				SB_Append(out, " ", 1);
+			SB_Append(out, part.data, part.len);
+		}
+	}
+	SB_Free(&part);
+	return ok && out->len > 0;
+}
+
+static void AddPending(const caption_t *c)
 {
 	if (pending_count == pending_cap) {
 		pending_cap = pending_cap ? pending_cap * 2 : 16;
 		pending = Mem_Realloc(pending, sizeof(*pending) * pending_cap);
 	}
-	caption_t *p = &pending[pending_count++];
-	*p = *c;
-	p->key = Mem_Strdup(key);
-	p->text = Mem_Strdup(text);
+	pending[pending_count++] = *c;
+}
+
+static void QueuePart(const char *key, const char *text, size_t len, const caption_t *c, double at, float seconds)
+{
+	while (len && (*text == ' ' || *text == '\n')) {
+		text++;
+		len--;
+	}
+	while (len && (text[len - 1] == ' ' || text[len - 1] == '\n'))
+		len--;
+	if (!len)
+		return;
+	caption_t p = *c;
+	p.key = Mem_Strdup(key);
+	p.text = Mem_Alloc(len + 1);
+	memcpy(p.text, text, len);
+	p.show_at = host_realtime + at;
+	p.seconds = seconds;
+	AddPending(&p);
+}
+
+// a long recording's line comes in parts, each shown at its moment in the sound until the next one
+static void Queue(const char *key, const char *text, const caption_t *c)
+{
+	double at = 0;
+	for (int part = 0;; part++) {
+		const char *mark = strchr(text, AT_MARK);
+		const char *close = mark ? strchr(mark + 1, AT_MARK) : NULL;
+		double next = close ? atof(mark + 1) : c->seconds;
+		size_t len = close ? (size_t)(mark - text) : strlen(text);
+		QueuePart(part || close ? va("%s#%d", key, part) : key, text, len, c, at, (float)(next > at ? next - at : 0));
+		if (!close)
+			break;
+		text = close + 1;
+		at = next;
+	}
 }
 
 void CC_SoundStarted(const char *key, const sentence_t *sentence, float seconds, float gain)
@@ -257,12 +322,13 @@ void CC_SoundStarted(const char *key, const sentence_t *sentence, float seconds,
 		ParseTags(speaker, &ignored, &c);
 
 	const char *line = Find(&tokens, key);
-	// a sentence of one recording can be captioned by that recording's path too
-	if (!line && sentence && sentence->numwords == 1)
-		line = Find(&tokens, sentence->words[0].sample);
+	caption_t joined = c;   // a failed join mustn't leave its tags behind
 	qboolean ok = false;
 	if (line) {
 		ok = ParseTags(line, &text, &c);
+	} else if (sentence && RecordingCaption(sentence, &text, &joined)) {
+		c = joined;
+		ok = true;
 	} else if (sentence && AutoCaption(sentence, &ignored)) {
 		SB_Append(&text, ignored.data, ignored.len);
 		ok = true;
@@ -309,11 +375,15 @@ static void ShowPending(void)
 {
 	// detached: the hook may start sounds of its own, which queue for the next frame
 	caption_t *list = pending;
-	int count = pending_count;
+	int count = pending_count, later = 0;
 	pending = NULL;
 	pending_count = pending_cap = 0;
 	for (int i = 0; i < count; i++) {
 		caption_t *c = &list[i];
+		if (c->show_at > host_realtime) {
+			list[later++] = *c;   // not due yet; the front of the list is free to hold it
+			continue;
+		}
 		lua_State *L = Lua_GetState();
 		if (L) {
 			int top = lua_gettop(L);
@@ -351,6 +421,8 @@ static void ShowPending(void)
 		c->end = end;
 		active[active_count++] = *c;
 	}
+	for (int i = 0; i < later; i++)
+		AddPending(&list[i]);
 	Mem_Free(list);
 }
 
