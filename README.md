@@ -3,6 +3,10 @@
 A Half-Life (GoldSrc-compatible) engine with Lua built into the engine. Written from scratch in C, 32-bit, for Windows.
 "newen" is a placeholder name.
 
+You need your own copy of Half-Life (Steam). newen contains no Valve code or game files: it loads the game's own
+files and DLLs from your install. Building needs Visual Studio (x86 C compiler); a prebuilt Windows build is on the
+Releases page: unzip it anywhere and run `newen.exe`.
+
 ## Build and run
 
 ```
@@ -25,7 +29,7 @@ newen never writes into the Half-Life folder. Configs, logs and screenshots go t
 | `base/lua/autorun/` | engine scripts that run on start |
 | `base/addons/<id>/lua/` | addons shipped with the engine |
 | `bin/userdata/<game>/addons/<id>/lua/` | your addons |
-| `third_party/` | SDL2 2.30.9, Lua 5.4.7, stb_image 2.30 |
+| `third_party/` | SDL2 2.30.9 (zlib), Lua 5.4.7 (MIT), stb_image/stb_vorbis (public domain/MIT), dr_mp3/dr_flac (public domain/MIT-0) |
 
 ## Maps
 
@@ -209,3 +213,8 @@ Closed captions are done too (see above).
 
 Then: Jolt physics, lights and shadows, particles, dev tools; Half-Life 2 maps (`docs/SOURCE_PLAN.md`, planned); VGUI2; more games
 (Opposing Force, Blue Shift, CS 1.6, Cry of Fear); co-op, terrain, 64-bit, Linux.
+
+## Licence
+
+newen is under the MIT licence (`LICENSE`). The libraries in `third_party/` keep their own licences.
+Half-Life, its DLLs and its content belong to Valve and are not part of this project.
