@@ -22,12 +22,73 @@ qglBufferData_t qglBufferData;
 float gl_max_anisotropy = 1.0f;
 int   gl_max_texture_size = 2048;
 
+PFNGLCREATESHADERPROC      qglCreateShader;
+PFNGLSHADERSOURCEPROC      qglShaderSource;
+PFNGLCOMPILESHADERPROC     qglCompileShader;
+PFNGLGETSHADERIVPROC       qglGetShaderiv;
+PFNGLGETSHADERINFOLOGPROC  qglGetShaderInfoLog;
+PFNGLDELETESHADERPROC      qglDeleteShader;
+PFNGLCREATEPROGRAMPROC     qglCreateProgram;
+PFNGLATTACHSHADERPROC      qglAttachShader;
+PFNGLLINKPROGRAMPROC       qglLinkProgram;
+PFNGLGETPROGRAMIVPROC      qglGetProgramiv;
+PFNGLGETPROGRAMINFOLOGPROC qglGetProgramInfoLog;
+PFNGLDELETEPROGRAMPROC     qglDeleteProgram;
+PFNGLUSEPROGRAMPROC        qglUseProgram;
+PFNGLGETUNIFORMLOCATIONPROC qglGetUniformLocation;
+PFNGLUNIFORM1IPROC         qglUniform1i;
+PFNGLUNIFORM1FPROC         qglUniform1f;
+PFNGLUNIFORM3FPROC         qglUniform3f;
+qboolean gl_shaders;
+char     gl_shaders_missing[128];
+
 unsigned char texgammatable[256];
 
 static gltexture_t **textures;
 static int  textures_count, textures_cap;
 static gltexture_t *missing;
 static cvar_t *r_texturemode, *r_anisotropy, *r_texgamma;
+
+// Optional: a missing piece only turns the modern renderer off, never the engine
+static void LoadShaderExtensions(void)
+{
+	static const struct { void **fn; const char *name; } procs[] = {
+		{ (void **)&qglCreateShader, "glCreateShader" },       { (void **)&qglShaderSource, "glShaderSource" },
+		{ (void **)&qglCompileShader, "glCompileShader" },     { (void **)&qglGetShaderiv, "glGetShaderiv" },
+		{ (void **)&qglGetShaderInfoLog, "glGetShaderInfoLog" }, { (void **)&qglDeleteShader, "glDeleteShader" },
+		{ (void **)&qglCreateProgram, "glCreateProgram" },     { (void **)&qglAttachShader, "glAttachShader" },
+		{ (void **)&qglLinkProgram, "glLinkProgram" },         { (void **)&qglGetProgramiv, "glGetProgramiv" },
+		{ (void **)&qglGetProgramInfoLog, "glGetProgramInfoLog" }, { (void **)&qglDeleteProgram, "glDeleteProgram" },
+		{ (void **)&qglUseProgram, "glUseProgram" },           { (void **)&qglGetUniformLocation, "glGetUniformLocation" },
+		{ (void **)&qglUniform1i, "glUniform1i" },             { (void **)&qglUniform1f, "glUniform1f" },
+		{ (void **)&qglUniform3f, "glUniform3f" },
+	};
+	gl_shaders = false;
+	for (int i = 0; i < (int)(sizeof(procs) / sizeof(procs[0])); i++) {
+		*procs[i].fn = SDL_GL_GetProcAddress(procs[i].name);
+		if (!*procs[i].fn) {
+			snprintf(gl_shaders_missing, sizeof(gl_shaders_missing), "the driver has no %s", procs[i].name);
+			return;
+		}
+	}
+	const char *glsl = (const char *)glGetString(GL_SHADING_LANGUAGE_VERSION);
+	int major = 0, minor = 0;
+	if (!glsl || sscanf(glsl, "%d.%d", &major, &minor) != 2 || major * 100 + minor < 120) {
+		snprintf(gl_shaders_missing, sizeof(gl_shaders_missing), "GLSL 1.20 is needed (the driver has %s)", glsl ? glsl : "none");
+		return;
+	}
+	// diffuse, normal and specular maps, and three texture coordinate sets (st, lightmap, tangent)
+	GLint units = 0, coords = 0;
+	glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &units);
+	glGetIntegerv(GL_MAX_TEXTURE_COORDS, &coords);
+	if (units < 3 || coords < 3) {
+		snprintf(gl_shaders_missing, sizeof(gl_shaders_missing), "too few texture units (%d) or coordinate sets (%d)", units, coords);
+		return;
+	}
+	gl_shaders = true;
+	gl_shaders_missing[0] = 0;
+	Con_Printf("GLSL %s\n", glsl);
+}
 
 void GL_LoadExtensions(void)
 {
@@ -43,6 +104,7 @@ void GL_LoadExtensions(void)
 	if (SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic"))
 		glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &gl_max_anisotropy);
 	Con_Printf("Max texture size %d, anisotropy %gx\n", gl_max_texture_size, gl_max_anisotropy);
+	LoadShaderExtensions();
 }
 
 static void BuildGammaTable(void)
@@ -163,7 +225,7 @@ gltexture_t *GL_UploadTexture(const char *name, const unsigned char *rgba, int w
 
 	const unsigned char *src = rgba;
 	unsigned char *tmp = NULL;
-	if (flags & (TF_WORLD | TF_MODEL)) {
+	if ((flags & (TF_WORLD | TF_MODEL)) && !(flags & TF_DATA)) {
 		size_t n = (size_t)w * h;
 		tmp = Mem_Alloc(n * 4);
 		for (size_t i = 0; i < n; i++) {

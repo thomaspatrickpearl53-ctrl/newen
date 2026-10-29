@@ -115,11 +115,18 @@ typedef struct {
 
 static rdlight_t rdlights[MAX_DLIGHTS];
 static int rdlight_count;
+static int client_count;   // the client's lights; the test light goes after them each frame
 static vec3_t rdlight_local[MAX_DLIGHTS];   // the lights in the space of what's being drawn
+
+// r_testlight: one light the engine owns, so lighting can be checked without a game or client DLL
+static qboolean testlight_on;
+static vec3_t testlight_org;
+static float testlight_radius, testlight_color[3];
+static cvar_t *r_testlight_orbit;
 
 void R_ClearDlights(void)
 {
-	rdlight_count = 0;
+	rdlight_count = client_count = 0;
 }
 
 void R_AddDlight(const float *origin, float radius, const float *color, float minlight)
@@ -131,6 +138,78 @@ void R_AddDlight(const float *origin, float radius, const float *color, float mi
 	l->radius = radius;
 	l->minlight = minlight;
 	VectorCopy(color, l->color);
+	client_count = rdlight_count;
+}
+
+int R_DlightCount(void)
+{
+	return rdlight_count;
+}
+
+void R_GetDlight(int i, float *local_origin, float *radius, float *color)
+{
+	VectorCopy(rdlight_local[i], local_origin);
+	*radius = rdlights[i].radius;
+	VectorCopy(rdlights[i].color, color);
+}
+
+static void AddTestLight(void)
+{
+	if (!testlight_on || rdlight_count >= MAX_DLIGHTS)
+		return;
+	vec3_t org;
+	VectorCopy(testlight_org, org);
+	float orbit = r_testlight_orbit->value;
+	if (orbit > 0) {
+		// once round every 4 seconds, level with the point
+		float a = (float)(r_refdef.time * M_PI_F * 0.5);
+		org[0] += cosf(a) * orbit;
+		org[1] += sinf(a) * orbit;
+	}
+	rdlight_t *l = &rdlights[rdlight_count++];
+	VectorCopy(org, l->origin);
+	l->radius = testlight_radius;
+	l->minlight = 0;
+	VectorCopy(testlight_color, l->color);
+}
+
+static void TestLight_f(void)
+{
+	int argc = Cmd_Argc();
+	if (argc == 2 && !stricmp(Cmd_Argv(1), "off")) {
+		testlight_on = false;
+		return;
+	}
+	if (argc >= 2 && !stricmp(Cmd_Argv(1), "here")) {
+		VectorCopy(r_refdef.origin, testlight_org);
+		testlight_radius = argc > 2 ? (float)atof(Cmd_Argv(2)) : 300;
+		VectorSet(testlight_color, 1, 1, 1);
+		testlight_on = true;
+	} else if (argc >= 5) {
+		for (int i = 0; i < 3; i++)
+			testlight_org[i] = (float)atof(Cmd_Argv(1 + i));
+		testlight_radius = (float)atof(Cmd_Argv(4));
+		VectorSet(testlight_color, 1, 1, 1);
+		if (argc >= 8)
+			for (int i = 0; i < 3; i++)
+				testlight_color[i] = (float)atof(Cmd_Argv(5 + i));
+		testlight_on = true;
+	} else if (argc != 1) {
+		Con_Printf("usage: r_testlight <x y z radius> [r g b 0-1] | here [radius] | off\n");
+		return;
+	}
+	if (testlight_on)
+		Con_Printf("test light at %.0f %.0f %.0f, radius %.0f, colour %.2f %.2f %.2f%s\n", testlight_org[0], testlight_org[1],
+			testlight_org[2], testlight_radius, testlight_color[0], testlight_color[1], testlight_color[2],
+			r_testlight_orbit->value > 0 ? " (orbiting)" : "");
+	else
+		Con_Printf("no test light\n");
+}
+
+void R_InitLights(void)
+{
+	r_testlight_orbit = Cvar_Get("r_testlight_orbit", "0", 0, "the test light circles its point at this distance");
+	Cmd_AddCommand("r_testlight", TestLight_f, "r_testlight <x y z radius> [r g b] | here [radius] | off - an engine-owned dynamic light for testing");
 }
 
 static void MarkLights(const rdlight_t *l, unsigned bit, mnode_t *node, int depth)
@@ -195,6 +274,8 @@ void R_MarkSurfaceDlights(msurface_t *s)
 
 void R_PushDlights(void)
 {
+	rdlight_count = client_count;
+	AddTestLight();
 	R_DlightSpace(NULL, NULL);
 	if (!world.numnodes)
 		return;

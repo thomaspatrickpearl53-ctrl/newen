@@ -208,6 +208,7 @@ void R_LoadMap(const char *mapname, const char *oldmap, const char *landmark, qb
 	SV_Deactivate();
 	R_ClearEntities();
 	Mod_ClearAll();
+	R_SelectRenderer();
 	if (!BSP_Load(name)) {
 		current_map[0] = 0;
 		Con_SetForced(false);
@@ -355,6 +356,8 @@ void R_Init(void)
 	Cmd_AddCommand("texlist", Texlist_f, "lists the map's textures and which have HD replacements");
 	GL_LoadExtensions();
 	Image_Init();
+	R_ModernInitCvars();
+	R_InitLights();
 	R_InitWorld();
 	Mod_Init();
 	R_StudioInit();

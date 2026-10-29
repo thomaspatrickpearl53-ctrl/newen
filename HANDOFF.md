@@ -4,6 +4,9 @@ Everything someone new needs to pick this project up: what it is, what was decid
 out, how to build and test it, what works, what doesn't, and what comes next. Read `README.md` first for the
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
+2026-10-29: **the modern renderer's steps 0-5 are built on branch `modern-renderer`** (section 9, "Renderer plan");
+waiting for the owner's visual review.
+
 Status as of 2026-10-22: **Phase 1 is done. Phase 2 started with big maps: the ±32768 check, the NBSP format,
 the compiler and a TrenchBroom configuration are done, and so are closed captions (section 9). Designs for an
 optional modern renderer (`docs/RENDERER_PLAN.md`) and for Half-Life 2 maps (`docs/SOURCE_PLAN.md`) are written;
@@ -198,6 +201,8 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `snd_main.c` | 820 | Sound: channels (one sound per entity and channel, except auto and static), placement each frame (entities are followed; distance falloff scaled by attenuation over 1000 units, constant-power panning; the local player's own sounds are flat), mixing ahead `s_mixahead` seconds into SDL's queue with linear resampling (that's also the pitch), sentences word by word (pitch/volume/start/end, time compression skips the end of every 25 ms), mouths (voice loudness, 0..64), music (an MP3 streamed from memory; `cd` maps tracks to `media/*.mp3`), room echo presets for `room_type`, muffling under water, `s_record`, commands |
 | `snd_mem.c` | 383 | Loading: WAV (8/16/24-bit, float, any rate; the "cue" chunk's first point is the loop start), OGG/FLAC/MP3; a `.flac`/`.ogg` next to a `.wav` replaces it (the loop point still comes from the WAV); sentences.txt (directory prefixes, standalone and attached `(p v s e t)` options, `,` and `.` as `_comma`/`_period` words). The game sends sentences by number (`!806`) |
 | `snd_codecs.c` | 10 | The vendored decoders' implementations |
+| `r_shader.c` | 67 | GLSL programs from `base/shaders` (compile/link with the driver's log on failure) |
+| `r_modern.c` | 180 | The modern renderer: `r_renderer` selection and fallback, materials (`_n`/`_s`), the per-light additive pass state |
 | `r_main.c` | 371 | View: Hor+ FOV, projection, Quake modelview, frustum planes, `R_CullBox`; the noclip camera; commands `map`, `maps`, `disconnect`, `viewpos`, `setpos`, `texlist` |
 
 `base/lua/includes/init.lua` (231 lines) is the core Lua library (hook, timer, Color, draw helpers, string/table/math
@@ -468,9 +473,40 @@ only": `qbsp -hlbsp`, vis, light, copy to `bin/userdata/valve/maps`) and an engi
 Next for big maps, when wanted: coarser lightmaps outdoors (ericw-tools already writes a lightmap-scale BSPX lump;
 newen would read it), VIS hints for big open areas.
 
-**Renderer plan (design only, 2026-10-20): `docs/RENDERER_PLAN.md`.** An optional `r_renderer modern` path
-(per-pixel dynamic lights, normal/specular maps, shadow maps) beside the current renderer, which stays the default.
-Nothing in it is implemented; its section 8 lists the decisions the owner needs to make first.
+**Renderer plan: `docs/RENDERER_PLAN.md`.** An optional `r_renderer modern` path (per-pixel dynamic lights,
+normal/specular maps, shadow maps) beside the current renderer, which stays the default. The owner accepted every
+recommendation in its section 8 (2026-10-29) and said go. **Steps 0-5 are done (branch `modern-renderer`);
+stop here for the owner's visual review before step 6 (models), then shadows (7+).** What was built:
+- `r_renderer classic|modern` (archived, applied in `R_LoadMap` before `BSP_Load` via `R_SelectRenderer`), the
+  capability check (`LoadShaderExtensions` in `image.c`: GL 2.0 entry points, GLSL >= 1.20, 3 texture units and
+  coordinate sets), `r_modern_forcefail`, `r_rendererinfo`. Any failure prints the reason and draws classic.
+- `r_shader.c` loads `base/shaders/<name>.vert/.frag` through the filesystem (a copy in `userdata/<game>/shaders`
+  overrides it; the shaders are recompiled at every map load).
+- `r_modern.c`: the light pass. **Deviation from the plan's step 2:** the base pass stays the classic
+  fixed-function drawing (a shader version would only have reproduced it); modern adds one additive pass per light
+  per batch (`DrawLightPasses` in `r_world.c`) with `ftransform()` so depths match. Lighting is computed in the drawn
+  model's space (lights through `R_DlightSpace`), so brush entities need no matrices. Falloff is classic's
+  (radius - distance) / 255, times N.L, plus Blinn-Phong. See-through brush entities get no light pass.
+- In modern, lightmaps follow light styles only (`UpdateLightmap`, `BSP_BuildSurfaceLightmap` skip dynamic light),
+  so dynamic light isn't counted twice and there are no lightmap re-uploads for it.
+- `BuildModernStream` in `bsp.c`: a second VBO (`modernvert_t`: face normal, tangent along +s with the handedness of
+  the "up the image" bitangent), only for modern. Normals go through `glNormalPointer`, tangents through texture
+  coordinate set 2.
+- Materials `textures/<name>_n` / `_s` (`R_LoadMaterial`, `TF_DATA` = no texture gamma), modern only. The
+  material descriptor file the plan mentions isn't built (its syntax was never agreed); `r_gloss`/`r_specscale` are
+  global.
+- `r_testlight` (`r_light.c`): an engine-owned light added after the client's in `R_PushDlights`, so it works
+  without a game or client DLL.
+
+Verified (2026-10-29, RTX 3050): classic is pixel-identical to the pre-change build in c1a0d and c2a5 world shots
+(`r_drawentities 0`, `-nogamedll`, notify lines, FPS and watermark off; models animate, so full scenes aren't
+comparable), also with material files present. Modern with no dynamic light is pixel-identical too. A test light
+lights the world; the c1a0d door (func_door 39) moves under it; flat vs `tools/test_materials.py` maps differ and
+the shine moves with the light; uniform tilted normal maps (+X, +Y) brighten towards the right/up lights, so the
+tangent convention is right for unmirrored faces. A broken shader falls back to classic with the compiler's
+message. With the game and client DLLs, the HUD, view model and menus draw normally. Not checked: a client light
+(muzzle flash) on screen in modern (the scripted weapon switch didn't happen), mirrored texture alignments,
+performance numbers (`r_speeds` counts only).
 
 **Half-Life 2 maps plan (design only, 2026-10-22): `docs/SOURCE_PLAN.md`.** How to bring the owner's NewenSource
 project (`%USERPROFILE%\Documents\Codex\2026-10-18\let\outputs\NewenSource`, read only) into newen:

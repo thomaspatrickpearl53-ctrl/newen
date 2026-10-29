@@ -22,7 +22,12 @@ static drawsurf_t *drawsurfs;
 static int drawsurfs_count, drawsurfs_cap;
 static GLuint *indices;
 static int indices_cap;
-static int c_surfaces, c_batches, c_lmupdates;
+static int c_surfaces, c_batches, c_lmupdates, c_lightpasses;
+
+// modern: whether what DrawBatches draws now takes light passes (opaque or alpha-tested), and the viewer
+// in its space
+static qboolean lightpass_ok;
+static vec3_t lightpass_viewer;
 
 // ---------------------------------------------------------------- light styles
 
@@ -67,7 +72,8 @@ static void UpdateLightmap(msurface_t *s)
 {
 	if (!s->samples)
 		return;
-	qboolean lit = s->dlightframe == r_refdef.framecount;
+	// modern adds dynamic lights in their own passes, so its lightmaps only follow the light styles
+	qboolean lit = !r_modern && s->dlightframe == r_refdef.framecount;
 	qboolean changed = lit || s->dlit;   // a dynamic light is on it, or was last time
 	for (int m = 0; m < 4 && s->styles[m] != 255; m++)
 		if (s->cached_light[m] != lightstyle_value[s->styles[m] & 63])
@@ -264,6 +270,43 @@ static void DrawWaterSurface(const msurface_t *s, const texture_t *tx, float alp
 	glColor4f(1, 1, 1, 1);
 }
 
+// Modern: one additive pass per dynamic light that reaches any surface of the batch [first, last)
+static void DrawLightPasses(int first, int last, const texture_t *tx)
+{
+	unsigned bits = 0;
+	for (int k = first; k < last; k++) {
+		const msurface_t *s = drawsurfs[k].surf;
+		if (!(s->flags & (SURF_WATER | SURF_SKY)) && s->dlightframe == r_refdef.framecount)
+			bits |= s->dlightbits;
+	}
+	if (!bits)
+		return;
+	R_ModernBeginLights(tx, lightpass_viewer);
+	int count = R_DlightCount();
+	for (int i = 0; i < count; i++) {
+		unsigned bit = 1u << i;
+		if (!(bits & bit))
+			continue;
+		int n = 0;
+		for (int k = first; k < last; k++) {
+			const msurface_t *s = drawsurfs[k].surf;
+			if ((s->flags & (SURF_WATER | SURF_SKY)) || s->dlightframe != r_refdef.framecount || !(s->dlightbits & bit))
+				continue;
+			for (int v = 2; v < s->numverts; v++) {
+				indices[n++] = s->firstvert;
+				indices[n++] = s->firstvert + v - 1;
+				indices[n++] = s->firstvert + v;
+			}
+		}
+		if (!n)
+			continue;
+		R_ModernSetLight(i);
+		glDrawElements(GL_TRIANGLES, n, GL_UNSIGNED_INT, indices);
+		c_lightpasses++;
+	}
+	R_ModernEndLights();
+}
+
 // Draws the collected surfaces in texture/lightmap batches
 static void DrawBatches(float alpha)
 {
@@ -317,6 +360,10 @@ static void DrawBatches(float alpha)
 			if (tx->kind == TEXKIND_ALPHA)
 				glDisable(GL_ALPHA_TEST);
 			c_batches++;
+			if (r_modern && lightpass_ok && !r_fullbright->value && !r_lightmap->value) {
+				DrawLightPasses(i, j, tx);
+				BindLightmap(key & 0xffff);
+			}
 		}
 		i = j;
 	}
@@ -558,7 +605,11 @@ static void DrawBrushEntity(const brushent_t *b)
 		glAlphaFunc(GL_GREATER, 0.25f);
 		break;
 	}
+	// see-through modes blend, so a light added on top would show twice; they stay without dynamic light
+	lightpass_ok = b->rendermode == kRenderNormal || b->rendermode == kRenderTransAlpha;
+	VectorCopy(local, lightpass_viewer);
 	DrawBatches(alpha);
+	lightpass_ok = false;
 	if (b->rendermode == kRenderNormal || b->rendermode == kRenderTransAlpha) {
 		R_DrawDecals(m->firstface, m->numfaces, local, false);
 		SetupArrays();
@@ -678,7 +729,7 @@ void R_NewMap(void)
 
 void R_DrawWorld(void)
 {
-	c_surfaces = c_batches = c_lmupdates = 0;
+	c_surfaces = c_batches = c_lmupdates = c_lightpasses = 0;
 	R_AnimateLightStyles(r_refdef.time);
 	viewleaf = BSP_PointInLeaf(r_refdef.origin);
 	MarkLeaves();
@@ -699,7 +750,10 @@ void R_DrawWorld(void)
 	if (r_drawworld->value && world.numnodes) {
 		RecursiveWorldNode(&world.nodes[0]);
 		DrawSkyDepth();
+		lightpass_ok = true;
+		VectorCopy(r_refdef.origin, lightpass_viewer);
 		DrawBatches(1.0f);
+		lightpass_ok = false;
 		R_DrawDecals(world.submodels[0].firstface, world.submodels[0].numfaces, r_refdef.origin, true);
 		SetupArrays();
 	}
@@ -711,6 +765,11 @@ void R_DrawWorld(void)
 	qglActiveTexture(GL_TEXTURE0);
 	glDisable(GL_CULL_FACE);
 
-	if (r_speeds->value)
-		Con_Printf("%d surfaces, %d batches, %d lightmap updates\n", c_surfaces, c_batches, c_lmupdates);
+	if (r_speeds->value) {
+		if (r_modern)
+			Con_Printf("%d surfaces, %d batches, %d lightmap updates, %d light passes (%d lights)\n", c_surfaces, c_batches,
+				c_lmupdates, c_lightpasses, R_DlightCount());
+		else
+			Con_Printf("%d surfaces, %d batches, %d lightmap updates\n", c_surfaces, c_batches, c_lmupdates);
+	}
 }

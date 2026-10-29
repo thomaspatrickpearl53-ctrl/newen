@@ -29,6 +29,7 @@ typedef struct texture_s {
 	int   anim_total, anim_min, anim_max;   // '+' animated textures, 10 frames per second
 	struct texture_s *anim_next;
 	struct texture_s *alternate_anims;
+	gltexture_t *normalmap, *specmap;   // modern renderer: textures/<name>_n and _s, NULL = flat and matte
 } texture_t;
 
 typedef struct {
@@ -42,6 +43,12 @@ typedef struct {
 	float st[2];
 	float lm[2];
 } worldvert_t;
+
+// modern renderer only: a second stream beside world.verts, same order
+typedef struct {
+	float normal[3];
+	float tangent[4];   // xyz along +s, w = handedness of the +Y (up the image) bitangent
+} modernvert_t;
 
 #define SURF_PLANEBACK (1<<0)
 #define SURF_SKY       (1<<1)
@@ -117,6 +124,7 @@ typedef struct {
 	mclipnode_t *clipnodes0;                           // hull 0 (points), built from the render nodes
 	worldvert_t *verts;           int numverts;
 	GLuint       vbo;             // verts on the GPU
+	GLuint       modern_vbo;      // modernvert_t per vert, only with the modern renderer
 	unsigned char *visdata;       size_t vissize;
 	unsigned char *lightdata;     size_t lightsize;
 	bspentity_t *entities;        int numentities;
@@ -150,6 +158,16 @@ void        R_DlightSpace(const float *origin, const float *angles);   // a brus
 void        R_MarkSurfaceDlights(msurface_t *s);                  // marks one of a brush entity's surfaces
 void        R_SurfaceDlights(const msurface_t *s, int *blocks);   // adds them to a lightmap being built
 void        R_AnimateLightStyles(double time);
+void        R_InitLights(void);
+int         R_DlightCount(void);
+// light i in the space set by R_DlightSpace
+void        R_GetDlight(int i, float *local_origin, float *radius, float *color);
+
+// modern renderer (r_modern.c): per-pixel dynamic light passes over already drawn surfaces
+void        R_LoadMaterial(texture_t *tx);
+void        R_ModernBeginLights(const texture_t *tx, const float *vieworg);   // vieworg in the drawn model's space
+void        R_ModernSetLight(int i);
+void        R_ModernEndLights(void);
 // true if any leaf the box touches is in the current view's PVS (r_world.c)
 qboolean    R_BoxVisible(const vec3_t mins, const vec3_t maxs);
 

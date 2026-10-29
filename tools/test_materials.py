@@ -1,0 +1,73 @@
+# Makes rough test materials for the modern renderer (r_renderer modern) from a map's own textures:
+# textures/<name>_n.png (a normal map guessed from the texture's brightness) and textures/<name>_s.png (specular).
+# They are only for trying the renderer out; real materials are drawn by hand or baked from real height data.
+#   python tools/test_materials.py <halflife folder> <map> <out folder> [strength] [name filter]
+# e.g. python tools/test_materials.py "C:/Program Files (x86)/Steam/steamapps/common/Half-Life" c1a0d bin/userdata/valve/textures
+import fnmatch, os, struct, sys
+import numpy as np
+from PIL import Image
+
+hl, mapname, out = sys.argv[1], sys.argv[2], sys.argv[3]
+strength = float(sys.argv[4]) if len(sys.argv) > 4 else 3.0
+pattern = sys.argv[5] if len(sys.argv) > 5 else '*'
+
+def miptex_rgb(data, ofs):
+    name = data[ofs:ofs + 16].split(b'\0')[0].decode('latin-1')
+    w, h, o0, o1, o2, o3 = struct.unpack_from('<6I', data, ofs + 16)
+    if not o0:
+        return name, None
+    pix = np.frombuffer(data, np.uint8, w * h, ofs + o0).reshape(h, w)
+    pal_ofs = ofs + o3 + (w // 8) * (h // 8) + 2
+    pal = np.frombuffer(data, np.uint8, 768, pal_ofs).reshape(256, 3)
+    return name, pal[pix]
+
+bsp = open(os.path.join(hl, 'valve', 'maps', mapname + '.bsp'), 'rb').read()
+assert struct.unpack_from('<i', bsp, 0)[0] == 30, 'BSP30 maps only'
+lumps = [struct.unpack_from('<ii', bsp, 4 + i * 8) for i in range(15)]
+ents = bsp[lumps[0][0]:lumps[0][0] + lumps[0][1]].decode('latin-1')
+tex_ofs = lumps[2][0]
+count = struct.unpack_from('<i', bsp, tex_ofs)[0]
+images = {}
+for i in range(count):
+    o = struct.unpack_from('<i', bsp, tex_ofs + 4 + i * 4)[0]
+    if o < 0:
+        continue
+    name, rgb = miptex_rgb(bsp, tex_ofs + o)
+    images[name.lower()] = rgb
+
+# textures that aren't embedded come from the worldspawn's WADs
+wadkey = ents.split('"wad"', 1)[1].split('"')[1] if '"wad"' in ents else ''
+for w in wadkey.split(';'):
+    base = os.path.basename(w.replace('\\', '/'))
+    if not base:
+        continue
+    path = os.path.join(hl, 'valve', base)
+    if not os.path.exists(path):
+        continue
+    wad = open(path, 'rb').read()
+    n, info = struct.unpack_from('<ii', wad, 4)
+    for i in range(n):
+        filepos, _, _, typ, comp = struct.unpack_from('<iiibb', wad, info + i * 32)
+        name = wad[info + i * 32 + 16:info + i * 32 + 32].split(b'\0')[0].decode('latin-1').lower()
+        if typ == 0x43 and not comp and name in images and images[name] is None:
+            images[name] = miptex_rgb(wad, filepos)[1]
+
+os.makedirs(out, exist_ok=True)
+made = 0
+for name, rgb in sorted(images.items()):
+    if rgb is None or name[0] in '!*+-{' or name.startswith(('sky', 'water', 'aaa', 'origin', 'clip')):
+        continue
+    if not fnmatch.fnmatch(name, pattern):
+        continue
+    height = rgb.astype(np.float32).mean(axis=2) / 255.0
+    # wrapping differences, since world textures tile
+    dx = (np.roll(height, -1, 1) - np.roll(height, 1, 1)) * 0.5 * strength
+    dy = (np.roll(height, -1, 0) - np.roll(height, 1, 0)) * 0.5 * strength
+    # +Y points up the image, so a height rising downwards (dy > 0) tilts the normal up
+    nrm = np.stack([-dx, dy, np.ones_like(height)], axis=2)
+    nrm /= np.linalg.norm(nrm, axis=2, keepdims=True)
+    Image.fromarray(((nrm * 0.5 + 0.5) * 255).astype(np.uint8)).save(os.path.join(out, name + '_n.png'))
+    spec = (np.clip(height * 1.2 - 0.2, 0, 1) * 160).astype(np.uint8)
+    Image.fromarray(spec).convert('RGB').save(os.path.join(out, name + '_s.png'))
+    made += 1
+print(f'{made} test materials written to {out}')

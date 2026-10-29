@@ -46,6 +46,25 @@ pages, coordinates beyond +-4096.
 HD textures: put `textures/<name>.png` (or .tga/.jpg/.bmp) in a game folder or in `bin\userdata\<game>\` and it
 replaces that texture at any resolution. `texlist` shows the names.
 
+### Modern renderer (optional)
+
+`r_renderer modern` (then `reload` or the next map) adds per-pixel dynamic lights on top of the normal look:
+muzzle flashes, explosions and other dynamic lights shade each pixel smoothly instead of brightening the
+lightmap in 16-unit blocks. The map's own baked lighting is unchanged. `r_renderer classic` (the default) draws
+exactly as before. If the graphics driver can't run it or a shader fails, newen says why and draws classic;
+`r_rendererinfo` shows which renderer is drawing.
+
+Materials, modern only: next to a texture's name, `textures/<name>_n.png` is a tangent-space normal map (+Y, the
+OpenGL convention) and `textures/<name>_s.png` a specular map (brightness = shine strength). Textures without them
+stay flat and matte. They react to dynamic lights only, since Half-Life's lightmaps have no light direction.
+`tools/test_materials.py` makes rough test maps from a map's own textures for trying it out.
+
+- `r_dlightscale` (brightness of dynamic lights), `r_gloss` (shine sharpness, default 32), `r_specscale`.
+- `r_testlight <x y z radius> [r g b]`, `r_testlight here [radius]`, `r_testlight off`: an engine light for
+  testing, in both renderers; `r_testlight_orbit <distance>` makes it circle its point.
+- Not in modern yet: models (they keep classic lighting), shadows, decals and see-through brush entities
+  under dynamic light.
+
 ## Game DLL (server)
 
 newen loads the mod's game DLL (`gamedll` in `liblist.gam`, so `valve/dlls/hl.dll` for Half-Life) through the

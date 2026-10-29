@@ -25,6 +25,36 @@ void GL_LoadExtensions(void);
 extern float gl_max_anisotropy;
 extern int   gl_max_texture_size;
 
+// GLSL entry points, loaded when the driver has them (only the modern renderer uses them)
+extern PFNGLCREATESHADERPROC      qglCreateShader;
+extern PFNGLSHADERSOURCEPROC      qglShaderSource;
+extern PFNGLCOMPILESHADERPROC     qglCompileShader;
+extern PFNGLGETSHADERIVPROC       qglGetShaderiv;
+extern PFNGLGETSHADERINFOLOGPROC  qglGetShaderInfoLog;
+extern PFNGLDELETESHADERPROC      qglDeleteShader;
+extern PFNGLCREATEPROGRAMPROC     qglCreateProgram;
+extern PFNGLATTACHSHADERPROC      qglAttachShader;
+extern PFNGLLINKPROGRAMPROC       qglLinkProgram;
+extern PFNGLGETPROGRAMIVPROC      qglGetProgramiv;
+extern PFNGLGETPROGRAMINFOLOGPROC qglGetProgramInfoLog;
+extern PFNGLDELETEPROGRAMPROC     qglDeleteProgram;
+extern PFNGLUSEPROGRAMPROC        qglUseProgram;
+extern PFNGLGETUNIFORMLOCATIONPROC qglGetUniformLocation;
+extern PFNGLUNIFORM1IPROC         qglUniform1i;
+extern PFNGLUNIFORM1FPROC         qglUniform1f;
+extern PFNGLUNIFORM3FPROC         qglUniform3f;
+extern qboolean gl_shaders;            // everything the modern renderer needs is there
+extern char     gl_shaders_missing[128];   // why not, when it isn't
+
+// ---------------------------------------------------------------- shaders (r_shader.c)
+GLuint R_LoadProgram(const char *name);   // shaders/<name>.vert + .frag; 0 on failure (the log says why)
+void   R_FreeProgram(GLuint *prog);
+
+// ---------------------------------------------------------------- modern renderer (r_modern.c)
+extern qboolean r_modern;   // the loaded map is drawn by the modern renderer (chosen at map load)
+void R_ModernInitCvars(void);
+void R_SelectRenderer(void);
+
 // ---------------------------------------------------------------- textures (image.c)
 #define TF_MIPMAP   (1<<0)
 #define TF_CLAMP    (1<<1)
@@ -32,6 +62,7 @@ extern int   gl_max_texture_size;
 #define TF_WORLD    (1<<3)   // freed when the map changes
 #define TF_ALPHA    (1<<4)   // has transparent pixels
 #define TF_MODEL    (1<<5)   // studio model or sprite skin; freed with the model cache
+#define TF_DATA     (1<<6)   // not a colour (normal/specular map): no texture gamma
 
 typedef struct gltexture_s {
 	char   name[64];

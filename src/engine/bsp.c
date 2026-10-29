@@ -385,6 +385,8 @@ static qboolean LoadTextures(void)
 		tx->gl = LoadTextureImage(tx, embedded, (size_t)len - offsets[i]);
 		if (tx->gl->hd)
 			hd++;
+		if (tx->kind != TEXKIND_WATER)
+			R_LoadMaterial(tx);
 	}
 	LinkAnimations();
 	if (hd)
@@ -603,7 +605,7 @@ void BSP_BuildSurfaceLightmap(msurface_t *s, unsigned char *dest, int stride)
 			lm += size * 3;
 		}
 	}
-	if (s->dlightframe == r_refdef.framecount)
+	if (s->dlightframe == r_refdef.framecount && !r_modern)
 		R_SurfaceDlights(s, blocks);
 
 	const int *b = blocks;
@@ -892,10 +894,55 @@ static void SetupLightStyles(void)
 	}
 }
 
+// ---------------------------------------------------------------- modern renderer stream
+
+// Normals and tangents for per-pixel light. The tangent follows the texture's s axis along the face; the
+// bitangent's handedness is stored for "up the image" (decreasing t), which is what +Y normal maps mean.
+static void BuildModernStream(void)
+{
+	modernvert_t *mv = Mem_Alloc(sizeof(modernvert_t) * (world.numverts ? world.numverts : 1));
+	for (int i = 0; i < world.numsurfaces; i++) {
+		const msurface_t *s = &world.surfaces[i];
+		if (!s->numverts)
+			continue;
+		vec3_t n, t, b, up, c;
+		VectorCopy(s->plane->normal, n);
+		if (s->flags & SURF_PLANEBACK)
+			VectorScale(n, -1, n);
+		const float *sa = s->texinfo->vecs[0], *ta = s->texinfo->vecs[1];
+		VectorMA(sa, -DotProduct(sa, n), n, t);
+		VectorMA(ta, -DotProduct(ta, n), n, b);
+		if (VectorNormalize(t) < 1e-6f) {
+			// the s axis is along the normal (a broken texinfo): any direction in the face will do
+			vec3_t any = { fabsf(n[2]) < 0.9f ? 0.0f : 1.0f, 0, fabsf(n[2]) < 0.9f ? 1.0f : 0.0f };
+			CrossProduct(any, n, t);
+			VectorNormalize(t);
+		}
+		if (VectorNormalize(b) < 1e-6f)
+			CrossProduct(n, t, b);
+		VectorScale(b, -1, up);
+		CrossProduct(n, t, c);
+		float w = DotProduct(c, up) < 0 ? -1.0f : 1.0f;
+		for (int j = 0; j < s->numverts; j++) {
+			modernvert_t *v = &mv[s->firstvert + j];
+			VectorCopy(n, v->normal);
+			VectorCopy(t, v->tangent);
+			v->tangent[3] = w;
+		}
+	}
+	qglGenBuffers(1, &world.modern_vbo);
+	qglBindBuffer(GL_ARRAY_BUFFER, world.modern_vbo);
+	qglBufferData(GL_ARRAY_BUFFER, (ptrdiff_t)sizeof(modernvert_t) * world.numverts, mv, GL_STATIC_DRAW);
+	qglBindBuffer(GL_ARRAY_BUFFER, 0);
+	Mem_Free(mv);
+}
+
 void BSP_Free(void)
 {
 	if (world.vbo)
 		qglDeleteBuffers(1, &world.vbo);
+	if (world.modern_vbo)
+		qglDeleteBuffers(1, &world.modern_vbo);
 	if (world.lightmaps && world.numlightmaps)
 		glDeleteTextures(world.numlightmaps, world.lightmaps);
 	for (int i = 0; i < world.numlightmaps; i++)
@@ -1014,6 +1061,8 @@ qboolean BSP_Load(const char *mapname)
 	qglBindBuffer(GL_ARRAY_BUFFER, world.vbo);
 	qglBufferData(GL_ARRAY_BUFFER, (ptrdiff_t)sizeof(worldvert_t) * world.numverts, world.verts, GL_STATIC_DRAW);
 	qglBindBuffer(GL_ARRAY_BUFFER, 0);
+	if (r_modern)
+		BuildModernStream();
 	world.loaded = true;
 
 	Con_Printf("Loaded %s in %.0f ms: %d faces, %d leafs, %d textures, %d brush models, %d entities, %d lightmap page%s\n",
