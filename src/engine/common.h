@@ -226,6 +226,7 @@ void        R_Shutdown(void);
 void        R_UpdateCamera(void);
 void        R_RenderView(void);
 const char *R_CurrentMap(void);
+void        R_ShadowDrawDebug(void);   // r_shadow.c: r_shadow_debug's view of the shadow map (2D)
 
 // ---------------------------------------------------------------- server (sv_main.c)
 void     SV_Init(void);               // loads the game DLL

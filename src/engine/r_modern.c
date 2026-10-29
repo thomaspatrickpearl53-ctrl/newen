@@ -8,7 +8,7 @@ static cvar_t *r_renderer, *r_modern_forcefail, *r_dlightscale, *r_gloss, *r_spe
 static char fallback[160];   // why modern was asked for but classic is drawing
 
 static GLuint light_prog;
-static GLint u_lightorg, u_vieworg, u_lightcolor, u_radius, u_gloss, u_specscale;
+static GLint u_lightorg, u_vieworg, u_lightcolor, u_radius, u_gloss, u_specscale, u_shadow, u_shadowinfo, u_rot;
 static gltexture_t *flat_normal, *no_specular;
 static int materials_n, materials_s;
 
@@ -31,10 +31,14 @@ static qboolean ModernInit(void)
 	u_radius = qglGetUniformLocation(light_prog, "u_radius");
 	u_gloss = qglGetUniformLocation(light_prog, "u_gloss");
 	u_specscale = qglGetUniformLocation(light_prog, "u_specscale");
+	u_shadow = qglGetUniformLocation(light_prog, "u_shadow");
+	u_shadowinfo = qglGetUniformLocation(light_prog, "u_shadowinfo");
+	u_rot = qglGetUniformLocation(light_prog, "u_rot");
 	qglUseProgram(light_prog);
 	qglUniform1i(qglGetUniformLocation(light_prog, "u_diffuse"), 0);
 	qglUniform1i(qglGetUniformLocation(light_prog, "u_normalmap"), 1);
 	qglUniform1i(qglGetUniformLocation(light_prog, "u_specmap"), 2);
+	qglUniform1i(qglGetUniformLocation(light_prog, "u_shadowmap"), 3);
 	qglUseProgram(0);
 
 	if (!flat_normal) {
@@ -78,6 +82,7 @@ static void RendererInfo_f(void)
 	Con_Printf("requested: %s\ndrawing: %s%s%s\n", r_renderer->string, r_modern ? "modern" : "classic",
 		fallback[0] ? " - modern isn't available: " : "", fallback);
 	Con_Printf("shaders: %s\n", gl_shaders ? "available" : gl_shaders_missing);
+	Con_Printf("shadow maps: %s\n", gl_fbo ? "available" : gl_fbo_missing);
 	if (r_modern)
 		Con_Printf("this map: %d normal maps, %d specular maps\n", materials_n, materials_s);
 	Con_Printf("r_renderer applies at the next map load (\"reload\")\n");
@@ -139,8 +144,14 @@ void R_LoadModelMaterial(const char *model, const char *texture, gltexture_t **n
 
 // The surfaces are already drawn with the lightmap (which has no dynamic light in modern);
 // each light adds its own pass, depth-tested against them.
-void R_ModernBeginLights(GLuint diffuse, const gltexture_t *normalmap, const gltexture_t *specmap, const float *vieworg)
+void R_ModernBeginLights(GLuint diffuse, const gltexture_t *normalmap, const gltexture_t *specmap, const float *vieworg,
+	const float *rot)
 {
+	static const float identity[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+	if (R_ShadowLight() >= 0) {
+		qglActiveTexture(GL_TEXTURE3);
+		glBindTexture(GL_TEXTURE_2D, R_ShadowTexture());
+	}
 	qglActiveTexture(GL_TEXTURE1);
 	glBindTexture(GL_TEXTURE_2D, normalmap ? normalmap->id : flat_normal->id);
 	qglActiveTexture(GL_TEXTURE2);
@@ -155,6 +166,7 @@ void R_ModernBeginLights(GLuint diffuse, const gltexture_t *normalmap, const glt
 	qglUniform3f(u_vieworg, vieworg[0], vieworg[1], vieworg[2]);
 	qglUniform1f(u_gloss, r_gloss->value > 1 ? r_gloss->value : 1);
 	qglUniform1f(u_specscale, r_specscale->value);
+	qglUniformMatrix3fv(u_rot, 1, GL_FALSE, rot ? rot : identity);
 }
 
 void R_ModernSetLight(int i)
@@ -166,6 +178,14 @@ void R_ModernSetLight(int i)
 	qglUniform3f(u_lightorg, org[0], org[1], org[2]);
 	qglUniform1f(u_radius, radius);
 	qglUniform3f(u_lightcolor, color[0] * scale, color[1] * scale, color[2] * scale);
+	qboolean shadowed = i == R_ShadowLight();
+	qglUniform1f(u_shadow, shadowed ? 1.0f : 0.0f);
+	if (shadowed) {
+		float znear, zfar, bias;
+		int size;
+		R_ShadowParams(&znear, &zfar, &bias, &size);
+		qglUniform4f(u_shadowinfo, znear, zfar, bias, 1.0f / size);
+	}
 }
 
 // Back to the fixed-function state the classic drawing expects (the caller rebinds its lightmap)
@@ -175,6 +195,8 @@ void R_ModernEndLights(void)
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	qglActiveTexture(GL_TEXTURE3);
+	glBindTexture(GL_TEXTURE_2D, 0);
 	qglActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	qglActiveTexture(GL_TEXTURE0);

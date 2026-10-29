@@ -561,7 +561,7 @@ static void DrawLightPasses(const studiotex_t *tex, const studiomesh_t *mesh, in
 	else
 		glTexCoordPointer(3, GL_FLOAT, 0, arr_norm);   // unused without a normal map; anything valid
 	qglClientActiveTexture(GL_TEXTURE0);
-	R_ModernBeginLights(tex->gl->id, normalmap, tex->specmap, r_refdef.origin);
+	R_ModernBeginLights(tex->gl->id, normalmap, tex->specmap, r_refdef.origin, NULL);
 	for (int i = 0; i < light->numlights; i++) {
 		R_ModernSetLight(light->lights[i]);
 		glDrawArrays(GL_TRIANGLES, 0, n);

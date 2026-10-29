@@ -358,6 +358,7 @@ void R_Init(void)
 	Image_Init();
 	R_ModernInitCvars();
 	R_InitLights();
+	R_InitShadows();
 	R_InitWorld();
 	Mod_Init();
 	R_StudioInit();

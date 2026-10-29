@@ -28,6 +28,8 @@ static int c_surfaces, c_batches, c_lmupdates, c_lightpasses;
 // in its space
 static qboolean lightpass_ok;
 static vec3_t lightpass_viewer;
+static qboolean lightpass_rotated;   // a turned brush entity: its axes as columns, for the shadow lookup
+static float lightpass_rot[9];
 
 // ---------------------------------------------------------------- light styles
 
@@ -290,7 +292,8 @@ static void DrawLightPasses(int first, int last, const texture_t *tx)
 	glTexCoordPointer(4, GL_FLOAT, sizeof(modernvert_t), (void *)offsetof(modernvert_t, tangent));
 	qglClientActiveTexture(GL_TEXTURE0);
 	qglBindBuffer(GL_ARRAY_BUFFER, world.vbo);
-	R_ModernBeginLights(tx->gl ? tx->gl->id : GL_MissingTexture()->id, tx->normalmap, tx->specmap, lightpass_viewer);
+	R_ModernBeginLights(tx->gl ? tx->gl->id : GL_MissingTexture()->id, tx->normalmap, tx->specmap, lightpass_viewer,
+		lightpass_rotated ? lightpass_rot : NULL);
 	int count = R_DlightCount();
 	for (int i = 0; i < count; i++) {
 		unsigned bit = 1u << i;
@@ -617,8 +620,18 @@ static void DrawBrushEntity(const brushent_t *b)
 	// see-through modes blend, so a light added on top would show twice; they stay without dynamic light
 	lightpass_ok = b->rendermode == kRenderNormal || b->rendermode == kRenderTransAlpha;
 	VectorCopy(local, lightpass_viewer);
+	lightpass_rotated = rotated;
+	if (rotated) {
+		vec3_t f, r, u;
+		AngleVectors(b->angles, f, r, u);
+		for (int i = 0; i < 3; i++) {
+			lightpass_rot[i] = f[i];
+			lightpass_rot[3 + i] = -r[i];
+			lightpass_rot[6 + i] = u[i];
+		}
+	}
 	DrawBatches(alpha);
-	lightpass_ok = false;
+	lightpass_ok = lightpass_rotated = false;
 	if (b->rendermode == kRenderNormal || b->rendermode == kRenderTransAlpha) {
 		R_DrawDecals(m->firstface, m->numfaces, local, false);
 		SetupArrays();
@@ -743,6 +756,7 @@ void R_DrawWorld(void)
 	viewleaf = BSP_PointInLeaf(r_refdef.origin);
 	MarkLeaves();
 	R_PushDlights();
+	R_RenderShadows();
 
 	glEnable(GL_DEPTH_TEST);
 	glDepthFunc(GL_LEQUAL);

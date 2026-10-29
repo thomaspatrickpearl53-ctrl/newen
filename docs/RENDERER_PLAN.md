@@ -1,8 +1,8 @@
 # Renderer plan: optional modern lighting
 
-**Status 2026-10-29:** the owner accepted every recommendation in section 8. Steps 0-6 are implemented (the owner
+**Status 2026-10-29:** the owner accepted every recommendation in section 8. Steps 0-7 are implemented (the owner
 reviewed 0-5); see HANDOFF.md section 9 for what was built, how it was verified and where it departs from this plan
-(the base pass stayed fixed-function; no material descriptor yet). Next: step 7, shadows.
+(the base pass stayed fixed-function; no material descriptor yet). Next: step 8 (masked and moving brush casters).
 
 Design only, based on the current source inspected on 2026-10-20. None of the proposed renderer
 features, commands or cvars below are implemented by this document. The only change authorized for

@@ -4,8 +4,8 @@ Everything someone new needs to pick this project up: what it is, what was decid
 out, how to build and test it, what works, what doesn't, and what comes next. Read `README.md` first for the
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
-2026-10-29: **the modern renderer's steps 0-6 are built on branch `modern-renderer`** (section 9, "Renderer plan");
-shadows (step 7) are next.
+2026-10-29: **the modern renderer's steps 0-7 are built on branch `modern-renderer`** (section 9, "Renderer plan");
+shadow casters beyond the world (step 8) are next.
 
 Status as of 2026-10-22: **Phase 1 is done. Phase 2 started with big maps: the ±32768 check, the NBSP format,
 the compiler and a TrenchBroom configuration are done, and so are closed captions (section 9). Designs for an
@@ -202,7 +202,8 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `snd_mem.c` | 383 | Loading: WAV (8/16/24-bit, float, any rate; the "cue" chunk's first point is the loop start), OGG/FLAC/MP3; a `.flac`/`.ogg` next to a `.wav` replaces it (the loop point still comes from the WAV); sentences.txt (directory prefixes, standalone and attached `(p v s e t)` options, `,` and `.` as `_comma`/`_period` words). The game sends sentences by number (`!806`) |
 | `snd_codecs.c` | 10 | The vendored decoders' implementations |
 | `r_shader.c` | 67 | GLSL programs from `base/shaders` (compile/link with the driver's log on failure) |
-| `r_modern.c` | 185 | The modern renderer: `r_renderer` selection and fallback, materials (`_n`/`_s`), the per-light additive pass state |
+| `r_shadow.c` | 275 | Shadow maps: one light's six depth views in a 3x2 atlas (FBO), world casters, `r_shadow_debug` |
+| `r_modern.c` | 207 | The modern renderer: `r_renderer` selection and fallback, materials (`_n`/`_s`), the per-light additive pass state |
 | `r_main.c` | 371 | View: Hor+ FOV, projection, Quake modelview, frustum planes, `R_CullBox`; the noclip camera; commands `map`, `maps`, `disconnect`, `viewpos`, `setpos`, `texlist` |
 
 `base/lua/includes/init.lua` (231 lines) is the core Lua library (hook, timer, Color, draw helpers, string/table/math
@@ -475,8 +476,9 @@ newen would read it), VIS hints for big open areas.
 
 **Renderer plan: `docs/RENDERER_PLAN.md`.** An optional `r_renderer modern` path (per-pixel dynamic lights,
 normal/specular maps, shadow maps) beside the current renderer, which stays the default. The owner accepted every
-recommendation in its section 8 (2026-10-29) and said go. **Steps 0-6 are done (branch `modern-renderer`); the
-owner reviewed 0-5 in game ("it works") and said continue. Next: shadows (step 7+).** What was built:
+recommendation in its section 8 (2026-10-29) and said go. **Steps 0-7 are done (branch `modern-renderer`); the
+owner reviewed 0-5 in game ("it works") and said continue. Next: step 8 (doors and `{` fences cast shadows), then 9
+(models cast), 10 (several shadow lights, choosing among the client's lights).** What was built:
 - `r_renderer classic|modern` (archived, applied in `R_LoadMap` before `BSP_Load` via `R_SelectRenderer`), the
   capability check (`LoadShaderExtensions` in `image.c`: GL 2.0 entry points, GLSL >= 1.20, 3 texture units and
   coordinate sets), `r_modern_forcefail`, `r_rendererinfo`. Any failure prints the reason and draws classic.
@@ -506,6 +508,19 @@ owner reviewed 0-5 in game ("it works") and said continue. Next: shadows (step 7
   share tangents per vertex+UV). Chrome meshes ignore their normal map (their UVs follow the view).
   Materials: `models/textures/<model>/<texture>_n` / `_s` (`R_LoadModelMaterial`, `TF_MODEL` lifetime).
   `tools/test_materials.py` takes `models/<x>.mdl` too.
+- Step 7, shadows (`r_shadow.c`, `Shadow()` in `light.frag`): `R_RenderShadows` runs in `R_DrawWorld` after
+  `R_PushDlights`, for the first light flagged `shadow` (only `r_testlight` sets it; client lights have no
+  identity yet, so picking among them is step 10). Six 90-degree views into one `GL_DEPTH_COMPONENT24` texture,
+  3x2 tiles of `r_shadow_size` (256), through an FBO (`gl_fbo`: ARB_framebuffer_object entry points and a 4th
+  texture unit, checked in `LoadShaderExtensions`; without it modern runs unshadowed and `r_rendererinfo` says
+  why). Casters: opaque world faces in the light's sphere from a BSP walk that ignores the camera's PVS; both sides
+  drawn, polygon offset 1.5/2. The shader picks the tile by the major axis (same face table as `r_shadow.c`),
+  turns the stored depth back into distance, compares with 4 nearest samples clamped inside the tile, and looks up
+  a little off the surface along the face normal (1-3 shadow pixels, more at grazing angles): without that normal
+  offset whole walls shadowed themselves. `r_shadow_bias` (1 unit) on top. Brush entities pass their rotation
+  (`u_rot`) so turned doors look up the right direction. A light inside a wall is drawn unshadowed with a warning.
+  `r_shadow_debug 1` shows the atlas (2D, after the 3D view), 2 also prints caster counts. The previous main view's
+  matrices and viewport are pushed and restored around the depth pass.
 
 Verified (2026-10-29, RTX 3050): classic is pixel-identical to the pre-change build in c1a0d and c2a5 world shots
 (`r_drawentities 0`, `-nogamedll`, notify lines, FPS and watermark off; models animate, so full scenes aren't
@@ -516,9 +531,13 @@ tangent convention is right for unmirrored faces. A broken shader falls back to 
 message. With the game and client DLLs, the HUD, view model and menus draw normally. Step 6: classic world shots
 still pixel-identical; c1a0d's scientists are lit from the side the light is on (a strong red light reddens their
 faces and shoes; white coats are already at full red); with scientist test maps only the scientists' pixels
-change. Not checked: a client light (muzzle flash) on screen in modern (the scripted weapon switch didn't happen),
-mirrored texture alignments, bodygroup/skin changes and chrome under a light, performance numbers (`r_speeds`
-counts world passes only).
+change. Step 7: classic and modern-without-lights still pixel-identical; c1a0d's lab table (a world brush) shadows
+the floor under it (light at -2330 1030 -195); in the box-shaped room by func_door 39 only the strip of door the
+frame hides changes with shadows on, so the six views meet without false shadows; a light at -2280 1300 -240 is
+reported inside a wall; with the game DLL the debug atlas and the scene draw normally. Not checked: a client light
+(muzzle flash) on screen in modern (the scripted weapon switch didn't happen), mirrored texture alignments,
+bodygroup/skin changes and chrome under a light, performance numbers (`r_speeds` counts world passes only), shadows
+on rotated brush entities, very large lights (the far plane is the radius; precision past ~1000 units untested).
 
 **Half-Life 2 maps plan (design only, 2026-10-22): `docs/SOURCE_PLAN.md`.** How to bring the owner's NewenSource
 project (`%USERPROFILE%\Documents\Codex\2026-10-18\let\outputs\NewenSource`, read only) into newen:

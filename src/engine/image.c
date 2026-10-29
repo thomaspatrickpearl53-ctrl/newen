@@ -39,8 +39,17 @@ PFNGLGETUNIFORMLOCATIONPROC qglGetUniformLocation;
 PFNGLUNIFORM1IPROC         qglUniform1i;
 PFNGLUNIFORM1FPROC         qglUniform1f;
 PFNGLUNIFORM3FPROC         qglUniform3f;
+PFNGLUNIFORM4FPROC         qglUniform4f;
+PFNGLUNIFORMMATRIX3FVPROC  qglUniformMatrix3fv;
 qboolean gl_shaders;
 char     gl_shaders_missing[128];
+PFNGLGENFRAMEBUFFERSPROC        qglGenFramebuffers;
+PFNGLDELETEFRAMEBUFFERSPROC     qglDeleteFramebuffers;
+PFNGLBINDFRAMEBUFFERPROC        qglBindFramebuffer;
+PFNGLFRAMEBUFFERTEXTURE2DPROC   qglFramebufferTexture2D;
+PFNGLCHECKFRAMEBUFFERSTATUSPROC qglCheckFramebufferStatus;
+qboolean gl_fbo;
+char     gl_fbo_missing[128];
 
 unsigned char texgammatable[256];
 
@@ -61,7 +70,8 @@ static void LoadShaderExtensions(void)
 		{ (void **)&qglGetProgramInfoLog, "glGetProgramInfoLog" }, { (void **)&qglDeleteProgram, "glDeleteProgram" },
 		{ (void **)&qglUseProgram, "glUseProgram" },           { (void **)&qglGetUniformLocation, "glGetUniformLocation" },
 		{ (void **)&qglUniform1i, "glUniform1i" },             { (void **)&qglUniform1f, "glUniform1f" },
-		{ (void **)&qglUniform3f, "glUniform3f" },
+		{ (void **)&qglUniform3f, "glUniform3f" },             { (void **)&qglUniform4f, "glUniform4f" },
+		{ (void **)&qglUniformMatrix3fv, "glUniformMatrix3fv" },
 	};
 	gl_shaders = false;
 	for (int i = 0; i < (int)(sizeof(procs) / sizeof(procs[0])); i++) {
@@ -88,6 +98,31 @@ static void LoadShaderExtensions(void)
 	gl_shaders = true;
 	gl_shaders_missing[0] = 0;
 	Con_Printf("GLSL %s\n", glsl);
+
+	// shadow maps also need a framebuffer to render depth into and a fourth texture unit to read it
+	static const struct { void **fn; const char *name; } fbprocs[] = {
+		{ (void **)&qglGenFramebuffers, "glGenFramebuffers" },     { (void **)&qglDeleteFramebuffers, "glDeleteFramebuffers" },
+		{ (void **)&qglBindFramebuffer, "glBindFramebuffer" },     { (void **)&qglFramebufferTexture2D, "glFramebufferTexture2D" },
+		{ (void **)&qglCheckFramebufferStatus, "glCheckFramebufferStatus" },
+	};
+	gl_fbo = false;
+	if (!SDL_GL_ExtensionSupported("GL_ARB_framebuffer_object") && major < 3) {
+		snprintf(gl_fbo_missing, sizeof(gl_fbo_missing), "the driver has no GL_ARB_framebuffer_object");
+		return;
+	}
+	for (int i = 0; i < (int)(sizeof(fbprocs) / sizeof(fbprocs[0])); i++) {
+		*fbprocs[i].fn = SDL_GL_GetProcAddress(fbprocs[i].name);
+		if (!*fbprocs[i].fn) {
+			snprintf(gl_fbo_missing, sizeof(gl_fbo_missing), "the driver has no %s", fbprocs[i].name);
+			return;
+		}
+	}
+	if (units < 4) {
+		snprintf(gl_fbo_missing, sizeof(gl_fbo_missing), "too few texture units (%d) for the shadow map", units);
+		return;
+	}
+	gl_fbo = true;
+	gl_fbo_missing[0] = 0;
 }
 
 void GL_LoadExtensions(void)

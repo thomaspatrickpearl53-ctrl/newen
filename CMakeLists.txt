@@ -58,6 +58,7 @@ add_executable(newen WIN32
 	src/engine/r_light.c
 	src/engine/r_shader.c
 	src/engine/r_modern.c
+	src/engine/r_shadow.c
 	src/engine/r_ents.c
 	src/engine/sv_main.c
 	src/engine/sv_engfuncs.c

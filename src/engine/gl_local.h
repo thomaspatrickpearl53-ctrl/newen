@@ -43,8 +43,18 @@ extern PFNGLGETUNIFORMLOCATIONPROC qglGetUniformLocation;
 extern PFNGLUNIFORM1IPROC         qglUniform1i;
 extern PFNGLUNIFORM1FPROC         qglUniform1f;
 extern PFNGLUNIFORM3FPROC         qglUniform3f;
+extern PFNGLUNIFORM4FPROC         qglUniform4f;
+extern PFNGLUNIFORMMATRIX3FVPROC  qglUniformMatrix3fv;
 extern qboolean gl_shaders;            // everything the modern renderer needs is there
 extern char     gl_shaders_missing[128];   // why not, when it isn't
+// framebuffer objects (ARB_framebuffer_object / GL 3.0 names): shadow maps; optional within modern
+extern PFNGLGENFRAMEBUFFERSPROC        qglGenFramebuffers;
+extern PFNGLDELETEFRAMEBUFFERSPROC     qglDeleteFramebuffers;
+extern PFNGLBINDFRAMEBUFFERPROC        qglBindFramebuffer;
+extern PFNGLFRAMEBUFFERTEXTURE2DPROC   qglFramebufferTexture2D;
+extern PFNGLCHECKFRAMEBUFFERSTATUSPROC qglCheckFramebufferStatus;
+extern qboolean gl_fbo;
+extern char     gl_fbo_missing[128];
 
 // ---------------------------------------------------------------- shaders (r_shader.c)
 GLuint R_LoadProgram(const char *name);   // shaders/<name>.vert + .frag; 0 on failure (the log says why)

@@ -160,6 +160,15 @@ void        R_SurfaceDlights(const msurface_t *s, int *blocks);   // adds them t
 void        R_AnimateLightStyles(double time);
 void        R_InitLights(void);
 int         R_DlightCount(void);
+qboolean    R_DlightShadows(int i);
+void        R_GetDlightWorld(int i, float *origin, float *radius);
+
+// shadow maps (r_shadow.c): one point light's six depth views in a 3x2 atlas, rendered before the world
+void        R_InitShadows(void);
+void        R_RenderShadows(void);
+int         R_ShadowLight(void);   // the light that has a shadow map this frame, or -1
+GLuint      R_ShadowTexture(void);
+void        R_ShadowParams(float *znear, float *zfar, float *bias, int *size);
 // light i in the space set by R_DlightSpace
 void        R_GetDlight(int i, float *local_origin, float *radius, float *color);
 
@@ -167,8 +176,10 @@ void        R_GetDlight(int i, float *local_origin, float *radius, float *color)
 void        R_LoadMaterial(texture_t *tx);
 void        R_LoadModelMaterial(const char *model, const char *texture, gltexture_t **normalmap, gltexture_t **specmap);
 // the caller has set up the vertex, st (unit 0), normal and tangent (texture coordinate set 2) arrays
+// vieworg in the drawn model's space; rot (3x3, column-major, NULL = none) turns that space's directions into the
+// world's, for the shadow map
 void        R_ModernBeginLights(GLuint diffuse, const gltexture_t *normalmap, const gltexture_t *specmap,
-                                const float *vieworg);   // vieworg in the drawn model's space
+                                const float *vieworg, const float *rot);
 void        R_ModernSetLight(int i);
 void        R_ModernEndLights(void);   // also turns the normal and set-2 arrays off
 // true if any leaf the box touches is in the current view's PVS (r_world.c)

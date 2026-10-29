@@ -182,6 +182,7 @@ void Host_Frame(void)
 	R_RenderView();
 	S_Update(r_refdef.origin, r_refdef.right);
 	Draw_Begin2D();
+	R_ShadowDrawDebug();
 	CL_DrawHUD();
 	CC_Draw();
 	Lua_DrawOverlay();

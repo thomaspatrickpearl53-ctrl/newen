@@ -64,8 +64,11 @@ a map's or a model's own textures for trying it out.
 - `r_dlightscale` (brightness of dynamic lights), `r_gloss` (shine sharpness, default 32), `r_specscale`.
 - `r_testlight <x y z radius> [r g b]`, `r_testlight here [radius]`, `r_testlight off`: an engine light for
   testing, in both renderers; `r_testlight_orbit <distance>` makes it circle its point.
-- Not in modern yet: shadows; the gun in your hands and see-through models and brush entities keep classic
-  dynamic light; decals don't get it.
+- Shadows: the test light casts shadows from walls, floors and other world brushes (`r_shadows 1`, default).
+  `r_shadow_size` (256, pixels per side of each of its six views), `r_shadow_bias`, `r_shadow_debug 1` (shows the
+  shadow map). Not yet: doors, fences, models and the game's own lights casting shadows.
+- Not in modern yet: the gun in your hands and see-through models and brush entities keep classic dynamic light;
+  decals don't get it.
 
 ## Game DLL (server)
 

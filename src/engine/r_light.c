@@ -111,6 +111,7 @@ typedef struct {
 	vec3_t origin;
 	float  radius, minlight;
 	float  color[3];
+	qboolean shadow;   // modern: casts shadows (only the test light, for now)
 } rdlight_t;
 
 static rdlight_t rdlights[MAX_DLIGHTS];
@@ -138,6 +139,7 @@ void R_AddDlight(const float *origin, float radius, const float *color, float mi
 	l->radius = radius;
 	l->minlight = minlight;
 	VectorCopy(color, l->color);
+	l->shadow = false;
 	client_count = rdlight_count;
 }
 
@@ -151,6 +153,18 @@ void R_GetDlight(int i, float *local_origin, float *radius, float *color)
 	VectorCopy(rdlight_local[i], local_origin);
 	*radius = rdlights[i].radius;
 	VectorCopy(rdlights[i].color, color);
+}
+
+qboolean R_DlightShadows(int i)
+{
+	return rdlights[i].shadow;
+}
+
+// the light in world space (R_GetDlight gives it in the space being drawn)
+void R_GetDlightWorld(int i, float *origin, float *radius)
+{
+	VectorCopy(rdlights[i].origin, origin);
+	*radius = rdlights[i].radius;
 }
 
 static void AddTestLight(void)
@@ -171,6 +185,7 @@ static void AddTestLight(void)
 	l->radius = testlight_radius;
 	l->minlight = 0;
 	VectorCopy(testlight_color, l->color);
+	l->shadow = true;
 }
 
 static void TestLight_f(void)
