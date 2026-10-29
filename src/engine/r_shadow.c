@@ -8,6 +8,7 @@
 // The faces, in tile order (the light shader has the same table): +X -X +Y / -Y +Z -Z. Each view looks along
 // F with R to the right and U up, so a point d from the light lands at 0.5 + 0.5 * (d.R, d.U) / |d.F|.
 #include "bsp.h"
+#include "model.h"
 
 static const float face_f[6][3] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
 static const float face_r[6][3] = { { 0, -1, 0 }, { 0, 1, 0 }, { 1, 0, 0 }, { -1, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 } };
@@ -23,6 +24,26 @@ static int shadow_light = -1;
 static float shadow_far;
 static int warned_solid_frame = -1000;
 
+// casters: faces collected for this frame's light, then sorted into batches (one per entity and '{' texture)
+typedef struct {
+	const msurface_t *surf;
+	int ent;                    // -1 = the world, else an index into casterents
+} castsurf_t;
+typedef struct {
+	int first, count;           // into casters
+	const texture_t *tex;       // alpha-tested with this texture; NULL = opaque
+	int ent;
+} casterbatch_t;
+typedef struct {
+	vec3_t origin, angles;
+} casterent_t;
+
+static castsurf_t *castsurfs;
+static int castsurfs_count, castsurfs_cap;
+static casterbatch_t *batches;
+static int batches_count, batches_cap;
+static casterent_t *casterents;
+static int casterents_count, casterents_cap;
 static GLuint *casters;
 static int casters_count, casters_cap;
 static int c_casters;
@@ -104,22 +125,25 @@ static qboolean EnsureAtlas(void)
 
 // ---------------------------------------------------------------- casters
 
-static void AddCaster(const msurface_t *s)
+static qboolean Masked(const castsurf_t *c)
 {
-	int need = casters_count + (s->numverts - 2) * 3;
-	if (need > casters_cap) {
-		casters_cap = need * 2;
-		casters = Mem_Realloc(casters, sizeof(GLuint) * casters_cap);
-	}
-	for (int v = 2; v < s->numverts; v++) {
-		casters[casters_count++] = s->firstvert;
-		casters[casters_count++] = s->firstvert + v - 1;
-		casters[casters_count++] = s->firstvert + v;
-	}
-	c_casters++;
+	return c->surf->texinfo->texture->kind == TEXKIND_ALPHA;
 }
 
-// Every opaque world face the light's sphere reaches, whatever the camera sees: a wall behind the viewer still
+static void AddCastSurf(const msurface_t *s, int ent)
+{
+	if (!s->numverts || (s->flags & (SURF_SKY | SURF_WATER)))
+		return;
+	if (castsurfs_count == castsurfs_cap) {
+		castsurfs_cap = castsurfs_cap ? castsurfs_cap * 2 : 1024;
+		castsurfs = Mem_Realloc(castsurfs, sizeof(*castsurfs) * castsurfs_cap);
+	}
+	castsurfs[castsurfs_count].surf = s;
+	castsurfs[castsurfs_count].ent = ent;
+	castsurfs_count++;
+}
+
+// Every world face the light's sphere reaches, whatever the camera sees: a wall behind the viewer still
 // throws its shadow into the room
 static void CollectWorldCasters(const vec3_t org, float radius, mnode_t *node, int depth)
 {
@@ -130,17 +154,104 @@ static void CollectWorldCasters(const vec3_t org, float radius, mnode_t *node, i
 		} else if (dist < -radius) {
 			node = node->children[1];
 		} else {
-			for (int i = 0; i < node->numsurfaces; i++) {
-				const msurface_t *s = &world.surfaces[node->firstsurface + i];
-				if (!s->numverts || (s->flags & (SURF_SKY | SURF_WATER)) || s->texinfo->texture->kind == TEXKIND_ALPHA)
-					continue;
-				AddCaster(s);
-			}
+			for (int i = 0; i < node->numsurfaces; i++)
+				AddCastSurf(&world.surfaces[node->firstsurface + i], -1);
 			CollectWorldCasters(org, radius, node->children[0], depth + 1);
 			node = node->children[1];
 		}
 		depth++;
 	}
+}
+
+// Doors, lifts, trains and fences: the solid and alpha-tested brush entities near the light, on screen or not
+static void CollectBrushCasters(const vec3_t org, float radius)
+{
+	casterents_count = 0;
+	int n = R_BrushEntityCount();
+	for (int i = 0; i < n; i++) {
+		int model, rendermode;
+		vec3_t origin, angles;
+		R_GetBrushEntity(i, &model, origin, angles, &rendermode);
+		if (rendermode != kRenderNormal && rendermode != kRenderTransAlpha)
+			continue;   // see-through: light goes through it
+		const msubmodel_t *m = &world.submodels[model];
+		// the model's bounds round its origin (a sphere when it's turned), against the light's sphere
+		float d2 = 0;
+		if (angles[0] || angles[1] || angles[2]) {
+			float r = 0;
+			for (int j = 0; j < 3; j++) {
+				float a = fabsf(m->mins[j]), b = fabsf(m->maxs[j]);
+				r += (a > b ? a : b) * (a > b ? a : b);
+			}
+			vec3_t d;
+			VectorSubtract(org, origin, d);
+			float gap = VectorLength(d) - sqrtf(r);
+			d2 = gap > 0 ? gap * gap : 0;
+		} else {
+			for (int j = 0; j < 3; j++) {
+				float lo = origin[j] + m->mins[j], hi = origin[j] + m->maxs[j];
+				float e = org[j] < lo ? lo - org[j] : org[j] > hi ? org[j] - hi : 0;
+				d2 += e * e;
+			}
+		}
+		if (d2 > radius * radius)
+			continue;
+		if (casterents_count == casterents_cap) {
+			casterents_cap = casterents_cap ? casterents_cap * 2 : 64;
+			casterents = Mem_Realloc(casterents, sizeof(*casterents) * casterents_cap);
+		}
+		casterent_t *ce = &casterents[casterents_count];
+		VectorCopy(origin, ce->origin);
+		VectorCopy(angles, ce->angles);
+		for (int f = 0; f < m->numfaces; f++)
+			AddCastSurf(&world.surfaces[m->firstface + f], casterents_count);
+		casterents_count++;
+	}
+}
+
+// world first, then each entity; within each, opaque faces before the '{' ones grouped by texture
+static int CompareCastSurfs(const void *pa, const void *pb)
+{
+	const castsurf_t *a = pa, *b = pb;
+	if (a->ent != b->ent)
+		return a->ent < b->ent ? -1 : 1;
+	int ka = Masked(a) ? a->surf->texinfo->texture->index + 1 : 0;
+	int kb = Masked(b) ? b->surf->texinfo->texture->index + 1 : 0;
+	return ka < kb ? -1 : ka > kb;
+}
+
+static void BuildBatches(void)
+{
+	qsort(castsurfs, castsurfs_count, sizeof(*castsurfs), CompareCastSurfs);
+	casters_count = batches_count = 0;
+	for (int i = 0; i < castsurfs_count; i++) {
+		const castsurf_t *c = &castsurfs[i];
+		const texture_t *tex = Masked(c) ? c->surf->texinfo->texture : NULL;
+		if (!batches_count || batches[batches_count - 1].ent != c->ent || batches[batches_count - 1].tex != tex) {
+			if (batches_count == batches_cap) {
+				batches_cap = batches_cap ? batches_cap * 2 : 64;
+				batches = Mem_Realloc(batches, sizeof(*batches) * batches_cap);
+			}
+			casterbatch_t *b = &batches[batches_count++];
+			b->first = casters_count;
+			b->count = 0;
+			b->tex = tex;
+			b->ent = c->ent;
+		}
+		const msurface_t *s = c->surf;
+		int need = casters_count + (s->numverts - 2) * 3;
+		if (need > casters_cap) {
+			casters_cap = need * 2;
+			casters = Mem_Realloc(casters, sizeof(GLuint) * casters_cap);
+		}
+		for (int v = 2; v < s->numverts; v++) {
+			casters[casters_count++] = s->firstvert;
+			casters[casters_count++] = s->firstvert + v - 1;
+			casters[casters_count++] = s->firstvert + v;
+		}
+		batches[batches_count - 1].count = casters_count - batches[batches_count - 1].first;
+	}
+	c_casters = castsurfs_count;
 }
 
 // ---------------------------------------------------------------- rendering
@@ -185,9 +296,10 @@ void R_RenderShadows(void)
 	if (!EnsureAtlas())
 		return;
 
-	casters_count = 0;
-	c_casters = 0;
+	castsurfs_count = 0;
 	CollectWorldCasters(org, radius, &world.nodes[0], 0);
+	CollectBrushCasters(org, radius);
+	BuildBatches();
 
 	shadow_light = light;
 	shadow_far = radius;
@@ -220,13 +332,45 @@ void R_RenderShadows(void)
 	qglBindBuffer(GL_ARRAY_BUFFER, world.vbo);
 	glEnableClientState(GL_VERTEX_ARRAY);
 	glVertexPointer(3, GL_FLOAT, sizeof(worldvert_t), (void *)offsetof(worldvert_t, xyz));
+	// '{' faces need their texture's alpha, so fences cast shadows with holes
+	qglClientActiveTexture(GL_TEXTURE0);
+	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	glTexCoordPointer(2, GL_FLOAT, sizeof(worldvert_t), (void *)offsetof(worldvert_t, st));
+	glAlphaFunc(GL_GREATER, 0.25f);
 	for (int k = 0; k < 6 && casters_count; k++) {
 		float m[16];
 		FaceModelview(k, org, m);
-		glLoadMatrixf(m);
 		glViewport((k % 3) * atlas_size, (k / 3) * atlas_size, atlas_size, atlas_size);
-		glDrawElements(GL_TRIANGLES, casters_count, GL_UNSIGNED_INT, casters);
+		int ent = -2;
+		for (int i = 0; i < batches_count; i++) {
+			const casterbatch_t *b = &batches[i];
+			if (b->ent != ent) {
+				// the same transform DrawBrushEntity uses
+				ent = b->ent;
+				glLoadMatrixf(m);
+				if (ent >= 0) {
+					const casterent_t *ce = &casterents[ent];
+					glTranslatef(ce->origin[0], ce->origin[1], ce->origin[2]);
+					if (ce->angles[0] || ce->angles[1] || ce->angles[2]) {
+						glRotatef(ce->angles[1], 0, 0, 1);
+						glRotatef(ce->angles[0], 0, 1, 0);
+						glRotatef(ce->angles[2], 1, 0, 0);
+					}
+				}
+			}
+			if (b->tex) {
+				glEnable(GL_TEXTURE_2D);
+				glEnable(GL_ALPHA_TEST);
+				glBindTexture(GL_TEXTURE_2D, b->tex->gl ? b->tex->gl->id : GL_MissingTexture()->id);
+			}
+			glDrawElements(GL_TRIANGLES, b->count, GL_UNSIGNED_INT, casters + b->first);
+			if (b->tex) {
+				glDisable(GL_ALPHA_TEST);
+				glDisable(GL_TEXTURE_2D);
+			}
+		}
 	}
+	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 	glDisableClientState(GL_VERTEX_ARRAY);
 	qglBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -242,8 +386,8 @@ void R_RenderShadows(void)
 	glEnable(GL_TEXTURE_2D);
 
 	if (r_shadow_debug->value > 1)
-		Con_Printf("shadow light %d: %d casters, %d triangles, atlas %dx%d\n", light, c_casters, casters_count / 3,
-			atlas_size * 3, atlas_size * 2);
+		Con_Printf("shadow light %d: %d faces (%d brush entities) in %d batches, %d triangles, atlas %dx%d\n", light,
+			c_casters, casterents_count, batches_count, casters_count / 3, atlas_size * 3, atlas_size * 2);
 }
 
 // r_shadow_debug 1: the atlas in the top left corner (depth as grey: near is dark)

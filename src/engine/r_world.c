@@ -645,6 +645,21 @@ static void DrawBrushEntity(const brushent_t *b)
 	R_DlightSpace(NULL, NULL);
 }
 
+// for the shadow pass, which needs every brush entity near its light, not just the visible ones
+int R_BrushEntityCount(void)
+{
+	return r_drawentities->value ? brushents_count : 0;
+}
+
+void R_GetBrushEntity(int i, int *model, float *origin, float *angles, int *rendermode)
+{
+	const brushent_t *b = &brushents[i];
+	*model = b->model;
+	VectorCopy(b->origin, origin);
+	VectorCopy(b->angles, angles);
+	*rendermode = b->rendermode;
+}
+
 static int CompareBrushDist(const void *a, const void *b)
 {
 	float da = ((const brushent_t *const *)a)[0]->dist, db = ((const brushent_t *const *)b)[0]->dist;

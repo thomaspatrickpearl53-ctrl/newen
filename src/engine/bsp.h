@@ -163,6 +163,10 @@ int         R_DlightCount(void);
 qboolean    R_DlightShadows(int i);
 void        R_GetDlightWorld(int i, float *origin, float *radius);
 
+// brush entities being drawn this frame (r_world.c)
+int         R_BrushEntityCount(void);
+void        R_GetBrushEntity(int i, int *model, float *origin, float *angles, int *rendermode);
+
 // shadow maps (r_shadow.c): one point light's six depth views in a 3x2 atlas, rendered before the world
 void        R_InitShadows(void);
 void        R_RenderShadows(void);
