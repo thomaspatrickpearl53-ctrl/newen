@@ -291,6 +291,12 @@ static qboolean LoadStudio(model_t *mod, unsigned char *data, size_t size)
 		s->textures[i].height = tex[i].height > 0 ? tex[i].height : 1;
 		s->textures[i].gl = LoadStudioTexture(mod, th, texsize, &tex[i]);
 		hd += s->textures[i].gl->hd;
+		if (r_modern) {
+			char modelbase[64], texbase[64];
+			BaseName(mod->name, modelbase, sizeof(modelbase));
+			BaseName(tex[i].name, texbase, sizeof(texbase));
+			R_LoadModelMaterial(modelbase, texbase, &s->textures[i].normalmap, &s->textures[i].specmap);
+		}
 	}
 	if (hd)
 		Con_DPrintf("%s: %d HD texture%s\n", mod->name, hd, hd == 1 ? "" : "s");

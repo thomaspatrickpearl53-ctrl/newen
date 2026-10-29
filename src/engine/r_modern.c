@@ -96,15 +96,16 @@ void R_ModernInitCvars(void)
 
 // ---------------------------------------------------------------- materials
 
-static gltexture_t *LoadAux(const texture_t *tx, const char *suffix)
+// lifetime: TF_WORLD (freed with the map) or TF_MODEL (with the model cache)
+static gltexture_t *LoadAux(const char *dir, const char *base, const char *suffix, int lifetime)
 {
 	char name[64];
-	snprintf(name, sizeof(name), "%s%s", tx->name, suffix);
+	snprintf(name, sizeof(name), "%s%s", base, suffix);
 	int w, h;
-	unsigned char *rgba = Image_LoadAny("textures", name, &w, &h);
+	unsigned char *rgba = Image_LoadAny(dir, name, &w, &h);
 	if (!rgba)
 		return NULL;
-	gltexture_t *t = GL_UploadTexture(name, rgba, w, h, TF_MIPMAP | TF_WORLD | TF_DATA);
+	gltexture_t *t = GL_UploadTexture(name, rgba, w, h, TF_MIPMAP | lifetime | TF_DATA);
 	Mem_Free(rgba);
 	return t;
 }
@@ -114,34 +115,38 @@ void R_LoadMaterial(texture_t *tx)
 {
 	if (!r_modern)
 		return;
-	tx->normalmap = LoadAux(tx, "_n");
-	tx->specmap = LoadAux(tx, "_s");
+	tx->normalmap = LoadAux("textures", tx->name, "_n", TF_WORLD);
+	tx->specmap = LoadAux("textures", tx->name, "_s", TF_WORLD);
 	materials_n += tx->normalmap != NULL;
 	materials_s += tx->specmap != NULL;
+}
+
+// models/textures/<model>/<texture>_n and _s, beside the HD texture replacements
+void R_LoadModelMaterial(const char *model, const char *texture, gltexture_t **normalmap, gltexture_t **specmap)
+{
+	*normalmap = *specmap = NULL;
+	if (!r_modern)
+		return;
+	char dir[MAX_OSPATH];
+	snprintf(dir, sizeof(dir), "models/textures/%s", model);
+	*normalmap = LoadAux(dir, texture, "_n", TF_MODEL);
+	*specmap = LoadAux(dir, texture, "_s", TF_MODEL);
+	materials_n += *normalmap != NULL;
+	materials_s += *specmap != NULL;
 }
 
 // ---------------------------------------------------------------- light passes
 
 // The surfaces are already drawn with the lightmap (which has no dynamic light in modern);
 // each light adds its own pass, depth-tested against them.
-void R_ModernBeginLights(const texture_t *tx, const float *vieworg)
+void R_ModernBeginLights(GLuint diffuse, const gltexture_t *normalmap, const gltexture_t *specmap, const float *vieworg)
 {
-	// normals and tangents come from the second stream; positions and st stay on the world's buffer
-	qglBindBuffer(GL_ARRAY_BUFFER, world.modern_vbo);
-	glEnableClientState(GL_NORMAL_ARRAY);
-	glNormalPointer(GL_FLOAT, sizeof(modernvert_t), (void *)offsetof(modernvert_t, normal));
-	qglClientActiveTexture(GL_TEXTURE2);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-	glTexCoordPointer(4, GL_FLOAT, sizeof(modernvert_t), (void *)offsetof(modernvert_t, tangent));
-	qglClientActiveTexture(GL_TEXTURE0);
-	qglBindBuffer(GL_ARRAY_BUFFER, world.vbo);
-
 	qglActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D, tx->normalmap ? tx->normalmap->id : flat_normal->id);
+	glBindTexture(GL_TEXTURE_2D, normalmap ? normalmap->id : flat_normal->id);
 	qglActiveTexture(GL_TEXTURE2);
-	glBindTexture(GL_TEXTURE_2D, tx->specmap ? tx->specmap->id : no_specular->id);
+	glBindTexture(GL_TEXTURE_2D, specmap ? specmap->id : no_specular->id);
 	qglActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, tx->gl ? tx->gl->id : GL_MissingTexture()->id);
+	glBindTexture(GL_TEXTURE_2D, diffuse);
 
 	glDepthMask(GL_FALSE);
 	glEnable(GL_BLEND);

@@ -4,8 +4,8 @@ Everything someone new needs to pick this project up: what it is, what was decid
 out, how to build and test it, what works, what doesn't, and what comes next. Read `README.md` first for the
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
-2026-10-29: **the modern renderer's steps 0-5 are built on branch `modern-renderer`** (section 9, "Renderer plan");
-waiting for the owner's visual review.
+2026-10-29: **the modern renderer's steps 0-6 are built on branch `modern-renderer`** (section 9, "Renderer plan");
+shadows (step 7) are next.
 
 Status as of 2026-10-22: **Phase 1 is done. Phase 2 started with big maps: the ±32768 check, the NBSP format,
 the compiler and a TrenchBroom configuration are done, and so are closed captions (section 9). Designs for an
@@ -202,7 +202,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `snd_mem.c` | 383 | Loading: WAV (8/16/24-bit, float, any rate; the "cue" chunk's first point is the loop start), OGG/FLAC/MP3; a `.flac`/`.ogg` next to a `.wav` replaces it (the loop point still comes from the WAV); sentences.txt (directory prefixes, standalone and attached `(p v s e t)` options, `,` and `.` as `_comma`/`_period` words). The game sends sentences by number (`!806`) |
 | `snd_codecs.c` | 10 | The vendored decoders' implementations |
 | `r_shader.c` | 67 | GLSL programs from `base/shaders` (compile/link with the driver's log on failure) |
-| `r_modern.c` | 180 | The modern renderer: `r_renderer` selection and fallback, materials (`_n`/`_s`), the per-light additive pass state |
+| `r_modern.c` | 185 | The modern renderer: `r_renderer` selection and fallback, materials (`_n`/`_s`), the per-light additive pass state |
 | `r_main.c` | 371 | View: Hor+ FOV, projection, Quake modelview, frustum planes, `R_CullBox`; the noclip camera; commands `map`, `maps`, `disconnect`, `viewpos`, `setpos`, `texlist` |
 
 `base/lua/includes/init.lua` (231 lines) is the core Lua library (hook, timer, Color, draw helpers, string/table/math
@@ -475,8 +475,8 @@ newen would read it), VIS hints for big open areas.
 
 **Renderer plan: `docs/RENDERER_PLAN.md`.** An optional `r_renderer modern` path (per-pixel dynamic lights,
 normal/specular maps, shadow maps) beside the current renderer, which stays the default. The owner accepted every
-recommendation in its section 8 (2026-10-29) and said go. **Steps 0-5 are done (branch `modern-renderer`);
-stop here for the owner's visual review before step 6 (models), then shadows (7+).** What was built:
+recommendation in its section 8 (2026-10-29) and said go. **Steps 0-6 are done (branch `modern-renderer`); the
+owner reviewed 0-5 in game ("it works") and said continue. Next: shadows (step 7+).** What was built:
 - `r_renderer classic|modern` (archived, applied in `R_LoadMap` before `BSP_Load` via `R_SelectRenderer`), the
   capability check (`LoadShaderExtensions` in `image.c`: GL 2.0 entry points, GLSL >= 1.20, 3 texture units and
   coordinate sets), `r_modern_forcefail`, `r_rendererinfo`. Any failure prints the reason and draws classic.
@@ -497,6 +497,15 @@ stop here for the owner's visual review before step 6 (models), then shadows (7+
   global.
 - `r_testlight` (`r_light.c`): an engine-owned light added after the client's in `R_PushDlights`, so it works
   without a game or client DLL.
+- Step 6, models (`r_studio.c`): `SetupLighting` lists the dynamic lights whose radius reaches the model (radius +
+  model radius); those get a pass per mesh (`DrawLightPasses`) and are left out of the vertex colour
+  (`R_DlightPoint`). Only opaque (`kRenderNormal`) models; see-through ones and the view model
+  (`r_studio_viewmodel`, set by `CL_DrawViewModel`) keep classic's point light. Fullbright and additive meshes get
+  no pass. Per-corner normals from the skinned normals; tangents (only when there's a normal map) per triangle
+  from the deformed positions and UVs, so bumps are faceted across a mesh's triangles (a baseline; smoothing would
+  share tangents per vertex+UV). Chrome meshes ignore their normal map (their UVs follow the view).
+  Materials: `models/textures/<model>/<texture>_n` / `_s` (`R_LoadModelMaterial`, `TF_MODEL` lifetime).
+  `tools/test_materials.py` takes `models/<x>.mdl` too.
 
 Verified (2026-10-29, RTX 3050): classic is pixel-identical to the pre-change build in c1a0d and c2a5 world shots
 (`r_drawentities 0`, `-nogamedll`, notify lines, FPS and watermark off; models animate, so full scenes aren't
@@ -504,9 +513,12 @@ comparable), also with material files present. Modern with no dynamic light is p
 lights the world; the c1a0d door (func_door 39) moves under it; flat vs `tools/test_materials.py` maps differ and
 the shine moves with the light; uniform tilted normal maps (+X, +Y) brighten towards the right/up lights, so the
 tangent convention is right for unmirrored faces. A broken shader falls back to classic with the compiler's
-message. With the game and client DLLs, the HUD, view model and menus draw normally. Not checked: a client light
-(muzzle flash) on screen in modern (the scripted weapon switch didn't happen), mirrored texture alignments,
-performance numbers (`r_speeds` counts only).
+message. With the game and client DLLs, the HUD, view model and menus draw normally. Step 6: classic world shots
+still pixel-identical; c1a0d's scientists are lit from the side the light is on (a strong red light reddens their
+faces and shoes; white coats are already at full red); with scientist test maps only the scientists' pixels
+change. Not checked: a client light (muzzle flash) on screen in modern (the scripted weapon switch didn't happen),
+mirrored texture alignments, bodygroup/skin changes and chrome under a light, performance numbers (`r_speeds`
+counts world passes only).
 
 **Half-Life 2 maps plan (design only, 2026-10-22): `docs/SOURCE_PLAN.md`.** How to bring the owner's NewenSource
 project (`%USERPROFILE%\Documents\Codex\2026-10-18\let\outputs\NewenSource`, read only) into newen:

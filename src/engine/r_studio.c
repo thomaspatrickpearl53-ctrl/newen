@@ -22,7 +22,10 @@ static vec3_t *xverts, *xnorms;
 static float (*chromeuv)[2];
 static int verts_cap, norms_cap;
 static float *arr_xyz, *arr_st, *arr_rgba;
+static float *arr_norm, *arr_tan;   // modern light passes: per-corner normal and tangent
 static int arr_cap;
+
+qboolean r_studio_viewmodel;
 
 static void EnsureBones(int n)
 {
@@ -428,6 +431,8 @@ static void EnsureArrays(int nverts, int nnorms, int ntris)
 		arr_xyz = Mem_Realloc(arr_xyz, sizeof(float) * 3 * arr_cap);
 		arr_st = Mem_Realloc(arr_st, sizeof(float) * 2 * arr_cap);
 		arr_rgba = Mem_Realloc(arr_rgba, sizeof(float) * 4 * arr_cap);
+		arr_norm = Mem_Realloc(arr_norm, sizeof(float) * 3 * arr_cap);
+		arr_tan = Mem_Realloc(arr_tan, sizeof(float) * 4 * arr_cap);
 	}
 }
 
@@ -438,15 +443,33 @@ typedef struct {
 	vec3_t lightvec;            // direction the light travels
 	float  alpha;
 	qboolean fullbright;
+	int    numlights;           // modern: the dynamic lights that get their own pass (then not in color)
+	int    lights[32];
 } studiolight_t;
 
+// Modern draws dynamic lights per pixel on opaque world models; the rest (see-through models, the view model)
+// keep classic's point light
 static void SetupLighting(const rentity_t *e, studiolight_t *l)
 {
 	vec3_t c;
 	l->fullbright = r_fullbright_ref->value != 0 || !world.lightdata;
+	l->numlights = 0;
 	vec3_t p = { e->origin[0], e->origin[1], e->origin[2] + 1 };
 	R_LightPoint(p, c);
-	R_DlightPoint(p, c);
+	if (r_modern && e->rendermode == kRenderNormal && !r_studio_viewmodel && !l->fullbright) {
+		float r = e->model->radius > 16 ? e->model->radius : 16;
+		int count = R_DlightCount();
+		for (int i = 0; i < count && l->numlights < 32; i++) {
+			vec3_t org, color, d;
+			float radius;
+			R_GetDlight(i, org, &radius, color);
+			VectorSubtract(org, e->origin, d);
+			if (DotProduct(d, d) < (radius + r) * (radius + r))
+				l->lights[l->numlights++] = i;
+		}
+	} else {
+		R_DlightPoint(p, c);
+	}
 	VectorCopy(c, l->color);
 	l->ambient = r_studio_ambient->value;
 	l->shade = r_studio_shade->value;
@@ -479,6 +502,71 @@ static void LightNormal(const studiolight_t *l, const vec3_t n, int texflags, fl
 		float v = l->color[i] * f;
 		out[i] = v > 1 ? 1 : v;
 	}
+}
+
+// Per-corner normals, and tangents along +s from each triangle's deformed positions and texture coordinates
+// (flat per triangle: a baseline, not smoothed across the mesh)
+static void BuildLightArrays(const studiomesh_t *mesh, int n, qboolean tangents)
+{
+	for (int t = 0; t < n; t++)
+		VectorCopy(xnorms[mesh->tris[t * 4 + 1]], arr_norm + t * 3);
+	if (!tangents)
+		return;
+	for (int t = 0; t < n; t += 3) {
+		const float *p0 = arr_xyz + t * 3, *p1 = p0 + 3, *p2 = p0 + 6;
+		const float *t0 = arr_st + t * 2, *t1 = t0 + 2, *t2 = t0 + 4;
+		vec3_t e1, e2, tan, bit;
+		VectorSubtract(p1, p0, e1);
+		VectorSubtract(p2, p0, e2);
+		float du1 = t1[0] - t0[0], dv1 = t1[1] - t0[1], du2 = t2[0] - t0[0], dv2 = t2[1] - t0[1];
+		float det = du1 * dv2 - du2 * dv1;
+		if (fabsf(det) < 1e-12f) {
+			VectorCopy(e1, tan);   // no texture area: any direction along the triangle
+			VectorClear(bit);
+		} else {
+			for (int i = 0; i < 3; i++) {
+				tan[i] = (e1[i] * dv2 - e2[i] * dv1) / det;
+				bit[i] = (e2[i] * du1 - e1[i] * du2) / det;
+			}
+		}
+		for (int c = 0; c < 3; c++) {
+			const float *nrm = arr_norm + (t + c) * 3;
+			float *out = arr_tan + (t + c) * 4;
+			VectorMA(tan, -DotProduct(tan, nrm), nrm, out);
+			if (VectorNormalize(out) < 1e-6f) {
+				vec3_t any = { fabsf(nrm[2]) < 0.9f ? 0.0f : 1.0f, 0, fabsf(nrm[2]) < 0.9f ? 1.0f : 0.0f };
+				CrossProduct(any, nrm, out);
+				VectorNormalize(out);
+			}
+			// +Y normal maps point up the image, against +t
+			vec3_t cr;
+			CrossProduct(nrm, out, cr);
+			out[3] = DotProduct(cr, bit) > 0 ? -1.0f : 1.0f;
+		}
+	}
+}
+
+static void DrawLightPasses(const studiotex_t *tex, const studiomesh_t *mesh, int n, const studiolight_t *light)
+{
+	qboolean chrome = (tex->flags & STUDIO_NF_CHROME) != 0;
+	// chrome's texture coordinates follow the view, so a normal map wouldn't stay on the surface
+	const gltexture_t *normalmap = chrome ? NULL : tex->normalmap;
+	BuildLightArrays(mesh, n, normalmap != NULL);
+	glEnableClientState(GL_NORMAL_ARRAY);
+	glNormalPointer(GL_FLOAT, 0, arr_norm);
+	qglClientActiveTexture(GL_TEXTURE2);
+	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	if (normalmap)
+		glTexCoordPointer(4, GL_FLOAT, 0, arr_tan);
+	else
+		glTexCoordPointer(3, GL_FLOAT, 0, arr_norm);   // unused without a normal map; anything valid
+	qglClientActiveTexture(GL_TEXTURE0);
+	R_ModernBeginLights(tex->gl->id, normalmap, tex->specmap, r_refdef.origin);
+	for (int i = 0; i < light->numlights; i++) {
+		R_ModernSetLight(light->lights[i]);
+		glDrawArrays(GL_TRIANGLES, 0, n);
+	}
+	R_ModernEndLights();
 }
 
 static void DrawMeshes(const model_t *m, const rentity_t *e, const mstudiomodel_t *sm, studiomesh_t *meshes,
@@ -532,6 +620,8 @@ static void DrawMeshes(const model_t *m, const rentity_t *e, const mstudiomodel_
 			glDepthMask(GL_FALSE);
 		}
 		glDrawArrays(GL_TRIANGLES, 0, n);
+		if (light->numlights && !additive && !(tex->flags & STUDIO_NF_FULLBRIGHT))
+			DrawLightPasses(tex, mesh, n, light);
 		if (tex->flags & STUDIO_NF_MASKED)
 			glDisable(GL_ALPHA_TEST);
 		if (additive) {

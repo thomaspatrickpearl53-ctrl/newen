@@ -201,6 +201,7 @@ typedef struct {
 	gltexture_t *gl;
 	int   flags;
 	int   width, height;        // original size; texture coordinates are based on it
+	gltexture_t *normalmap, *specmap;   // modern renderer: <texture>_n / _s next to the HD texture, or NULL
 } studiotex_t;
 
 typedef struct {
@@ -290,6 +291,7 @@ typedef struct {
 
 // r_studio.c
 void     R_StudioInit(void);
+extern qboolean r_studio_viewmodel;   // the gun in your hands is being drawn (it keeps classic lighting)
 void     R_StudioDrawModel(rentity_t *e);
 float    R_StudioFrame(const rentity_t *e);             // current frame of the sequence
 void     R_StudioInitControllers(const model_t *m, rentity_t *e);   // every controller to 0 degrees

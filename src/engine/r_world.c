@@ -281,7 +281,16 @@ static void DrawLightPasses(int first, int last, const texture_t *tx)
 	}
 	if (!bits)
 		return;
-	R_ModernBeginLights(tx, lightpass_viewer);
+	// normals and tangents come from the second stream; positions and st stay on the world's buffer
+	qglBindBuffer(GL_ARRAY_BUFFER, world.modern_vbo);
+	glEnableClientState(GL_NORMAL_ARRAY);
+	glNormalPointer(GL_FLOAT, sizeof(modernvert_t), (void *)offsetof(modernvert_t, normal));
+	qglClientActiveTexture(GL_TEXTURE2);
+	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	glTexCoordPointer(4, GL_FLOAT, sizeof(modernvert_t), (void *)offsetof(modernvert_t, tangent));
+	qglClientActiveTexture(GL_TEXTURE0);
+	qglBindBuffer(GL_ARRAY_BUFFER, world.vbo);
+	R_ModernBeginLights(tx->gl ? tx->gl->id : GL_MissingTexture()->id, tx->normalmap, tx->specmap, lightpass_viewer);
 	int count = R_DlightCount();
 	for (int i = 0; i < count; i++) {
 		unsigned bit = 1u << i;

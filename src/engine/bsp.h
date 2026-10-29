@@ -165,9 +165,12 @@ void        R_GetDlight(int i, float *local_origin, float *radius, float *color)
 
 // modern renderer (r_modern.c): per-pixel dynamic light passes over already drawn surfaces
 void        R_LoadMaterial(texture_t *tx);
-void        R_ModernBeginLights(const texture_t *tx, const float *vieworg);   // vieworg in the drawn model's space
+void        R_LoadModelMaterial(const char *model, const char *texture, gltexture_t **normalmap, gltexture_t **specmap);
+// the caller has set up the vertex, st (unit 0), normal and tangent (texture coordinate set 2) arrays
+void        R_ModernBeginLights(GLuint diffuse, const gltexture_t *normalmap, const gltexture_t *specmap,
+                                const float *vieworg);   // vieworg in the drawn model's space
 void        R_ModernSetLight(int i);
-void        R_ModernEndLights(void);
+void        R_ModernEndLights(void);   // also turns the normal and set-2 arrays off
 // true if any leaf the box touches is in the current view's PVS (r_world.c)
 qboolean    R_BoxVisible(const vec3_t mins, const vec3_t maxs);
 

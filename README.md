@@ -57,13 +57,15 @@ exactly as before. If the graphics driver can't run it or a shader fails, newen 
 Materials, modern only: next to a texture's name, `textures/<name>_n.png` is a tangent-space normal map (+Y, the
 OpenGL convention) and `textures/<name>_s.png` a specular map (brightness = shine strength). Textures without them
 stay flat and matte. They react to dynamic lights only, since Half-Life's lightmaps have no light direction.
-`tools/test_materials.py` makes rough test maps from a map's own textures for trying it out.
+Models get them as `models/textures/<model>/<texture>_n.png` and `_s.png` (beside the HD model textures).
+`tools/test_materials.py <Half-Life folder> <map or models/x.mdl> bin/userdata/valve` makes rough test maps from
+a map's or a model's own textures for trying it out.
 
 - `r_dlightscale` (brightness of dynamic lights), `r_gloss` (shine sharpness, default 32), `r_specscale`.
 - `r_testlight <x y z radius> [r g b]`, `r_testlight here [radius]`, `r_testlight off`: an engine light for
   testing, in both renderers; `r_testlight_orbit <distance>` makes it circle its point.
-- Not in modern yet: models (they keep classic lighting), shadows, decals and see-through brush entities
-  under dynamic light.
+- Not in modern yet: shadows; the gun in your hands and see-through models and brush entities keep classic
+  dynamic light; decals don't get it.
 
 ## Game DLL (server)
 

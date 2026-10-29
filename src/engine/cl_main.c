@@ -1101,7 +1101,9 @@ void CL_DrawViewModel(void)
 	glDepthRange(0, 0.3);
 	glEnable(GL_CULL_FACE);
 	glCullFace(GL_FRONT);
+	r_studio_viewmodel = true;
 	R_StudioDrawModel(&r);
+	r_studio_viewmodel = false;
 	glDisable(GL_CULL_FACE);
 	glDepthRange(0, 1);
 }
