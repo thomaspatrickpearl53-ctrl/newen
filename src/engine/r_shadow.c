@@ -1,7 +1,7 @@
 // newen - shadow maps for the modern renderer
 //
-// One point light (the shadow-casting one: the test light for now) renders the world's depth into six 90-degree
-// views, kept as six tiles of one depth texture (3 across, 2 down). The light shader picks the tile from the
+// Each chosen point light (r_shadow_lights of them: the test light first, then the brightest nearby ones that may
+// cast) renders the world's depth into six 90-degree views, kept as six tiles of one depth texture (3 across, 2 down). The light shader picks the tile from the
 // direction to the light and compares distances itself, so no cube-map shadow samplers are needed. The shadow
 // only dims that light's own contribution: the baked lightmaps already have their shadows.
 //
@@ -16,12 +16,22 @@ static const float face_u[6][3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 }, { 0, 
 
 #define SHADOW_NEAR 1.0f
 
-static cvar_t *r_shadows, *r_shadow_size, *r_shadow_bias, *r_shadow_debug, *r_shadow_models;
-static GLuint fbo, atlas;
-static int atlas_size;            // one tile's size; the texture is 3x by 2x that
-static qboolean atlas_failed;     // don't try again every frame
-static int shadow_light = -1;
-static float shadow_far;
+static cvar_t *r_shadows, *r_shadow_size, *r_shadow_bias, *r_shadow_debug, *r_shadow_models, *r_shadow_lights;
+static cvar_t *r_shadow_soft, *r_shadow_minradius;
+
+// one shadow map per chosen light; the textures are kept between frames
+#define MAX_SHADOW_SLOTS 8   // the most r_shadow_lights may ask for
+typedef struct {
+	GLuint fbo, tex;
+	int size;                 // one view's size; the texture is 3x by 2x that
+	qboolean failed;          // don't try again every frame
+	int light;                // this frame's light, -1 = unused
+	int id;                   // the light's id, for next frame's choice
+	float zfar;
+} shadowslot_t;
+static shadowslot_t slots[MAX_SHADOW_SLOTS];
+static int slots_used;
+static int last_ids[MAX_SHADOW_SLOTS], last_ids_count;
 static int warned_solid_frame = -1000;
 
 // casters: faces collected for this frame's light, then sorted into batches (one per entity and '{' texture)
@@ -59,51 +69,55 @@ static modelrun_t *modelruns;
 static int modelruns_count, modelruns_cap;
 static int c_models;
 
-int R_ShadowLight(void)
+int R_ShadowSlot(int light)
 {
-	return shadow_light;
+	for (int i = 0; i < slots_used; i++)
+		if (slots[i].light == light)
+			return i;
+	return -1;
 }
 
-GLuint R_ShadowTexture(void)
+GLuint R_ShadowTexture(int slot)
 {
-	return atlas;
+	return slots[slot].tex;
 }
 
-void R_ShadowParams(float *znear, float *zfar, float *bias, int *size)
+void R_ShadowParams(int slot, float *znear, float *zfar, float *bias, int *size, float *soft)
 {
 	*znear = SHADOW_NEAR;
-	*zfar = shadow_far;
+	*zfar = slots[slot].zfar;
 	*bias = r_shadow_bias->value;
-	*size = atlas_size;
+	*size = slots[slot].size;
+	*soft = r_shadow_soft->value ? 1.0f : 0.0f;
 }
 
-static void FreeAtlas(void)
+static void FreeSlot(shadowslot_t *sl)
 {
-	if (fbo)
-		qglDeleteFramebuffers(1, &fbo);
-	if (atlas)
-		glDeleteTextures(1, &atlas);
-	fbo = atlas = 0;
-	atlas_size = 0;
+	if (sl->fbo)
+		qglDeleteFramebuffers(1, &sl->fbo);
+	if (sl->tex)
+		glDeleteTextures(1, &sl->tex);
+	sl->fbo = sl->tex = 0;
+	sl->size = 0;
 }
 
-static qboolean EnsureAtlas(void)
+static qboolean EnsureSlot(shadowslot_t *sl)
 {
 	int size = (int)r_shadow_size->value;
 	if (size < 64) size = 64;
 	if (size > 4096) size = 4096;
 	if (size * 3 > gl_max_texture_size)
 		size = gl_max_texture_size / 3;
-	if (fbo && size == atlas_size)
+	if (sl->fbo && size == sl->size)
 		return true;
-	if (atlas_failed && size == atlas_size)
+	if (sl->failed && size == sl->size)
 		return false;
-	FreeAtlas();
-	atlas_size = size;
-	atlas_failed = false;
+	FreeSlot(sl);
+	sl->size = size;
+	sl->failed = false;
 
-	glGenTextures(1, &atlas);
-	glBindTexture(GL_TEXTURE_2D, atlas);
+	glGenTextures(1, &sl->tex);
+	glBindTexture(GL_TEXTURE_2D, sl->tex);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, size * 3, size * 2, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
 	// the shader compares distances itself and filters by taking several samples
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -114,9 +128,9 @@ static qboolean EnsureAtlas(void)
 	glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE);
 	glBindTexture(GL_TEXTURE_2D, 0);
 
-	qglGenFramebuffers(1, &fbo);
-	qglBindFramebuffer(GL_FRAMEBUFFER, fbo);
-	qglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, atlas, 0);
+	qglGenFramebuffers(1, &sl->fbo);
+	qglBindFramebuffer(GL_FRAMEBUFFER, sl->fbo);
+	qglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sl->tex, 0);
 	glDrawBuffer(GL_NONE);
 	glReadBuffer(GL_NONE);
 	GLenum status = qglCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -125,9 +139,9 @@ static qboolean EnsureAtlas(void)
 	glReadBuffer(GL_BACK);
 	if (status != GL_FRAMEBUFFER_COMPLETE) {
 		Con_Warnf("Shadows are off: the shadow map framebuffer isn't usable (status 0x%x)\n", status);
-		FreeAtlas();
-		atlas_size = size;
-		atlas_failed = true;
+		FreeSlot(sl);
+		sl->size = size;
+		sl->failed = true;
 		return false;
 	}
 	Con_DPrintf("Shadow map: %dx%d\n", size * 3, size * 2);
@@ -324,52 +338,23 @@ static void FaceModelview(int k, const vec3_t org, float m[16])
 	m[15] = 1;
 }
 
-void R_RenderShadows(void)
+// One light's six views into its slot (the GL state is set up by R_RenderShadows)
+static void RenderSlot(shadowslot_t *sl, const vec3_t org, float radius)
 {
-	shadow_light = -1;
-	if (!r_modern || !r_shadows->value || !gl_fbo || !world.numnodes)
-		return;
-	int light = -1;
-	for (int i = 0; i < R_DlightCount(); i++)
-		if (R_DlightShadows(i)) {
-			light = i;
-			break;
-		}
-	if (light < 0)
-		return;
-	vec3_t org;
-	float radius;
-	R_GetDlightWorld(light, org, &radius);
-	if (radius <= SHADOW_NEAR * 2)
-		return;
-	// inside a wall every direction is blocked: say so instead of guessing a better spot
-	if (BSP_PointInLeaf(org)->contents == CONTENTS_SOLID) {
-		if (r_refdef.framecount - warned_solid_frame > 300) {
-			Con_Warnf("The shadow-casting light at %.0f %.0f %.0f is inside a wall; it's drawn without shadows\n", org[0], org[1], org[2]);
-			warned_solid_frame = r_refdef.framecount;
-		}
-		return;
-	}
-	if (!EnsureAtlas())
-		return;
-
+	int atlas_size = sl->size;
 	castsurfs_count = 0;
 	CollectWorldCasters(org, radius, &world.nodes[0], 0);
 	CollectBrushCasters(org, radius);
 	BuildBatches();
 	CollectModelCasters(org, radius);
-
-	shadow_light = light;
-	shadow_far = radius;
+	sl->zfar = radius;
 
 	glMatrixMode(GL_PROJECTION);
-	glPushMatrix();
 	glLoadIdentity();
-	glFrustum(-SHADOW_NEAR, SHADOW_NEAR, -SHADOW_NEAR, SHADOW_NEAR, SHADOW_NEAR, shadow_far);
+	glFrustum(-SHADOW_NEAR, SHADOW_NEAR, -SHADOW_NEAR, SHADOW_NEAR, SHADOW_NEAR, sl->zfar);
 	glMatrixMode(GL_MODELVIEW);
-	glPushMatrix();
 
-	qglBindFramebuffer(GL_FRAMEBUFFER, fbo);
+	qglBindFramebuffer(GL_FRAMEBUFFER, sl->fbo);
 	glViewport(0, 0, atlas_size * 3, atlas_size * 2);
 	glDisable(GL_SCISSOR_TEST);
 	glDepthMask(GL_TRUE);
@@ -458,6 +443,103 @@ void R_RenderShadows(void)
 	glDisableClientState(GL_VERTEX_ARRAY);
 	qglBindBuffer(GL_ARRAY_BUFFER, 0);
 
+	if (r_shadow_debug->value > 1)
+		Con_Printf("shadow light %d id %d (slot %d): %d faces (%d brush entities) in %d batches, %d triangles; %d models, "
+			"%d triangles; atlas %dx%d\n", sl->light, sl->id, (int)(sl - slots), c_casters, casterents_count, batches_count, casters_count / 3,
+			c_models, model_verts / 3, atlas_size * 3, atlas_size * 2);
+}
+
+typedef struct {
+	int light, id;
+	float score;
+} shadowpick_t;
+
+static int ComparePicks(const void *a, const void *b)
+{
+	float sa = ((const shadowpick_t *)a)->score, sb = ((const shadowpick_t *)b)->score;
+	return sa < sb ? 1 : sa > sb ? -1 : 0;
+}
+
+// Which lights get the shadow maps: the test light always, then the ones that light the most of what's near the
+// viewer. A light that had a map last frame keeps a head start, so two similar lights don't trade it back and
+// forth every frame (that flickers).
+static int ChooseLights(shadowpick_t *picks, int budget)
+{
+	shadowpick_t cand[64];
+	int n = 0;
+	float minradius = r_shadow_minradius->value;
+	for (int i = 0; i < R_DlightCount() && n < 64; i++) {
+		int id = R_DlightShadowId(i);
+		if (!id)
+			continue;
+		vec3_t org, color, d;
+		float radius;
+		R_GetDlightWorld(i, org, &radius, color);
+		if (radius <= SHADOW_NEAR * 2 || (id != R_TESTLIGHT_ID && radius < minradius))
+			continue;
+		// inside a wall every direction is blocked: say so (for the test light) instead of guessing a better spot
+		if (BSP_PointInLeaf(org)->contents == CONTENTS_SOLID) {
+			if (id == R_TESTLIGHT_ID && r_refdef.framecount - warned_solid_frame > 300) {
+				Con_Warnf("The test light at %.0f %.0f %.0f is inside a wall; it's drawn without shadows\n", org[0], org[1], org[2]);
+				warned_solid_frame = r_refdef.framecount;
+			}
+			continue;
+		}
+		VectorSubtract(org, r_refdef.origin, d);
+		float dist = VectorLength(d);
+		float bright = color[0] > color[1] ? color[0] : color[1];
+		if (color[2] > bright)
+			bright = color[2];
+		float score = bright * radius / (dist > radius ? dist : radius);
+		for (int k = 0; k < last_ids_count; k++)
+			if (last_ids[k] == id)
+				score *= 1.5f;
+		if (id == R_TESTLIGHT_ID)
+			score = 1e30f;
+		cand[n].light = i;
+		cand[n].id = id;
+		cand[n].score = score;
+		n++;
+	}
+	qsort(cand, n, sizeof(cand[0]), ComparePicks);
+	if (n > budget)
+		n = budget;
+	memcpy(picks, cand, sizeof(cand[0]) * n);
+	return n;
+}
+
+void R_RenderShadows(void)
+{
+	slots_used = 0;
+	if (!r_modern || !r_shadows->value || !gl_fbo || !world.numnodes)
+		return;
+	int budget = (int)r_shadow_lights->value;
+	if (budget > MAX_SHADOW_SLOTS)
+		budget = MAX_SHADOW_SLOTS;
+	shadowpick_t picks[MAX_SHADOW_SLOTS];
+	int n = budget > 0 ? ChooseLights(picks, budget) : 0;
+	last_ids_count = 0;
+	if (!n)
+		return;
+
+	glMatrixMode(GL_PROJECTION);
+	glPushMatrix();
+	glMatrixMode(GL_MODELVIEW);
+	glPushMatrix();
+	for (int i = 0; i < n; i++) {
+		shadowslot_t *sl = &slots[slots_used];
+		if (!EnsureSlot(sl))
+			break;
+		vec3_t org, color;
+		float radius;
+		R_GetDlightWorld(picks[i].light, org, &radius, color);
+		sl->light = picks[i].light;
+		sl->id = picks[i].id;
+		RenderSlot(sl, org, radius);
+		last_ids[last_ids_count++] = sl->id;
+		slots_used++;
+	}
+
 	// back to the main view exactly as R_RenderView set it up
 	glDisable(GL_POLYGON_OFFSET_FILL);
 	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -468,36 +550,37 @@ void R_RenderShadows(void)
 	glMatrixMode(GL_MODELVIEW);
 	glPopMatrix();
 	glEnable(GL_TEXTURE_2D);
-
-	if (r_shadow_debug->value > 1)
-		Con_Printf("shadow light %d: %d faces (%d brush entities) in %d batches, %d triangles; %d models, %d triangles; "
-			"atlas %dx%d\n", light, c_casters, casterents_count, batches_count, casters_count / 3, c_models, model_verts / 3,
-			atlas_size * 3, atlas_size * 2);
 }
 
-// r_shadow_debug 1: the atlas in the top left corner (depth as grey: near is dark)
+// r_shadow_debug 1: the shadow maps down the left side (depth as grey: near is dark)
 void R_ShadowDrawDebug(void)
 {
-	if (!r_shadow_debug || !r_shadow_debug->value || shadow_light < 0 || !atlas || !world.loaded)
+	if (!r_shadow_debug || !r_shadow_debug->value || !world.loaded)
 		return;
-	float w = 384, h = 256;
+	float w = 288, h = 192;
 	glDisable(GL_BLEND);
 	glEnable(GL_TEXTURE_2D);
-	glBindTexture(GL_TEXTURE_2D, atlas);
 	glColor4f(1, 1, 1, 1);
-	glBegin(GL_QUADS);
-	glTexCoord2f(0, 1); glVertex2f(8, 8);
-	glTexCoord2f(1, 1); glVertex2f(8 + w, 8);
-	glTexCoord2f(1, 0); glVertex2f(8 + w, 8 + h);
-	glTexCoord2f(0, 0); glVertex2f(8, 8 + h);
-	glEnd();
+	for (int i = 0; i < slots_used; i++) {
+		float y = 8 + i * (h + 8);
+		glBindTexture(GL_TEXTURE_2D, slots[i].tex);
+		glBegin(GL_QUADS);
+		glTexCoord2f(0, 1); glVertex2f(8, y);
+		glTexCoord2f(1, 1); glVertex2f(8 + w, y);
+		glTexCoord2f(1, 0); glVertex2f(8 + w, y + h);
+		glTexCoord2f(0, 0); glVertex2f(8, y + h);
+		glEnd();
+	}
 	glBindTexture(GL_TEXTURE_2D, 0);
 	glEnable(GL_BLEND);
 }
 
 void R_InitShadows(void)
 {
-	r_shadows = Cvar_Get("r_shadows", "1", FCVAR_ARCHIVE, "modern: the shadow-casting light (the test light, for now) casts shadows");
+	r_shadows = Cvar_Get("r_shadows", "1", FCVAR_ARCHIVE, "modern: dynamic lights cast shadows");
+	r_shadow_lights = Cvar_Get("r_shadow_lights", "2", FCVAR_ARCHIVE, va("modern: how many lights cast shadows at once (up to %d)", MAX_SHADOW_SLOTS));
+	r_shadow_minradius = Cvar_Get("r_shadow_minradius", "64", FCVAR_ARCHIVE, "modern: smaller lights don't cast shadows (the test light always may)");
+	r_shadow_soft = Cvar_Get("r_shadow_soft", "1", FCVAR_ARCHIVE, "modern: 1 = softer shadow edges (16 samples), 0 = 4");
 	r_shadow_size = Cvar_Get("r_shadow_size", "256", FCVAR_ARCHIVE, "modern: pixels per side of each of a shadow's six views");
 	r_shadow_bias = Cvar_Get("r_shadow_bias", "1", FCVAR_ARCHIVE, "modern: how far (units) a surface may be behind the shadow map and still be lit");
 	r_shadow_models = Cvar_Get("r_shadow_models", "1", FCVAR_ARCHIVE, "modern: models (monsters, people, items) cast shadows");

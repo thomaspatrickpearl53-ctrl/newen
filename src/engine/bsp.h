@@ -152,7 +152,9 @@ const char *R_LightStylePattern(int style);
 
 // dynamic lights (r_light.c): set each frame, added into the lightmaps of the surfaces they reach
 void        R_ClearDlights(void);
-void        R_AddDlight(const float *origin, float radius, const float *color, float minlight);   // color 0..1
+// color 0..1; id: the same number every frame for the same light; shadow: it may cast shadows
+void        R_AddDlight(const float *origin, float radius, const float *color, float minlight, int id, qboolean shadow);
+#define R_TESTLIGHT_ID 0x7fffffff
 void        R_PushDlights(void);                                  // marks the world's surfaces they touch
 void        R_DlightSpace(const float *origin, const float *angles);   // a brush entity's space, NULL for the world's
 void        R_MarkSurfaceDlights(msurface_t *s);                  // marks one of a brush entity's surfaces
@@ -160,19 +162,19 @@ void        R_SurfaceDlights(const msurface_t *s, int *blocks);   // adds them t
 void        R_AnimateLightStyles(double time);
 void        R_InitLights(void);
 int         R_DlightCount(void);
-qboolean    R_DlightShadows(int i);
-void        R_GetDlightWorld(int i, float *origin, float *radius);
+int         R_DlightShadowId(int i);   // its id if it may cast shadows, else 0
+void        R_GetDlightWorld(int i, float *origin, float *radius, float *color);
 
 // brush entities being drawn this frame (r_world.c)
 int         R_BrushEntityCount(void);
 void        R_GetBrushEntity(int i, int *model, float *origin, float *angles, int *rendermode);
 
-// shadow maps (r_shadow.c): one point light's six depth views in a 3x2 atlas, rendered before the world
+// shadow maps (r_shadow.c): each chosen light's six depth views in a 3x2 atlas, rendered before the world
 void        R_InitShadows(void);
 void        R_RenderShadows(void);
-int         R_ShadowLight(void);   // the light that has a shadow map this frame, or -1
-GLuint      R_ShadowTexture(void);
-void        R_ShadowParams(float *znear, float *zfar, float *bias, int *size);
+int         R_ShadowSlot(int light);   // the light's shadow map this frame, or -1
+GLuint      R_ShadowTexture(int slot);
+void        R_ShadowParams(int slot, float *znear, float *zfar, float *bias, int *size, float *soft);
 // light i in the space set by R_DlightSpace
 void        R_GetDlight(int i, float *local_origin, float *radius, float *color);
 

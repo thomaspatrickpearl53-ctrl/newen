@@ -14,6 +14,7 @@ uniform float u_specscale;
 uniform float u_shadow;          // 1 = this light has the shadow map
 uniform sampler2D u_shadowmap;
 uniform vec4  u_shadowinfo;      // near, far, bias (units), 1 / view size
+uniform float u_shadowsoft;      // 1 = r_shadow_soft's wider filter
 uniform mat3  u_rot;             // the drawn model's directions to the world's
 
 varying vec2 v_st;
@@ -22,7 +23,28 @@ varying vec3 v_toview;
 varying vec3 v_normal;
 varying vec4 v_tangent;
 
-// d: from the light to the point, world axes. Returns how lit the point is (0..1), from 4 samples.
+// 1 if a point ref units along the view is in front of what the shadow map saw at uv
+float Lit(vec2 uv, float ref)
+{
+	float n = u_shadowinfo.x, fa = u_shadowinfo.y;
+	float z = texture2D(u_shadowmap, uv).r * 2.0 - 1.0;
+	float dist = 2.0 * fa * n / (fa + n - z * (fa - n));   // back to distance along the view
+	return ref <= dist ? 1.0 : 0.0;
+}
+
+// the four pixels round uv, each compared and then blended by where uv falls between them, so the edge is
+// smooth instead of stepping a whole pixel at a time
+float Pcf(vec2 uv, vec2 ts, float ref)
+{
+	vec2 p = uv / ts - 0.5;
+	vec2 w = fract(p);
+	vec2 base = (floor(p) + 0.5) * ts;
+	float a = Lit(base, ref), b = Lit(base + vec2(ts.x, 0.0), ref);
+	float c = Lit(base + vec2(0.0, ts.y), ref), e = Lit(base + ts, ref);
+	return mix(mix(a, b, w.x), mix(c, e, w.x), w.y);
+}
+
+// d: from the light to the point, world axes. Returns how lit the point is (0..1).
 float Shadow(vec3 d)
 {
 	vec3 a = abs(d);
@@ -44,19 +66,15 @@ float Shadow(vec3 d)
 	}
 	float texel = u_shadowinfo.w;   // one shadow map pixel, as a fraction of a view
 	// keep every sample inside this view, so nothing reads the neighbouring tile
-	vec2 f = clamp(vec2(dot(d, r), dot(d, u)) / m * 0.5 + 0.5, vec2(1.5 * texel), vec2(1.0 - 1.5 * texel));
+	vec2 f = clamp(vec2(dot(d, r), dot(d, u)) / m * 0.5 + 0.5, vec2(2.5 * texel), vec2(1.0 - 2.5 * texel));
 	vec2 uv = (tile + f) / vec2(3.0, 2.0);
-	vec2 ofs = vec2(texel) / vec2(3.0, 2.0) * 0.5;
-	float n = u_shadowinfo.x, fa = u_shadowinfo.y;
+	vec2 ts = vec2(texel) / vec2(3.0, 2.0);   // one pixel in the atlas
 	float ref = m - u_shadowinfo.z;
-	float lit = 0.0;
-	for (int i = 0; i < 4; i++) {
-		vec2 o = vec2(i == 0 || i == 2 ? -ofs.x : ofs.x, i < 2 ? -ofs.y : ofs.y);
-		float z = texture2D(u_shadowmap, uv + o).r * 2.0 - 1.0;
-		float dist = 2.0 * fa * n / (fa + n - z * (fa - n));   // back to distance along the view
-		lit += ref <= dist ? 1.0 : 0.0;
-	}
-	return lit * 0.25;
+	if (u_shadowsoft < 0.5)
+		return Pcf(uv, ts, ref);
+	// four filtered lookups a pixel apart: a soft edge about three pixels wide
+	return 0.25 * (Pcf(uv + vec2(-0.75, -0.75) * ts, ts, ref) + Pcf(uv + vec2(0.75, -0.75) * ts, ts, ref) +
+	               Pcf(uv + vec2(-0.75, 0.75) * ts, ts, ref) + Pcf(uv + vec2(0.75, 0.75) * ts, ts, ref));
 }
 
 void main()

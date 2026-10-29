@@ -907,6 +907,9 @@ static void EfxDecalRemoveAll(int tex) { R_DecalRemoveAll(tex); }
 // go when they die. Each frame the live ones go to the renderer.
 #define MAX_CL_DLIGHTS 32
 static dlight_t dlights[MAX_CL_DLIGHTS];
+// beside dlight_t, whose layout is the client's: muzzle flashes and the flashlight never cast shadows
+// (a flash is gone before a shadow matters; the flashlight sits on the wall it lights)
+static qboolean dlight_noshadow[MAX_CL_DLIGHTS];
 
 static dlight_t *CL_AllocDlight(int key)
 {
@@ -922,6 +925,7 @@ static dlight_t *CL_AllocDlight(int key)
 		d = &dlights[0];
 	memset(d, 0, sizeof(*d));
 	d->key = key;
+	dlight_noshadow[d - dlights] = false;
 	return d;
 }
 
@@ -950,7 +954,8 @@ static void Flashlight(edict_t *pl)
 	vec3_t org;
 	VectorMA(tr.endpos, 4, tr.plane.normal, org);
 	int v = (int)(255 * bright);
-	Light(-1, org, 100, v, v, v, 0.001f);
+	dlight_t *d = Light(-1, org, 100, v, v, v, 0.001f);
+	dlight_noshadow[d - dlights] = true;
 }
 
 static void EntityLights(void)
@@ -967,7 +972,8 @@ static void EntityLights(void)
 			AngleVectors(e->v.angles, f, NULL, NULL);
 			VectorMA(e->v.origin, 18, f, org);
 			org[2] += 16;
-			Light(i, org, 200.0f + CL_RandomInt(0, 31), 255, 220, 160, 0.1f);
+			dlight_t *d = Light(i, org, 200.0f + CL_RandomInt(0, 31), 255, 220, 160, 0.1f);
+			dlight_noshadow[d - dlights] = true;
 			e->v.effects &= ~EF_MUZZLEFLASH;   // once per shot, as GoldSrc's server clears it after sending
 		}
 		if (fx & EF_BRIGHTLIGHT) {
@@ -985,7 +991,8 @@ static void EntityLights(void)
 	}
 	// the gun in your hands (the client's EV_MuzzleFlash sets it)
 	if (cl_viewent.curstate.effects & EF_MUZZLEFLASH) {
-		Light(-2, cl_viewent.attachment[0], 200.0f + CL_RandomInt(0, 31), 255, 220, 160, 0.1f);
+		dlight_t *d = Light(-2, cl_viewent.attachment[0], 200.0f + CL_RandomInt(0, 31), 255, 220, 160, 0.1f);
+		dlight_noshadow[d - dlights] = true;
 		cl_viewent.curstate.effects &= ~EF_MUZZLEFLASH;
 	}
 }
@@ -1009,7 +1016,8 @@ static void UpdateDlights(void)
 		float c[3] = { d->color.r / 255.0f, d->color.g / 255.0f, d->color.b / 255.0f };
 		if (!c[0] && !c[1] && !c[2])
 			c[0] = c[1] = c[2] = 1;   // the client set no colour: white
-		R_AddDlight(d->origin, d->radius, c, d->minlight);
+		// the slot and the key together: a slot reused for another light gets another id
+		R_AddDlight(d->origin, d->radius, c, d->minlight, (i + 1) + (d->key & 0xffff) * MAX_CL_DLIGHTS, !dlight_noshadow[i]);
 	}
 }
 

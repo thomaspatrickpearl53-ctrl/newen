@@ -5,7 +5,7 @@ out, how to build and test it, what works, what doesn't, and what comes next. Re
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
 2026-10-29: **the modern renderer's steps 0-7 are built on branch `modern-renderer`** (section 9, "Renderer plan");
-several shadow lights (step 10) are next.
+the compatibility pass (step 11) is next.
 
 Status as of 2026-10-22: **Phase 1 is done. Phase 2 started with big maps: the ±32768 check, the NBSP format,
 the compiler and a TrenchBroom configuration are done, and so are closed captions (section 9). Designs for an
@@ -202,7 +202,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `snd_mem.c` | 383 | Loading: WAV (8/16/24-bit, float, any rate; the "cue" chunk's first point is the loop start), OGG/FLAC/MP3; a `.flac`/`.ogg` next to a `.wav` replaces it (the loop point still comes from the WAV); sentences.txt (directory prefixes, standalone and attached `(p v s e t)` options, `,` and `.` as `_comma`/`_period` words). The game sends sentences by number (`!806`) |
 | `snd_codecs.c` | 10 | The vendored decoders' implementations |
 | `r_shader.c` | 67 | GLSL programs from `base/shaders` (compile/link with the driver's log on failure) |
-| `r_shadow.c` | 505 | Shadow maps: one light's six depth views in a 3x2 atlas (FBO), world, brush entity (`{` with holes) and model casters, `r_shadow_debug` |
+| `r_shadow.c` | 588 | Shadow maps: the chosen lights' (`r_shadow_lights`) six depth views each in a 3x2 atlas (FBO), world, brush entity (`{` with holes) and model casters, `r_shadow_debug` |
 | `r_modern.c` | 207 | The modern renderer: `r_renderer` selection and fallback, materials (`_n`/`_s`), the per-light additive pass state |
 | `r_main.c` | 371 | View: Hor+ FOV, projection, Quake modelview, frustum planes, `R_CullBox`; the noclip camera; commands `map`, `maps`, `disconnect`, `viewpos`, `setpos`, `texlist` |
 
@@ -476,9 +476,9 @@ newen would read it), VIS hints for big open areas.
 
 **Renderer plan: `docs/RENDERER_PLAN.md`.** An optional `r_renderer modern` path (per-pixel dynamic lights,
 normal/specular maps, shadow maps) beside the current renderer, which stays the default. The owner accepted every
-recommendation in its section 8 (2026-10-29) and said go. **Steps 0-9 are done (branch `modern-renderer`); the
-owner reviewed 0-5 in game ("it works") and said continue. Next: step 10 (several shadow lights, choosing among
-the client's lights, softer edges), then 11 (compatibility completion).** What was built:
+recommendation in its section 8 (2026-10-29) and said go. **Steps 0-10 are done (branch `modern-renderer`); the
+owner reviewed 0-5 in game ("it works") and said continue. Next: step 11 (compatibility completion: decals,
+see-through models/brushes and the view model under modern light, final checks).** What was built:
 - `r_renderer classic|modern` (archived, applied in `R_LoadMap` before `BSP_Load` via `R_SelectRenderer`), the
   capability check (`LoadShaderExtensions` in `image.c`: GL 2.0 entry points, GLSL >= 1.20, 3 texture units and
   coordinate sets), `r_modern_forcefail`, `r_rendererinfo`. Any failure prints the reason and draws classic.
@@ -534,6 +534,16 @@ the client's lights, softer edges), then 11 (compatibility completion).** What w
   ones skipped). The main pass poses the model again: the pose isn't shared between the shadow and main passes
   yet (the plan's "shared per-frame pose data" is only shared across the six views). `BodySubmodel`, `SkinVerts`
   and `MaxMeshTris` are now shared by drawing and casting. `r_shadow_models 0` turns model casters off.
+- Step 10, several shadow lights: every dynamic light has an id (`R_AddDlight(..., id, shadow)`): the client's
+  are slot + key (`UpdateDlights` in `cl_tent.c`), the test light `R_TESTLIGHT_ID`. Muzzle flashes and the
+  flashlight are marked no-shadow in `dlight_noshadow[]` beside the client's `dlight_t` pool (its layout is the
+  client's, so no field could be added). `ChooseLights` (`r_shadow.c`) scores the rest by brightest colour x radius
+  / max(distance to the view, radius), x1.5 for an id that had a map last frame (hysteresis), the test light always
+  first; `r_shadow_lights` (default 2, at most `MAX_SHADOW_SLOTS` 8) get one shadow slot each (own FBO and atlas,
+  kept between frames), lights under `r_shadow_minradius` (64) never. Others still light, unshadowed.
+  `R_ModernSetLight` binds the light's own atlas on unit 3. Filtering: `Pcf` in `light.frag` compares the 4
+  nearest pixels and blends them bilinearly; `r_shadow_soft 1` (default) averages 4 of those a pixel apart (16
+  reads) for a ~3-pixel soft edge. The tile clamp is 2.5 pixels now.
 
 Verified (2026-10-29, RTX 3050): classic is pixel-identical to the pre-change build in c1a0d and c2a5 world shots
 (`r_drawentities 0`, `-nogamedll`, notify lines, FPS and watermark off; models animate, so full scenes aren't
@@ -556,7 +566,12 @@ the map behind the vents, not investigated. Classic and modern-without-lights st
 game runs (~250 fps) with the shadow light on. Step 9: c1a0d's two scientists throw person-shaped shadows on the
 wall behind them (light at -2330 1150 -240, with and without the game DLL); a scientist behind the camera still
 shadows the corkboard in view; `mdlview gman walk`'s shadow changes pose between frames 12 apart. Classic and
-modern-without-lights still pixel-identical. Not checked: a client light
+modern-without-lights still pixel-identical. Step 10: with the game, c1a0d's scientists given EF_BRIGHTLIGHT (4) by
+Lua plus the test light: with `r_shadow_lights 2` the same two ids (the test light and one glow) held the maps for
+all 32 frames logged; 1/2/3 give visibly more shadows; `r_shadow_debug 1` shows one atlas per light. Soft edges
+replace the stair-steps (scientist's shadow at 256). Classic and modern-without-lights still pixel-identical
+(re-run after a mouse movement turned the camera in one batch: setpos right before the screenshot avoids it).
+Not checked: a client light
 (muzzle flash) on screen in modern (the scripted weapon switch didn't happen), mirrored texture alignments,
 bodygroup/skin changes and chrome under a light, performance numbers (`r_speeds` counts world passes only), shadows
 on rotated brush entities, very large lights (the far plane is the radius; precision past ~1000 units untested).

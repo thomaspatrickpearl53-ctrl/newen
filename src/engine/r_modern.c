@@ -8,7 +8,7 @@ static cvar_t *r_renderer, *r_modern_forcefail, *r_dlightscale, *r_gloss, *r_spe
 static char fallback[160];   // why modern was asked for but classic is drawing
 
 static GLuint light_prog;
-static GLint u_lightorg, u_vieworg, u_lightcolor, u_radius, u_gloss, u_specscale, u_shadow, u_shadowinfo, u_rot;
+static GLint u_lightorg, u_vieworg, u_lightcolor, u_radius, u_gloss, u_specscale, u_shadow, u_shadowinfo, u_shadowsoft, u_rot;
 static gltexture_t *flat_normal, *no_specular;
 static int materials_n, materials_s;
 
@@ -33,6 +33,7 @@ static qboolean ModernInit(void)
 	u_specscale = qglGetUniformLocation(light_prog, "u_specscale");
 	u_shadow = qglGetUniformLocation(light_prog, "u_shadow");
 	u_shadowinfo = qglGetUniformLocation(light_prog, "u_shadowinfo");
+	u_shadowsoft = qglGetUniformLocation(light_prog, "u_shadowsoft");
 	u_rot = qglGetUniformLocation(light_prog, "u_rot");
 	qglUseProgram(light_prog);
 	qglUniform1i(qglGetUniformLocation(light_prog, "u_diffuse"), 0);
@@ -148,10 +149,6 @@ void R_ModernBeginLights(GLuint diffuse, const gltexture_t *normalmap, const glt
 	const float *rot)
 {
 	static const float identity[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-	if (R_ShadowLight() >= 0) {
-		qglActiveTexture(GL_TEXTURE3);
-		glBindTexture(GL_TEXTURE_2D, R_ShadowTexture());
-	}
 	qglActiveTexture(GL_TEXTURE1);
 	glBindTexture(GL_TEXTURE_2D, normalmap ? normalmap->id : flat_normal->id);
 	qglActiveTexture(GL_TEXTURE2);
@@ -178,13 +175,17 @@ void R_ModernSetLight(int i)
 	qglUniform3f(u_lightorg, org[0], org[1], org[2]);
 	qglUniform1f(u_radius, radius);
 	qglUniform3f(u_lightcolor, color[0] * scale, color[1] * scale, color[2] * scale);
-	qboolean shadowed = i == R_ShadowLight();
-	qglUniform1f(u_shadow, shadowed ? 1.0f : 0.0f);
-	if (shadowed) {
-		float znear, zfar, bias;
+	int slot = R_ShadowSlot(i);
+	qglUniform1f(u_shadow, slot >= 0 ? 1.0f : 0.0f);
+	if (slot >= 0) {
+		float znear, zfar, bias, soft;
 		int size;
-		R_ShadowParams(&znear, &zfar, &bias, &size);
+		R_ShadowParams(slot, &znear, &zfar, &bias, &size, &soft);
 		qglUniform4f(u_shadowinfo, znear, zfar, bias, 1.0f / size);
+		qglUniform1f(u_shadowsoft, soft);
+		qglActiveTexture(GL_TEXTURE3);
+		glBindTexture(GL_TEXTURE_2D, R_ShadowTexture(slot));
+		qglActiveTexture(GL_TEXTURE0);
 	}
 }
 

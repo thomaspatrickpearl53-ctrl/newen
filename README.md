@@ -64,11 +64,13 @@ a map's or a model's own textures for trying it out.
 - `r_dlightscale` (brightness of dynamic lights), `r_gloss` (shine sharpness, default 32), `r_specscale`.
 - `r_testlight <x y z radius> [r g b]`, `r_testlight here [radius]`, `r_testlight off`: an engine light for
   testing, in both renderers; `r_testlight_orbit <distance>` makes it circle its point.
-- Shadows: the test light casts shadows from walls, floors and other world brushes (`r_shadows 1`, default).
+- Shadows (`r_shadows 1`, default): the test light and the game's own lights (explosions, glowing monsters, the
+  lights maps and mods create) cast shadows from walls, floors and other world brushes. `r_shadow_lights` (2) picks
+  how many lights cast at once: the test light first, then the brightest ones near you. Muzzle flashes and the
+  flashlight don't cast. `r_shadow_soft` (1 = soft edges), `r_shadow_minradius` (smaller lights never cast).
   `r_shadow_size` (256, pixels per side of each of its six views), `r_shadow_bias`, `r_shadow_debug 1` (shows the
   shadow map). Doors, lifts and other moving brushes cast shadows too, and see-through textures (grates, fences)
   cast them with holes. People, monsters and items cast shadows that follow their animation (`r_shadow_models`).
-  Not yet: the game's own lights casting shadows.
 - Not in modern yet: the gun in your hands and see-through models and brush entities keep classic dynamic light;
   decals don't get it.
 
