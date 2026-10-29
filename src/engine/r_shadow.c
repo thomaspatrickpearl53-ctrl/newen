@@ -16,7 +16,7 @@ static const float face_u[6][3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 }, { 0, 
 
 #define SHADOW_NEAR 1.0f
 
-static cvar_t *r_shadows, *r_shadow_size, *r_shadow_bias, *r_shadow_debug;
+static cvar_t *r_shadows, *r_shadow_size, *r_shadow_bias, *r_shadow_debug, *r_shadow_models;
 static GLuint fbo, atlas;
 static int atlas_size;            // one tile's size; the texture is 3x by 2x that
 static qboolean atlas_failed;     // don't try again every frame
@@ -47,6 +47,17 @@ static int casterents_count, casterents_cap;
 static GLuint *casters;
 static int casters_count, casters_cap;
 static int c_casters;
+
+// models: posed once per frame into world-space triangles, then drawn into all six views
+typedef struct {
+	int first, count;           // vertices in model_xyz/model_st
+	const gltexture_t *masked;  // alpha-tested with this texture; NULL = solid
+} modelrun_t;
+static float *model_xyz, *model_st;
+static int model_verts, model_cap;
+static modelrun_t *modelruns;
+static int modelruns_count, modelruns_cap;
+static int c_models;
 
 int R_ShadowLight(void)
 {
@@ -209,6 +220,52 @@ static void CollectBrushCasters(const vec3_t org, float radius)
 	}
 }
 
+static void EmitModelTris(const float *xyz, const float *st, int n, const gltexture_t *masked)
+{
+	if (model_verts + n > model_cap) {
+		model_cap = (model_verts + n) * 2;
+		model_xyz = Mem_Realloc(model_xyz, sizeof(float) * 3 * model_cap);
+		model_st = Mem_Realloc(model_st, sizeof(float) * 2 * model_cap);
+	}
+	memcpy(model_xyz + model_verts * 3, xyz, sizeof(float) * 3 * n);
+	memcpy(model_st + model_verts * 2, st, sizeof(float) * 2 * n);
+	if (!modelruns_count || modelruns[modelruns_count - 1].masked != masked || masked) {
+		if (modelruns_count == modelruns_cap) {
+			modelruns_cap = modelruns_cap ? modelruns_cap * 2 : 64;
+			modelruns = Mem_Realloc(modelruns, sizeof(*modelruns) * modelruns_cap);
+		}
+		modelruns[modelruns_count].first = model_verts;
+		modelruns[modelruns_count].count = 0;
+		modelruns[modelruns_count].masked = masked;
+		modelruns_count++;
+	}
+	modelruns[modelruns_count - 1].count += n;
+	model_verts += n;
+}
+
+// Monsters, scientists, items: solid studio models near the light, whatever the camera sees
+static void CollectModelCasters(const vec3_t org, float radius)
+{
+	model_verts = modelruns_count = c_models = 0;
+	if (!r_shadow_models->value)
+		return;
+	int n = R_EntityTotal();
+	for (int i = 0; i < n; i++) {
+		rentity_t *e = R_EntityAt(i);
+		if (!e->model || e->model->type != mod_studio || !e->model->studio.hdr)
+			continue;
+		if (e->rendermode != kRenderNormal && e->rendermode != kRenderTransAlpha)
+			continue;
+		float r = e->model->radius > 16 ? e->model->radius : 16;
+		vec3_t d;
+		VectorSubtract(e->origin, org, d);
+		if (DotProduct(d, d) > (radius + r) * (radius + r))
+			continue;
+		R_StudioCasterGeometry(e, EmitModelTris);
+		c_models++;
+	}
+}
+
 // world first, then each entity; within each, opaque faces before the '{' ones grouped by texture
 static int CompareCastSurfs(const void *pa, const void *pb)
 {
@@ -300,6 +357,7 @@ void R_RenderShadows(void)
 	CollectWorldCasters(org, radius, &world.nodes[0], 0);
 	CollectBrushCasters(org, radius);
 	BuildBatches();
+	CollectModelCasters(org, radius);
 
 	shadow_light = light;
 	shadow_far = radius;
@@ -337,7 +395,7 @@ void R_RenderShadows(void)
 	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 	glTexCoordPointer(2, GL_FLOAT, sizeof(worldvert_t), (void *)offsetof(worldvert_t, st));
 	glAlphaFunc(GL_GREATER, 0.25f);
-	for (int k = 0; k < 6 && casters_count; k++) {
+	for (int k = 0; k < 6 && (casters_count || model_verts); k++) {
 		float m[16];
 		FaceModelview(k, org, m);
 		glViewport((k % 3) * atlas_size, (k / 3) * atlas_size, atlas_size, atlas_size);
@@ -370,6 +428,32 @@ void R_RenderShadows(void)
 			}
 		}
 	}
+	// the models' triangles are already in world space, in CPU memory
+	if (model_verts) {
+		qglBindBuffer(GL_ARRAY_BUFFER, 0);
+		glVertexPointer(3, GL_FLOAT, 0, model_xyz);
+		glTexCoordPointer(2, GL_FLOAT, 0, model_st);
+		glAlphaFunc(GL_GREATER, 0.5f);   // the studio renderer's cut for masked meshes
+		for (int k = 0; k < 6; k++) {
+			float m[16];
+			FaceModelview(k, org, m);
+			glLoadMatrixf(m);
+			glViewport((k % 3) * atlas_size, (k / 3) * atlas_size, atlas_size, atlas_size);
+			for (int i = 0; i < modelruns_count; i++) {
+				const modelrun_t *r = &modelruns[i];
+				if (r->masked) {
+					glEnable(GL_TEXTURE_2D);
+					glEnable(GL_ALPHA_TEST);
+					glBindTexture(GL_TEXTURE_2D, r->masked->id);
+				}
+				glDrawArrays(GL_TRIANGLES, r->first, r->count);
+				if (r->masked) {
+					glDisable(GL_ALPHA_TEST);
+					glDisable(GL_TEXTURE_2D);
+				}
+			}
+		}
+	}
 	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 	glDisableClientState(GL_VERTEX_ARRAY);
 	qglBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -386,8 +470,9 @@ void R_RenderShadows(void)
 	glEnable(GL_TEXTURE_2D);
 
 	if (r_shadow_debug->value > 1)
-		Con_Printf("shadow light %d: %d faces (%d brush entities) in %d batches, %d triangles, atlas %dx%d\n", light,
-			c_casters, casterents_count, batches_count, casters_count / 3, atlas_size * 3, atlas_size * 2);
+		Con_Printf("shadow light %d: %d faces (%d brush entities) in %d batches, %d triangles; %d models, %d triangles; "
+			"atlas %dx%d\n", light, c_casters, casterents_count, batches_count, casters_count / 3, c_models, model_verts / 3,
+			atlas_size * 3, atlas_size * 2);
 }
 
 // r_shadow_debug 1: the atlas in the top left corner (depth as grey: near is dark)
@@ -415,5 +500,6 @@ void R_InitShadows(void)
 	r_shadows = Cvar_Get("r_shadows", "1", FCVAR_ARCHIVE, "modern: the shadow-casting light (the test light, for now) casts shadows");
 	r_shadow_size = Cvar_Get("r_shadow_size", "256", FCVAR_ARCHIVE, "modern: pixels per side of each of a shadow's six views");
 	r_shadow_bias = Cvar_Get("r_shadow_bias", "1", FCVAR_ARCHIVE, "modern: how far (units) a surface may be behind the shadow map and still be lit");
+	r_shadow_models = Cvar_Get("r_shadow_models", "1", FCVAR_ARCHIVE, "modern: models (monsters, people, items) cast shadows");
 	r_shadow_debug = Cvar_Get("r_shadow_debug", "0", 0, "1 = show the shadow map in the corner, 2 = also print caster counts");
 }

@@ -314,6 +314,9 @@ void     R_InitEntities(void);
 void     R_BuildMapEntities(void);
 void     R_ClearEntities(void);
 void     R_DrawEntities(void);
-rentity_t *R_AddEntity(void);   // a new static entity (cleared on map change)
+rentity_t *R_AddEntity(void);
+int      R_EntityTotal(void);
+rentity_t *R_EntityAt(int i);
+void     R_StudioCasterGeometry(rentity_t *e, void (*emit)(const float *xyz, const float *st, int n, const gltexture_t *masked));   // a new static entity (cleared on map change)
 void     R_ClearFrameEntities(void);
 rentity_t *R_AddFrameEntity(void);   // rebuilt every frame (server edicts, client entities)

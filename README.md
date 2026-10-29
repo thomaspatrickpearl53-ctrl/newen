@@ -67,7 +67,8 @@ a map's or a model's own textures for trying it out.
 - Shadows: the test light casts shadows from walls, floors and other world brushes (`r_shadows 1`, default).
   `r_shadow_size` (256, pixels per side of each of its six views), `r_shadow_bias`, `r_shadow_debug 1` (shows the
   shadow map). Doors, lifts and other moving brushes cast shadows too, and see-through textures (grates, fences)
-  cast them with holes. Not yet: models and the game's own lights casting shadows.
+  cast them with holes. People, monsters and items cast shadows that follow their animation (`r_shadow_models`).
+  Not yet: the game's own lights casting shadows.
 - Not in modern yet: the gun in your hands and see-through models and brush entities keep classic dynamic light;
   decals don't get it.
 

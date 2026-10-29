@@ -633,6 +633,85 @@ static void DrawMeshes(const model_t *m, const rentity_t *e, const mstudiomodel_
 	}
 }
 
+// The body part's chosen submodel and its meshes (e->body picks one model per part)
+static const mstudiomodel_t *BodySubmodel(const model_t *m, const rentity_t *e, int part, int *sub, studiomesh_t **meshes)
+{
+	const studiohdr_t *h = m->studio.hdr;
+	const mstudiobodyparts_t *bp = STUDIO_PTR(h, h->bodypartindex, mstudiobodyparts_t) + part;
+	int choice = 0;
+	if (bp->nummodels > 0) {
+		int base = bp->base > 0 ? bp->base : 1;
+		int body = e->body >= 0 ? e->body : 0;
+		choice = (body / base) % bp->nummodels;
+	}
+	*meshes = m->studio.meshes[*sub + choice];
+	*sub += bp->nummodels;
+	return STUDIO_PTR(h, bp->modelindex, mstudiomodel_t) + choice;
+}
+
+static void SkinVerts(const studiohdr_t *h, const mstudiomodel_t *sm, float (*bones)[3][4])
+{
+	const unsigned char *vbone = STUDIO_PTR(h, sm->vertinfoindex, unsigned char);
+	const vec3_t *verts = STUDIO_PTR(h, sm->vertindex, vec3_t);
+	for (int v = 0; v < sm->numverts; v++) {
+		float (*b)[4] = bones[vbone[v]];
+		for (int j = 0; j < 3; j++)
+			xverts[v][j] = DotProduct(verts[v], b[j]) + b[j][3];
+	}
+}
+
+static int MaxMeshTris(const mstudiomodel_t *sm, const studiomesh_t *meshes)
+{
+	int ntris = 0;
+	for (int k = 0; k < sm->nummesh; k++)
+		if (meshes[k].numtris > ntris)
+			ntris = meshes[k].numtris;
+	return ntris;
+}
+
+// Shadow pass: the posed model's triangles in world space, mesh by mesh, to emit. Masked meshes come with their
+// texture and coordinates (for the alpha test); additive ones are left out, light goes through them.
+void R_StudioCasterGeometry(rentity_t *e, void (*emit)(const float *xyz, const float *st, int n, const gltexture_t *masked))
+{
+	model_t *m = e->model;
+	const studiohdr_t *h = m->studio.hdr;
+	const studiohdr_t *th = m->studio.texhdr;
+	float (*bones)[3][4];
+	R_StudioSetupBones(e, &bones);
+	const short *skins = STUDIO_PTR(th, th->skinindex, short);
+	int skin = (e->skin >= 0 && e->skin < th->numskinfamilies) ? e->skin : 0;
+	int sub = 0;
+	for (int i = 0; i < h->numbodyparts; i++) {
+		studiomesh_t *meshes;
+		const mstudiomodel_t *sm = BodySubmodel(m, e, i, &sub, &meshes);
+		if (!sm->numverts)
+			continue;
+		EnsureArrays(sm->numverts, sm->numnorms, MaxMeshTris(sm, meshes));
+		SkinVerts(h, sm, bones);
+		for (int k = 0; k < sm->nummesh; k++) {
+			const studiomesh_t *mesh = &meshes[k];
+			int ref = mesh->skinref;
+			if (ref >= 0 && ref < th->numskinref && th->numskinfamilies > 0)
+				ref = skins[skin * th->numskinref + ref];
+			if (!mesh->numtris || ref < 0 || ref >= th->numtextures)
+				continue;
+			const studiotex_t *tex = &m->studio.textures[ref];
+			if (tex->flags & STUDIO_NF_ADDITIVE)
+				continue;
+			qboolean masked = (tex->flags & STUDIO_NF_MASKED) && !(tex->flags & STUDIO_NF_CHROME);
+			float iw = 1.0f / tex->width, ih = 1.0f / tex->height;
+			int n = mesh->numtris * 3;
+			for (int t = 0; t < n; t++) {
+				const short *v = mesh->tris + t * 4;
+				VectorCopy(xverts[v[0]], arr_xyz + t * 3);
+				arr_st[t * 2 + 0] = v[2] * iw;
+				arr_st[t * 2 + 1] = v[3] * ih;
+			}
+			emit(arr_xyz, arr_st, n, masked ? tex->gl : NULL);
+		}
+	}
+}
+
 void R_StudioDrawModel(rentity_t *e)
 {
 	model_t *m = e->model;
@@ -666,36 +745,17 @@ void R_StudioDrawModel(rentity_t *e)
 	glEnableClientState(GL_COLOR_ARRAY);
 	glEnable(GL_TEXTURE_2D);
 
-	const mstudiobodyparts_t *bp = STUDIO_PTR(h, h->bodypartindex, mstudiobodyparts_t);
 	int sub = 0;
 	for (int i = 0; i < h->numbodyparts; i++) {
-		int choice = 0;
-		if (bp[i].nummodels > 0) {
-			int base = bp[i].base > 0 ? bp[i].base : 1;
-			int body = e->body >= 0 ? e->body : 0;
-			choice = (body / base) % bp[i].nummodels;
-		}
-		const mstudiomodel_t *sm = STUDIO_PTR(h, bp[i].modelindex, mstudiomodel_t) + choice;
-		studiomesh_t *meshes = m->studio.meshes[sub + choice];
-		sub += bp[i].nummodels;
+		studiomesh_t *meshes;
+		const mstudiomodel_t *sm = BodySubmodel(m, e, i, &sub, &meshes);
 		if (!sm->numverts)
 			continue;
+		EnsureArrays(sm->numverts, sm->numnorms, MaxMeshTris(sm, meshes));
+		SkinVerts(h, sm, bones);
 
-		int ntris = 0;
-		for (int k = 0; k < sm->nummesh; k++)
-			if (meshes[k].numtris > ntris)
-				ntris = meshes[k].numtris;
-		EnsureArrays(sm->numverts, sm->numnorms, ntris);
-
-		const unsigned char *vbone = STUDIO_PTR(h, sm->vertinfoindex, unsigned char);
-		const vec3_t *verts = STUDIO_PTR(h, sm->vertindex, vec3_t);
 		const unsigned char *nbone = STUDIO_PTR(h, sm->norminfoindex, unsigned char);
 		const vec3_t *norms = STUDIO_PTR(h, sm->normindex, vec3_t);
-		for (int v = 0; v < sm->numverts; v++) {
-			float (*b)[4] = bones[vbone[v]];
-			for (int j = 0; j < 3; j++)
-				xverts[v][j] = DotProduct(verts[v], b[j]) + b[j][3];
-		}
 		for (int v = 0; v < sm->numnorms; v++) {
 			float (*b)[4] = bones[nbone[v]];
 			for (int j = 0; j < 3; j++)

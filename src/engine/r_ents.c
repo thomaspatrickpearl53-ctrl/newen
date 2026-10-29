@@ -212,6 +212,17 @@ static void DrawEntity(rentity_t *e)
 	}
 }
 
+// every model and sprite this frame, on screen or not: the shadow pass needs the ones out of view too
+int R_EntityTotal(void)
+{
+	return r_drawentities->value ? ents_count + frame_count : 0;
+}
+
+rentity_t *R_EntityAt(int i)
+{
+	return i < ents_count ? &ents[i] : &frame_ents[i - ents_count];
+}
+
 void R_DrawEntities(void)
 {
 	int total = ents_count + frame_count;
