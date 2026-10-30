@@ -248,7 +248,7 @@ void     CL_MapEnded(void);
 // ---------------------------------------------------------------- snd_main.c
 void     S_Init(void);
 void     S_Shutdown(void);
-void     S_Update(const float *origin, const float *right);   // once a frame, after the view is known
+void     S_Update(const float *origin, const float *forward, const float *right);   // once a frame, after the view is known
 // entnum: the entity it belongs to (-1 = nowhere: full volume); origin NULL = follow the entity;
 // sample "!NAME" plays a sentence; attn 0 = everywhere; flags/pitch as in GoldSrc (SND_STOP...)
 void     S_StartSound(int entnum, int channel, const char *sample, const float *origin, float vol, float attn, int flags, int pitch);

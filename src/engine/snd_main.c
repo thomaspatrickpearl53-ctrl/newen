@@ -5,16 +5,28 @@
 // "auto" and "static" channels. Each frame every channel's left/right volume is worked out from
 // where its entity is, relative to the listener (distance falloff scaled by the attenuation, and
 // constant-power stereo panning), and enough audio is mixed to keep about s_mixahead seconds queued
-// on the SDL device. Samples are resampled on the fly (linear), which also gives pitch.
+// on the SDL device. Samples are resampled on the fly (windowed sinc, or linear with s_resample 0), which
+// also gives pitch. The gains glide from one frame's values to the next over each mix, so a moving
+// sound doesn't crackle.
+//
+// Placement beyond GoldSrc's panning (s_spatial): the ear away from a sound hears it up to 0.63 ms
+// later, as a head does; sounds behind you are a little duller; and (s_occlusion) a sound with the
+// world between it and you is quieter and muffled. A stereo sample placed in the world is folded to
+// mono first. Everything is mixed in floating point; a limiter (s_limiter) turns the whole mix down
+// for a moment when it would go past full scale, instead of clipping it.
 //
 // Sentences ("!HG_ALERT0") play their words one after another on one channel, each with its own
-// pitch, volume, start/end cut and time compression. Music (the cd and mp3 commands) is an MP3
-// streamed from memory. room_type picks an echo preset, and being underwater muffles everything.
+// pitch, volume, start/end cut and time compression. Music (the cd and mp3 commands) is an MP3, OGG
+// or FLAC streamed from memory; a media/<track>.ogg or .flac replaces the CD track's MP3.
+// room_type picks an echo preset, and being underwater muffles everything.
 // A speaking entity's mouth opens with the loudness of its voice channel.
 // Every sound that starts is handed to the closed captions (cl_caption.c) with its length and loudness.
 #include "snd_local.h"
 #include "server.h"
 #include "dr_mp3.h"
+#include "dr_flac.h"
+#define STB_VORBIS_HEADER_ONLY
+#include "stb_vorbis.c"
 #include <SDL.h>
 
 #define CHAN_AUTO   0
@@ -38,7 +50,13 @@ typedef struct {
 	int        pitch;
 	double     pos, endpos;      // in the sample's frames
 	double     wordstart;
-	float      left, right;      // this frame's gains
+	float      left, right;      // this frame's gains: the mix glides cur_left/cur_right to them
+	float      cur_left, cur_right;
+	float      delay, cur_delay; // output frames the far ear lags: > 0 the left ear, < 0 the right
+	float      muffle, cur_muffle;   // 0 clear .. 1 as muffled as it gets (behind you, behind a wall)
+	float      lp[2];            // the muffling low-pass, per ear
+	float      occlusion;        // 0..1, eased from frame to frame
+	qboolean   gains_set;        // cur_* hold this channel's own values (a new one starts at its targets)
 	sentence_t *sentence;
 	qboolean   own_sentence;     // made by "speak": freed with the channel
 	int        word;
@@ -55,7 +73,9 @@ static channel_t *chans;
 static int chans_count;
 static unsigned start_counter;
 static cvar_t *volume, *mp3volume, *s_mixahead, *room_type, *waterroom_type, *s_maxchannels, *snd_rate, *s_show;
-static vec3_t listener_origin, listener_right;
+static cvar_t *s_resample, *s_spatial, *s_occlusion, *s_limiter;
+static vec3_t listener_origin, listener_forward, listener_right;
+static float limiter_env = 1;   // the limiter's level: above 1 the mix is being turned down
 static qboolean listener_underwater;
 static float *mixbuf;
 static int mixbuf_frames;
@@ -330,11 +350,24 @@ static float Falloff(const channel_t *ch, vec3_t dir)
 	return dist >= 1 ? 0 : 1 - dist;
 }
 
+// Is the world between the listener and the sound? A sound whose own spot is inside a wall (a speaker
+// set into it) counts as heard.
+static qboolean Occluded(const vec3_t origin)
+{
+	if (!world.loaded || BSP_PointInLeaf(origin)->contents == CONTENTS_SOLID)
+		return false;
+	return R_LineBlocked(listener_origin, origin);
+}
+
+#define EAR_DELAY 0.00063f   // seconds a sound from straight to one side reaches the other ear later
+
 static void Spatialize(channel_t *ch, float master)
 {
 	float vol = ch->vol * ch->wordvol * master;
+	ch->delay = ch->muffle = 0;
 	if (!IsPlaced(ch)) {
 		ch->left = ch->right = vol;
+		ch->occlusion = 0;
 		return;
 	}
 	vec3_t d;
@@ -345,8 +378,27 @@ static void Spatialize(channel_t *ch, float master)
 	}
 	// constant power: the same loudness wherever it is around you, 1.0 each side straight ahead
 	float pan = DotProduct(listener_right, d);
-	float a = (pan + 1) * (M_PI_F / 4);
+	// GoldSrc pans all the way, so a sound off to one side is silent in the other ear; a head only shades it
+	// (to about -8 dB here), and the far ear's delay is what really tells you the side
+	float width = s_spatial->value ? 0.75f : 1.0f;
+	float a = (pan * width + 1) * (M_PI_F / 4);
 	float scale = vol * falloff * 1.41421356f;
+	if (s_spatial->value) {
+		ch->delay = EAR_DELAY * out_rate * pan;
+		float behind = -DotProduct(listener_forward, d);
+		if (behind > 0)
+			ch->muffle = behind * 0.3f;
+	}
+	if (s_occlusion->value) {
+		// eased over a few frames, so walking past a door frame doesn't flick the sound on and off
+		float target = Occluded(ch->origin) ? 1.0f : 0.0f;
+		ch->occlusion += (target - ch->occlusion) * 0.25f;
+		float k = s_occlusion->value > 1 ? 1 : s_occlusion->value;
+		scale *= 1 - ch->occlusion * 0.45f * k;
+		ch->muffle = 1 - (1 - ch->muffle) * (1 - ch->occlusion * 0.85f * k);
+	} else {
+		ch->occlusion = 0;
+	}
 	ch->left = scale * cosf(a);
 	ch->right = scale * sinf(a);
 }
@@ -384,9 +436,15 @@ static void Caption(channel_t *ch)
 
 // ---------------------------------------------------------------- music
 
+enum { MUSIC_MP3, MUSIC_OGG, MUSIC_FLAC };
+
 static struct {
 	unsigned char *file;
+	int     type;
 	drmp3   mp3;
+	stb_vorbis *ogg;
+	drflac *flac;
+	int     rate, channels;
 	qboolean open, loop, paused;
 	char    name[MAX_OSPATH];
 	float   buf[4096 * 2];       // decoded, stereo
@@ -396,8 +454,14 @@ static struct {
 
 static void StopMusic(void)
 {
-	if (music.open)
-		drmp3_uninit(&music.mp3);
+	if (music.open) {
+		if (music.type == MUSIC_MP3)
+			drmp3_uninit(&music.mp3);
+		else if (music.type == MUSIC_OGG)
+			stb_vorbis_close(music.ogg);
+		else
+			drflac_close(music.flac);
+	}
 	Mem_Free(music.file);
 	music.file = NULL;
 	music.open = false;
@@ -415,15 +479,62 @@ static void PlayMusic(const char *path, qboolean loop)
 		Con_Printf("Music %s not found\n", path);
 		return;
 	}
-	if (!drmp3_init_memory(&music.mp3, music.file, len, NULL)) {
-		Con_Warnf("%s isn't an MP3 file\n", path);
+	const char *ext = strrchr(path, '.');
+	if (ext && !stricmp(ext, ".ogg")) {
+		music.type = MUSIC_OGG;
+		int err = 0;
+		music.ogg = stb_vorbis_open_memory(music.file, (int)len, &err, NULL);
+		if (music.ogg) {
+			stb_vorbis_info info = stb_vorbis_get_info(music.ogg);
+			music.rate = (int)info.sample_rate;
+			music.channels = info.channels;
+		}
+	} else if (ext && !stricmp(ext, ".flac")) {
+		music.type = MUSIC_FLAC;
+		music.flac = drflac_open_memory(music.file, len, NULL);
+		if (music.flac) {
+			music.rate = (int)music.flac->sampleRate;
+			music.channels = music.flac->channels;
+		}
+	} else {
+		music.type = MUSIC_MP3;
+		if (drmp3_init_memory(&music.mp3, music.file, len, NULL)) {
+			music.rate = (int)music.mp3.sampleRate;
+			music.channels = (int)music.mp3.channels;
+		} else {
+			music.rate = 0;
+		}
+	}
+	if ((music.type == MUSIC_OGG && !music.ogg) || (music.type == MUSIC_FLAC && !music.flac) || music.rate <= 0) {
+		Con_Warnf("%s isn't a music file newen can play (MP3, OGG or FLAC)\n", path);
 		Mem_Free(music.file);
 		music.file = NULL;
 		return;
 	}
+	if (music.channels < 1)
+		music.channels = 1;
 	music.open = true;
 	music.loop = loop;
 	Q_strncpy(music.name, path, sizeof(music.name));
+}
+
+static int ReadMusic(float *out, int frames)
+{
+	if (music.type == MUSIC_OGG)
+		return stb_vorbis_get_samples_float_interleaved(music.ogg, music.channels, out, frames * music.channels);
+	if (music.type == MUSIC_FLAC)
+		return (int)drflac_read_pcm_frames_f32(music.flac, (drflac_uint64)frames, out);
+	return (int)drmp3_read_pcm_frames_f32(&music.mp3, (drmp3_uint64)frames, out);
+}
+
+static void RewindMusic(void)
+{
+	if (music.type == MUSIC_OGG)
+		stb_vorbis_seek_start(music.ogg);
+	else if (music.type == MUSIC_FLAC)
+		drflac_seek_to_pcm_frame(music.flac, 0);
+	else
+		drmp3_seek_to_pcm_frame(&music.mp3, 0);
 }
 
 // refills the decode buffer, keeping the last frame for interpolation
@@ -435,24 +546,24 @@ static qboolean RefillMusic(void)
 		music.pos -= music.buffered - 1;
 		music.buffered = 1;
 	}
-	static float tmp[4096 * 2];
-	int ch = music.mp3.channels > 0 ? (int)music.mp3.channels : 1;
+	static float tmp[4096 * 8];
+	int ch = music.channels;
 	int want = 4096 - music.buffered;
-	if (want > 4096 * 2 / ch)
-		want = 4096 * 2 / ch;
-	drmp3_uint64 got = drmp3_read_pcm_frames_f32(&music.mp3, want, tmp);
+	if (want > 4096 * 8 / ch)
+		want = 4096 * 8 / ch;
+	int got = ReadMusic(tmp, want);
 	if (!got && music.loop) {
-		drmp3_seek_to_pcm_frame(&music.mp3, 0);
-		got = drmp3_read_pcm_frames_f32(&music.mp3, want, tmp);
+		RewindMusic();
+		got = ReadMusic(tmp, want);
 	}
 	if (!got)
 		return false;
-	for (drmp3_uint64 i = 0; i < got; i++) {
+	for (int i = 0; i < got; i++) {
 		float l = tmp[i * ch], r = ch > 1 ? tmp[i * ch + 1] : l;
 		music.buf[(music.buffered + i) * 2] = l;
 		music.buf[(music.buffered + i) * 2 + 1] = r;
 	}
-	music.buffered += (int)got;
+	music.buffered += got;
 	return true;
 }
 
@@ -460,7 +571,7 @@ static void MixMusic(float *out, int frames, float gain)
 {
 	if (!music.open || music.paused || gain <= 0)
 		return;
-	double step = (double)music.mp3.sampleRate / out_rate;
+	double step = (double)music.rate / out_rate;
 	for (int i = 0; i < frames; i++) {
 		while ((int)music.pos + 1 >= music.buffered) {
 			if (!RefillMusic()) {
@@ -495,7 +606,17 @@ static void CD_f(void)
 			Con_DPrintf("cd: no track %d\n", t);
 			return;
 		}
-		PlayMusic(va("media/%s.mp3", cd_tracks[t]), !stricmp(c, "loop"));
+		// an OGG or FLAC of the track, where someone has put one, plays instead of the game's MP3
+		const char *path = va("media/%s.mp3", cd_tracks[t]);
+		static const char *better[] = { "ogg", "flac" };
+		for (int i = 0; i < 2; i++) {
+			const char *p = va("media/%s.%s", cd_tracks[t], better[i]);
+			if (FS_FileExists(p)) {
+				path = p;
+				break;
+			}
+		}
+		PlayMusic(path, !stricmp(c, "loop"));
 	} else if (!stricmp(c, "stop") || !stricmp(c, "off")) {
 		StopMusic();
 	} else if (!stricmp(c, "pause")) {
@@ -517,7 +638,7 @@ static void MP3_f(void)
 	else if (!stricmp(c, "stop"))
 		StopMusic();
 	else
-		Con_Printf("usage: mp3 play|loop <file> | stop\n");
+		Con_Printf("usage: mp3 play|loop <file .mp3/.ogg/.flac> | stop\n");
 }
 
 // ---------------------------------------------------------------- room echo
@@ -581,9 +702,81 @@ static void ApplyRoom(float *buf, int frames)
 
 // ---------------------------------------------------------------- mixing
 
+// sample frame i, channel k of a sound; past the end it loops (or is silent), before the start it's the first
+static float Tap(const sfx_t *s, int i, int k)
+{
+	if (i < 0)
+		i = 0;
+	if (i >= s->frames) {
+		if (s->loopstart < 0 || s->loopstart >= s->frames)
+			return 0;
+		i = s->loopstart + (i - s->frames) % (s->frames - s->loopstart);
+	}
+	return s->data[i * s->channels + k];
+}
+
+// Resampling. Half-Life's sounds are mostly 11 or 22 kHz; played at 48 kHz, a straight line between samples
+// leaves copies of the sound's top end ringing above its own highest pitch (the "grainy" 8-bit-era sound).
+// A windowed sinc (Lanczos, 8 samples, in 256 steps between two samples) filters those out.
+#define SINC_TAPS   8
+#define SINC_PHASES 256
+static float sinc_table[SINC_PHASES][SINC_TAPS];
+
+static void BuildSincTable(void)
+{
+	for (int p = 0; p < SINC_PHASES; p++) {
+		float t = (float)p / SINC_PHASES, sum = 0;
+		for (int j = 0; j < SINC_TAPS; j++) {
+			float x = (float)(j - (SINC_TAPS / 2 - 1)) - t;   // taps at i-3 .. i+4
+			float w;
+			if (fabsf(x) < 1e-6f) {
+				w = 1;
+			} else {
+				float px = M_PI_F * x, a = SINC_TAPS / 2.0f;
+				w = fabsf(x) < a ? (sinf(px) / px) * (sinf(px / a) / (px / a)) : 0;
+			}
+			sinc_table[p][j] = w;
+			sum += w;
+		}
+		for (int j = 0; j < SINC_TAPS; j++)
+			sinc_table[p][j] /= sum;   // so a steady level stays exactly the same
+	}
+}
+
+// the sound at a fractional position: windowed sinc, or linear (s_resample 0, as GoldSrc)
+static float ReadAt(const sfx_t *s, double pos, int k)
+{
+	if (pos < 0)
+		return 0;   // the far ear, before the sound has reached it
+	int i = (int)pos;
+	float t = (float)(pos - i);
+	if (!s_resample->value) {
+		float x1 = Tap(s, i, k), x2 = Tap(s, i + 1, k);
+		return x1 + (x2 - x1) * t;
+	}
+	const float *w = sinc_table[(int)(t * SINC_PHASES) & (SINC_PHASES - 1)];
+	float v = 0;
+	for (int j = 0; j < SINC_TAPS; j++)
+		v += Tap(s, i + j - (SINC_TAPS / 2 - 1), k) * w[j];
+	return v;
+}
+
 static void MixChannel(channel_t *ch, float *out, int frames)
 {
 	qboolean voice = ch->entnum > 0 && (ch->entchannel == CHAN_VOICE || ch->sentence);
+	if (!ch->gains_set) {
+		ch->cur_left = ch->left;
+		ch->cur_right = ch->right;
+		ch->cur_delay = ch->delay;
+		ch->cur_muffle = ch->muffle;
+		ch->gains_set = true;
+	}
+	// from where the last mix ended to this frame's targets, evenly over this mix
+	float inv = 1.0f / frames;
+	float dl = (ch->left - ch->cur_left) * inv, dr = (ch->right - ch->cur_right) * inv;
+	float dd = (ch->delay - ch->cur_delay) * inv, dm = (ch->muffle - ch->cur_muffle) * inv;
+	// a stereo sample out in the world comes from one spot
+	qboolean fold = ch->sfx && ch->sfx->channels == 2 && IsPlaced(ch);
 	for (int i = 0; i < frames; i++) {
 		sfx_t *s = ch->sfx;
 		if (ch->pos >= ch->endpos) {
@@ -610,24 +803,49 @@ static void MixChannel(channel_t *ch, float *out, int frames)
 			if (ch->pos >= ch->endpos)
 				continue;
 		}
-		int ip = (int)ch->pos;
-		float f = (float)(ch->pos - ip);
-		int next = ip + 1 < s->frames ? ip + 1 : (s->loopstart >= 0 ? s->loopstart : ip);
+		double step = (double)s->rate * ch->pitch * ch->wordpitch / (100.0 * 100.0 * out_rate);
+		// the ear away from the sound reads a little behind the near one
+		double lag = fabsf(ch->cur_delay) * step;
+		double lpos = ch->cur_delay > 0 ? ch->pos - lag : ch->pos;
+		double rpos = ch->cur_delay < 0 ? ch->pos - lag : ch->pos;
 		float l, r;
-		if (s->channels == 2) {
-			l = s->data[ip * 2] + (s->data[next * 2] - s->data[ip * 2]) * f;
-			r = s->data[ip * 2 + 1] + (s->data[next * 2 + 1] - s->data[ip * 2 + 1]) * f;
+		if (s->channels == 2 && !fold) {
+			l = ReadAt(s, lpos, 0);
+			r = ReadAt(s, rpos, 1);
+		} else if (s->channels == 2) {
+			l = (ReadAt(s, lpos, 0) + ReadAt(s, lpos, 1)) * 0.5f;
+			r = lag > 0 ? (ReadAt(s, rpos, 0) + ReadAt(s, rpos, 1)) * 0.5f : l;
 		} else {
-			l = r = s->data[ip] + (s->data[next] - s->data[ip]) * f;
+			l = ReadAt(s, lpos, 0);
+			r = lag > 0 ? ReadAt(s, rpos, 0) : l;
 		}
-		out[i * 2] += l * ch->left;
-		out[i * 2 + 1] += r * ch->right;
+		if (ch->cur_muffle > 0.001f) {
+			// one-pole low-pass: 1 = everything through, smaller = duller
+			float k = 1 - ch->cur_muffle * 0.9f;
+			ch->lp[0] += (l - ch->lp[0]) * k;
+			ch->lp[1] += (r - ch->lp[1]) * k;
+			l = ch->lp[0];
+			r = ch->lp[1];
+		} else {
+			ch->lp[0] = l;
+			ch->lp[1] = r;
+		}
+		out[i * 2] += l * ch->cur_left;
+		out[i * 2 + 1] += r * ch->cur_right;
 		if (voice) {
-			ch->mouth_sum += fabsf(l);
+			ch->mouth_sum += fabsf(l > r ? l : r);
 			ch->mouth_count++;
 		}
-		ch->pos += (double)s->rate * ch->pitch * ch->wordpitch / (100.0 * 100.0 * out_rate);
+		ch->pos += step;
+		ch->cur_left += dl;
+		ch->cur_right += dr;
+		ch->cur_delay += dd;
+		ch->cur_muffle += dm;
 	}
+	ch->cur_left = ch->left;
+	ch->cur_right = ch->right;
+	ch->cur_delay = ch->delay;
+	ch->cur_muffle = ch->muffle;
 }
 
 static void Mix(int frames)
@@ -643,19 +861,41 @@ static void Mix(int frames)
 	ApplyRoom(mixbuf, frames);
 	MixMusic(mixbuf, frames, mp3volume->value * volume->value);
 
-	static short *pcm;
+	// To the device as floats (-1..1). Over full scale the limiter turns the mix down at once, and lets it
+	// back up over about a tenth of a second: a burst of gunfire gets quieter for a moment instead of
+	// crackling. Without it (s_limiter 0) it's clipped as GoldSrc does.
+	static float *pcm;
+	static short *rec;
 	static int pcm_frames;
 	if (frames > pcm_frames) {
 		pcm_frames = frames;
-		pcm = Mem_Realloc(pcm, sizeof(short) * 2 * frames);
+		pcm = Mem_Realloc(pcm, sizeof(float) * 2 * frames);
+		rec = Mem_Realloc(rec, sizeof(short) * 2 * frames);
 	}
-	for (int i = 0; i < frames * 2; i++) {
-		float v = mixbuf[i];
-		pcm[i] = (short)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+	float release = expf(-1.0f / (0.1f * out_rate));
+	const float ceiling = 0.977f;   // -0.2 dB: a little room under full scale
+	for (int i = 0; i < frames; i++) {
+		float l = mixbuf[i * 2] / 32768.0f, r = mixbuf[i * 2 + 1] / 32768.0f;
+		if (s_limiter->value) {
+			float peak = (fabsf(l) > fabsf(r) ? fabsf(l) : fabsf(r)) / ceiling;
+			limiter_env = limiter_env * release + (1 - release);   // back towards 1
+			if (peak > limiter_env)
+				limiter_env = peak;
+			if (limiter_env > 1) {
+				l /= limiter_env;
+				r /= limiter_env;
+			}
+		}
+		l = l > 1 ? 1 : l < -1 ? -1 : l;
+		r = r > 1 ? 1 : r < -1 ? -1 : r;
+		pcm[i * 2] = l;
+		pcm[i * 2 + 1] = r;
+		rec[i * 2] = (short)(l * 32767);
+		rec[i * 2 + 1] = (short)(r * 32767);
 	}
-	SDL_QueueAudio(device, pcm, (Uint32)(sizeof(short) * 2 * frames));
+	SDL_QueueAudio(device, pcm, (Uint32)(sizeof(float) * 2 * frames));
 	if (record_file) {
-		fwrite(pcm, sizeof(short) * 2, (size_t)frames, record_file);
+		fwrite(rec, sizeof(short) * 2, (size_t)frames, record_file);
 		record_frames += frames;
 	}
 }
@@ -711,11 +951,12 @@ static void Record_f(void)
 	Con_Printf("Recording the sound to %s; s_record again stops\n", name);
 }
 
-void S_Update(const vec3_t origin, const vec3_t right)
+void S_Update(const vec3_t origin, const vec3_t forward, const vec3_t right)
 {
 	if (!device)
 		return;
 	VectorCopy(origin, listener_origin);
+	VectorCopy(forward, listener_forward);
 	VectorCopy(right, listener_right);
 	listener_underwater = world.loaded && BSP_PointInLeaf(origin)->contents <= CONTENTS_WATER &&
 		BSP_PointInLeaf(origin)->contents >= CONTENTS_LAVA;
@@ -742,7 +983,7 @@ void S_Update(const vec3_t origin, const vec3_t right)
 	if (s_show->value)
 		Con_Printf("%d channels playing\n", playing);
 
-	int queued = (int)(SDL_GetQueuedAudioSize(device) / (sizeof(short) * 2));
+	int queued = (int)(SDL_GetQueuedAudioSize(device) / (sizeof(float) * 2));
 	int target = (int)(s_mixahead->value * out_rate);
 	if (target < out_rate / 50)
 		target = out_rate / 50;
@@ -785,6 +1026,19 @@ static void Speak_f(void)
 	SpeakText(text, 1);
 }
 
+// s_playat <sound> <x y z> [attenuation]: a sound out in the world, for trying placement and muffling
+static void PlayAt_f(void)
+{
+	if (Cmd_Argc() < 5) {
+		Con_Printf("usage: s_playat <sound> <x> <y> <z> [attenuation, default 0.8]\n");
+		return;
+	}
+	const char *name = Cmd_Argv(1);
+	vec3_t org = { (float)atof(Cmd_Argv(2)), (float)atof(Cmd_Argv(3)), (float)atof(Cmd_Argv(4)) };
+	float attn = Cmd_Argc() > 5 ? (float)atof(Cmd_Argv(5)) : 0.8f;
+	S_StartSound(0, CHAN_AUTO, strchr(name, '.') ? name : va("%s.wav", name), org, 1, attn, 0, 100);
+}
+
 static void StopSound_f(void)
 {
 	S_StopAllSounds();
@@ -811,8 +1065,11 @@ static void SoundInfo_f(void)
 		Con_Printf("Sound is off\n");
 		return;
 	}
-	Con_Printf("%d Hz stereo, %d channel slots, room %d%s\n", out_rate, chans_count,
+	Con_Printf("%d Hz stereo (float), %d channel slots, room %d%s\n", out_rate, chans_count,
 		listener_underwater ? (int)waterroom_type->value : (int)room_type->value, listener_underwater ? " (underwater)" : "");
+	Con_Printf("resampling %s, placement %s, muffling through walls %s, limiter %s (now %.0f%%)\n",
+		s_resample->value ? "sinc" : "linear", s_spatial->value ? "with ear delay and rear" : "panning only",
+		s_occlusion->value ? "on" : "off", s_limiter->value ? "on" : "off", 100.0f / (limiter_env > 1 ? limiter_env : 1));
 }
 
 // ---------------------------------------------------------------- startup
@@ -827,6 +1084,10 @@ void S_Init(void)
 	s_maxchannels = Cvar_Get("s_maxchannels", "128", FCVAR_ARCHIVE, "most sounds playing at once");
 	snd_rate = Cvar_Get("snd_rate", "48000", FCVAR_ARCHIVE, "output sample rate (44100 or 48000; applies at start)");
 	s_show = Cvar_Get("s_show", "0", 0, "1 prints how many sounds are playing, 2 also every sound that starts");
+	s_resample = Cvar_Get("s_resample", "1", FCVAR_ARCHIVE, "1 = filtered (sinc) resampling, cleaner highs; 0 = linear like GoldSrc");
+	s_spatial = Cvar_Get("s_spatial", "1", FCVAR_ARCHIVE, "1 = the far ear hears a sound slightly later and sounds behind you are duller");
+	s_occlusion = Cvar_Get("s_occlusion", "1", FCVAR_ARCHIVE, "how much the world muffles a sound behind it (0 = not at all, 1 = full)");
+	s_limiter = Cvar_Get("s_limiter", "1", FCVAR_ARCHIVE, "1 = turn loud moments down instead of clipping them");
 	Cmd_AddCommand("play", Play_f, "play <sound> - plays a sound file (sound/ is implied)");
 	Cmd_AddCommand("playvol", PlayVol_f, "playvol <sound> <volume>");
 	Cmd_AddCommand("speak", Speak_f, "speak <sentence or words> - plays a sentence");
@@ -836,8 +1097,10 @@ void S_Init(void)
 	Cmd_AddCommand("soundinfo", SoundInfo_f, "shows the sound device");
 	Cmd_AddCommand("cd", CD_f, "cd play|loop <track> | stop | pause | resume - the game's music");
 	Cmd_AddCommand("mp3", MP3_f, "mp3 play|loop <file> | stop");
+	Cmd_AddCommand("s_playat", PlayAt_f, "s_playat <sound> <x y z> [attenuation] - plays a sound out in the world");
 	Cmd_AddCommand("s_record", Record_f, "s_record [file.wav] - records what you hear into the game's userdata folder; again stops");
 
+	BuildSincTable();
 	S_LoadSentences();
 	if (COM_CheckParm("-nosound"))
 		return;
@@ -848,7 +1111,7 @@ void S_Init(void)
 	SDL_AudioSpec want, have;
 	memset(&want, 0, sizeof(want));
 	want.freq = snd_rate->value >= 8000 ? (int)snd_rate->value : 48000;
-	want.format = AUDIO_S16SYS;
+	want.format = AUDIO_F32SYS;   // SDL converts if the device wants something else
 	want.channels = 2;
 	want.samples = 512;
 	device = SDL_OpenAudioDevice(NULL, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
@@ -858,7 +1121,7 @@ void S_Init(void)
 	}
 	out_rate = have.freq;
 	SDL_PauseAudioDevice(device, 0);
-	Con_Printf("Sound: %d Hz stereo (%s)\n", out_rate, SDL_GetCurrentAudioDriver());
+	Con_Printf("Sound: %d Hz stereo, float (%s)\n", out_rate, SDL_GetCurrentAudioDriver());
 }
 
 void S_Shutdown(void)

@@ -180,7 +180,7 @@ void Host_Frame(void)
 
 	Vid_BeginFrame();
 	R_RenderView();
-	S_Update(r_refdef.origin, r_refdef.right);
+	S_Update(r_refdef.origin, r_refdef.forward, r_refdef.right);
 	Draw_Begin2D();
 	R_ShadowDrawDebug();
 	CL_DrawHUD();

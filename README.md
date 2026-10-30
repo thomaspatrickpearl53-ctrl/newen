@@ -151,14 +151,22 @@ pressing fire loads the last save. Saves go to `bin/userdata/<game>/save/`; `sav
 
 Every sound the game and client make plays through newen's own mixer: positional (distance and stereo direction),
 sentences (soldiers, scientists, the HEV suit) with the speaker's mouth moving, the game's music (`cd play <track>`,
-or `mp3 play <file>`) from `media/*.mp3`, and room echo where the map sets it (muffled under water). A `.flac` or
-`.ogg` file next to a `.wav` (same name) is played instead of it, for HD sound packs.
+or `mp3 play <file>`) from `media/`, and room echo where the map sets it (muffled under water). A `.flac` or
+`.ogg` file next to a `.wav` (same name) is played instead of it, for HD sound packs, and `media/<track>.ogg` or
+`.flac` replaces a CD track's MP3.
+
+Beyond GoldSrc: mixing in floating point at 48 kHz with a limiter instead of clipping; filtered (sinc)
+resampling, so the game's 11 and 22 kHz sounds come out clearer; sounds to one side reach the far ear a fraction of
+a millisecond later, sounds behind you are slightly duller, and a sound with a wall between you is quieter and
+muffled; volumes glide smoothly while things move.
 
 - Cvars: `volume`, `MP3Volume`, `snd_rate` (44100 or 48000, at start), `s_mixahead`, `s_maxchannels`, `room_type`,
   `s_show` (1 = channel count, 2 = every sound that starts). `-nosound` turns sound off.
+- `s_resample` (1 sinc, 0 linear like GoldSrc), `s_spatial` (ear delay and rear dulling), `s_occlusion` (0-1, how
+  much walls muffle), `s_limiter`. Each 0 gives GoldSrc's behaviour back.
 - Commands: `play <sound>`, `playvol <sound> <volume>`, `speak <sentence or words>`, `stopsound`, `soundlist`,
   `soundinfo`, `cd play|loop|stop|pause|resume`, `mp3 play|loop|stop`, `s_record [file.wav]` (records what you hear
-  into `bin/userdata/<game>/`; again stops).
+  into `bin/userdata/<game>/`; again stops), `s_playat <sound> <x y z> [attenuation]` (a sound out in the world).
 
 ## Closed captions
 
