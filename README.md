@@ -71,6 +71,10 @@ a map's or a model's own textures for trying it out.
   `r_shadow_size` (256, pixels per side of each of its six views), `r_shadow_bias`, `r_shadow_debug 1` (shows the
   shadow map). Doors, lifts and other moving brushes cast shadows too, and see-through textures (grates, fences)
   cast them with holes. People, monsters and items cast shadows that follow their animation (`r_shadow_models`).
+- The flashlight (F) is a beam from a lamp beside your eyes, with a soft round pattern and its own shadow
+  (`r_flashlight_cone 0` gives classic's spot of light back). `r_flashlight_fov` (30 degrees), `r_flashlight_range`
+  (1000), `r_flashlight_brightness` (1); `textures/flashlight.png` replaces the pattern (black at the edges).
+  `r_testspot here|follow [angle range]` / `off` is a test spotlight that works without the game.
 - Decals (bullet holes, blood, scorch marks) and the gun in your hands get per-pixel light too
   (`r_modern_viewmodel 0` gives the gun classic's). See-through models and brushes (glass) keep classic's dynamic
   light.

@@ -19,17 +19,22 @@ static const float face_u[6][3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 }, { 0, 
 static cvar_t *r_shadows, *r_shadow_size, *r_shadow_bias, *r_shadow_debug, *r_shadow_models, *r_shadow_lights;
 static cvar_t *r_shadow_soft, *r_shadow_minradius;
 
-// one shadow map per chosen light; the textures are kept between frames
+// one shadow map per chosen light; the textures are kept between frames. Spotlights (the flashlight, r_testspot)
+// have one view instead of six and don't count against r_shadow_lights.
 #define MAX_SHADOW_SLOTS 8   // the most r_shadow_lights may ask for
+#define MAX_SPOT_SLOTS   2
 typedef struct {
 	GLuint fbo, tex;
-	int size;                 // one view's size; the texture is 3x by 2x that
+	int size;                 // one view's size; a point light's texture is 3x by 2x that, a spot's is the view
+	qboolean spot;            // what the texture was made for
 	qboolean failed;          // don't try again every frame
 	int light;                // this frame's light, -1 = unused
 	int id;                   // the light's id, for next frame's choice
 	float zfar;
+	vec3_t dir;               // spot: its view
+	float tanhalf;
 } shadowslot_t;
-static shadowslot_t slots[MAX_SHADOW_SLOTS];
+static shadowslot_t slots[MAX_SHADOW_SLOTS + MAX_SPOT_SLOTS];
 static int slots_used;
 static int last_ids[MAX_SHADOW_SLOTS], last_ids_count;
 static int warned_solid_frame = -1000;
@@ -82,6 +87,11 @@ GLuint R_ShadowTexture(int slot)
 	return slots[slot].tex;
 }
 
+int R_ShadowTextureSize(int slot)
+{
+	return slots[slot].size;
+}
+
 void R_ShadowParams(int slot, float *znear, float *zfar, float *bias, int *size, float *soft)
 {
 	*znear = SHADOW_NEAR;
@@ -101,24 +111,32 @@ static void FreeSlot(shadowslot_t *sl)
 	sl->size = 0;
 }
 
-static qboolean EnsureSlot(shadowslot_t *sl)
+static qboolean EnsureSlot(shadowslot_t *sl, qboolean spot)
 {
 	int size = (int)r_shadow_size->value;
 	if (size < 64) size = 64;
 	if (size > 4096) size = 4096;
-	if (size * 3 > gl_max_texture_size)
-		size = gl_max_texture_size / 3;
-	if (sl->fbo && size == sl->size)
+	// a spot's one view gets the pixels a point light spreads over its six: twice the size each way
+	if (spot)
+		size *= 2;
+	int w = spot ? size : size * 3, h = spot ? size : size * 2;
+	if (w > gl_max_texture_size) {
+		size = spot ? gl_max_texture_size : gl_max_texture_size / 3;
+		w = spot ? size : size * 3;
+		h = spot ? size : size * 2;
+	}
+	if (sl->fbo && size == sl->size && spot == sl->spot)
 		return true;
-	if (sl->failed && size == sl->size)
+	if (sl->failed && size == sl->size && spot == sl->spot)
 		return false;
 	FreeSlot(sl);
 	sl->size = size;
+	sl->spot = spot;
 	sl->failed = false;
 
 	glGenTextures(1, &sl->tex);
 	glBindTexture(GL_TEXTURE_2D, sl->tex);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, size * 3, size * 2, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
 	// the shader compares distances itself and filters by taking several samples
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -144,7 +162,7 @@ static qboolean EnsureSlot(shadowslot_t *sl)
 		sl->failed = true;
 		return false;
 	}
-	Con_DPrintf("Shadow map: %dx%d\n", size * 3, size * 2);
+	Con_DPrintf("Shadow map: %dx%d\n", w, h);
 	return true;
 }
 
@@ -338,10 +356,36 @@ static void FaceModelview(int k, const vec3_t org, float m[16])
 	m[15] = 1;
 }
 
-// One light's six views into its slot (the GL state is set up by R_RenderShadows)
+// A spotlight's one view, along its beam (rows R, U, -F like FaceModelview)
+static void SpotModelview(const shadowslot_t *sl, const vec3_t org, float m[16])
+{
+	vec3_t r, u;
+	const float *f = sl->dir;
+	R_SpotBasis(f, r, u);
+	m[0] = r[0]; m[4] = r[1]; m[8] = r[2];   m[12] = -DotProduct(r, org);
+	m[1] = u[0]; m[5] = u[1]; m[9] = u[2];   m[13] = -DotProduct(u, org);
+	m[2] = -f[0]; m[6] = -f[1]; m[10] = -f[2]; m[14] = DotProduct(f, org);
+	m[3] = m[7] = m[11] = 0;
+	m[15] = 1;
+}
+
+// view k of the slot: its matrix, and where it goes in the texture
+static void SetView(const shadowslot_t *sl, int k, const vec3_t org, float m[16])
+{
+	if (sl->spot) {
+		SpotModelview(sl, org, m);
+		glViewport(0, 0, sl->size, sl->size);
+	} else {
+		FaceModelview(k, org, m);
+		glViewport((k % 3) * sl->size, (k / 3) * sl->size, sl->size, sl->size);
+	}
+}
+
+// One light's views (six, or a spot's one) into its slot (the GL state is set up by R_RenderShadows)
 static void RenderSlot(shadowslot_t *sl, const vec3_t org, float radius)
 {
 	int atlas_size = sl->size;
+	int views = sl->spot ? 1 : 6;
 	castsurfs_count = 0;
 	CollectWorldCasters(org, radius, &world.nodes[0], 0);
 	CollectBrushCasters(org, radius);
@@ -351,11 +395,15 @@ static void RenderSlot(shadowslot_t *sl, const vec3_t org, float radius)
 
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-	glFrustum(-SHADOW_NEAR, SHADOW_NEAR, -SHADOW_NEAR, SHADOW_NEAR, SHADOW_NEAR, sl->zfar);
+	float e = sl->spot ? SHADOW_NEAR * sl->tanhalf : SHADOW_NEAR;   // 90 degrees for the six views
+	glFrustum(-e, e, -e, e, SHADOW_NEAR, sl->zfar);
 	glMatrixMode(GL_MODELVIEW);
 
 	qglBindFramebuffer(GL_FRAMEBUFFER, sl->fbo);
-	glViewport(0, 0, atlas_size * 3, atlas_size * 2);
+	if (sl->spot)
+		glViewport(0, 0, atlas_size, atlas_size);
+	else
+		glViewport(0, 0, atlas_size * 3, atlas_size * 2);
 	glDisable(GL_SCISSOR_TEST);
 	glDepthMask(GL_TRUE);
 	glClear(GL_DEPTH_BUFFER_BIT);
@@ -380,10 +428,9 @@ static void RenderSlot(shadowslot_t *sl, const vec3_t org, float radius)
 	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 	glTexCoordPointer(2, GL_FLOAT, sizeof(worldvert_t), (void *)offsetof(worldvert_t, st));
 	glAlphaFunc(GL_GREATER, 0.25f);
-	for (int k = 0; k < 6 && (casters_count || model_verts); k++) {
+	for (int k = 0; k < views && (casters_count || model_verts); k++) {
 		float m[16];
-		FaceModelview(k, org, m);
-		glViewport((k % 3) * atlas_size, (k / 3) * atlas_size, atlas_size, atlas_size);
+		SetView(sl, k, org, m);
 		int ent = -2;
 		for (int i = 0; i < batches_count; i++) {
 			const casterbatch_t *b = &batches[i];
@@ -419,11 +466,10 @@ static void RenderSlot(shadowslot_t *sl, const vec3_t org, float radius)
 		glVertexPointer(3, GL_FLOAT, 0, model_xyz);
 		glTexCoordPointer(2, GL_FLOAT, 0, model_st);
 		glAlphaFunc(GL_GREATER, 0.5f);   // the studio renderer's cut for masked meshes
-		for (int k = 0; k < 6; k++) {
+		for (int k = 0; k < views; k++) {
 			float m[16];
-			FaceModelview(k, org, m);
+			SetView(sl, k, org, m);
 			glLoadMatrixf(m);
-			glViewport((k % 3) * atlas_size, (k / 3) * atlas_size, atlas_size, atlas_size);
 			for (int i = 0; i < modelruns_count; i++) {
 				const modelrun_t *r = &modelruns[i];
 				if (r->masked) {
@@ -445,8 +491,8 @@ static void RenderSlot(shadowslot_t *sl, const vec3_t org, float radius)
 
 	if (r_shadow_debug->value > 1)
 		Con_Printf("shadow light %d id %d (slot %d): %d faces (%d brush entities) in %d batches, %d triangles; %d models, "
-			"%d triangles; atlas %dx%d\n", sl->light, sl->id, (int)(sl - slots), c_casters, casterents_count, batches_count, casters_count / 3,
-			c_models, model_verts / 3, atlas_size * 3, atlas_size * 2);
+			"%d triangles; %s %d\n", sl->light, sl->id, (int)(sl - slots), c_casters, casterents_count, batches_count, casters_count / 3,
+			c_models, model_verts / 3, sl->spot ? "spot, view" : "six views of", atlas_size);
 }
 
 typedef struct {
@@ -470,8 +516,10 @@ static int ChooseLights(shadowpick_t *picks, int budget)
 	float minradius = r_shadow_minradius->value;
 	for (int i = 0; i < R_DlightCount() && n < 64; i++) {
 		int id = R_DlightShadowId(i);
-		if (!id)
-			continue;
+		vec3_t spotdir;
+		float tanhalf;
+		if (!id || R_DlightIsSpot(i, spotdir, &tanhalf))
+			continue;   // spots have their own slots
 		vec3_t org, color, d;
 		float radius;
 		R_GetDlightWorld(i, org, &radius, color);
@@ -518,17 +566,42 @@ void R_RenderShadows(void)
 		budget = MAX_SHADOW_SLOTS;
 	shadowpick_t picks[MAX_SHADOW_SLOTS];
 	int n = budget > 0 ? ChooseLights(picks, budget) : 0;
+	// every spotlight casts (there are at most the flashlight and the test spot)
+	int spots[MAX_SPOT_SLOTS], nspots = 0;
+	for (int i = 0; i < R_DlightCount() && nspots < MAX_SPOT_SLOTS; i++) {
+		vec3_t dir, org, color;
+		float tanhalf, radius;
+		if (!R_DlightShadowId(i) || !R_DlightIsSpot(i, dir, &tanhalf))
+			continue;
+		R_GetDlightWorld(i, org, &radius, color);
+		if (radius > SHADOW_NEAR * 2 && BSP_PointInLeaf(org)->contents != CONTENTS_SOLID)
+			spots[nspots++] = i;
+	}
 	last_ids_count = 0;
-	if (!n)
+	if (!n && !nspots)
 		return;
 
 	glMatrixMode(GL_PROJECTION);
 	glPushMatrix();
 	glMatrixMode(GL_MODELVIEW);
 	glPushMatrix();
+	// spot slots come first and keep their places, so their textures stay square from frame to frame
+	for (int i = 0; i < nspots; i++) {
+		shadowslot_t *sl = &slots[slots_used];
+		if (!EnsureSlot(sl, true))
+			break;
+		vec3_t org, color;
+		float radius;
+		R_GetDlightWorld(spots[i], org, &radius, color);
+		R_DlightIsSpot(spots[i], sl->dir, &sl->tanhalf);
+		sl->light = spots[i];
+		sl->id = R_DlightShadowId(spots[i]);
+		RenderSlot(sl, org, radius);
+		slots_used++;
+	}
 	for (int i = 0; i < n; i++) {
 		shadowslot_t *sl = &slots[slots_used];
-		if (!EnsureSlot(sl))
+		if (!EnsureSlot(sl, false))
 			break;
 		vec3_t org, color;
 		float radius;

@@ -1,6 +1,7 @@
 #version 120
 // newen modern renderer: one dynamic light, diffuse plus Blinn-Phong specular, added (GL_ONE, GL_ONE).
-// The falloff matches classic dynamic lights: (radius - distance) on the lightmap's 0..255 scale.
+// Point lights fall off like classic dynamic lights: (radius - distance) on the lightmap's 0..255 scale.
+// Spotlights fade from full brightness at the lamp to nothing at their range, through their pattern.
 
 uniform sampler2D u_diffuse;
 uniform sampler2D u_normalmap;   // tangent space, +Y up the image; flat (0.5, 0.5, 1) when there's none
@@ -17,6 +18,13 @@ uniform sampler2D u_shadowmap;
 uniform vec4  u_shadowinfo;      // near, far, bias (units), 1 / view size
 uniform float u_shadowsoft;      // 1 = r_shadow_soft's wider filter
 uniform mat3  u_rot;             // the drawn model's directions to the world's
+
+// spotlights (the flashlight): a beam along u_spotdir; a point d from the light is at
+// (d.right, d.up) / (d.dir * tan(half angle)) across it, -1..1, where the pattern and the shadow map are read
+uniform float u_spot;            // 1 = this light is a spotlight
+uniform vec3  u_spotdir, u_spotright, u_spotup;   // world axes
+uniform vec4  u_spotinfo;        // tan(half angle), 1 / shadow map size
+uniform sampler2D u_cookie;      // the beam's pattern (black outside the circle)
 
 varying vec2 v_st;
 varying vec3 v_tolight;
@@ -78,15 +86,48 @@ float Shadow(vec3 d)
 	               Pcf(uv + vec2(-0.75, 0.75) * ts, ts, ref) + Pcf(uv + vec2(0.75, 0.75) * ts, ts, ref));
 }
 
+// A spotlight's single view: like Shadow, but one perspective view the size of the whole texture
+float SpotShadow(vec3 d)
+{
+	float z = dot(d, u_spotdir);
+	float ts = u_spotinfo.y;
+	vec2 uv = vec2(dot(d, u_spotright), dot(d, u_spotup)) / (z * u_spotinfo.x) * 0.5 + 0.5;
+	uv = clamp(uv, vec2(2.5 * ts), vec2(1.0 - 2.5 * ts));
+	float ref = z - u_shadowinfo.z;
+	vec2 t2 = vec2(ts);
+	if (u_shadowsoft < 0.5)
+		return Pcf(uv, t2, ref);
+	return 0.25 * (Pcf(uv + vec2(-0.75, -0.75) * t2, t2, ref) + Pcf(uv + vec2(0.75, -0.75) * t2, t2, ref) +
+	               Pcf(uv + vec2(-0.75, 0.75) * t2, t2, ref) + Pcf(uv + vec2(0.75, 0.75) * t2, t2, ref));
+}
+
 void main()
 {
 	vec4 albedo = texture2D(u_diffuse, v_st);
 	if (u_blend < 0.5 && albedo.a <= 0.25)
 		discard;   // the same cut as the '{' textures' alpha test
 	float dist = length(v_tolight);
-	float atten = (u_radius - dist) / 255.0;
-	if (atten <= 0.0)
-		discard;
+	float atten;
+	vec3 cookie = vec3(1.0);
+	if (u_spot > 0.5) {
+		// outside the beam: nothing. Inside: the pattern, and a smooth fade to the end of the range
+		vec3 dw = u_rot * -v_tolight;
+		float z = dot(dw, u_spotdir);
+		if (z <= 0.0)
+			discard;
+		vec2 p = vec2(dot(dw, u_spotright), dot(dw, u_spotup)) / (z * u_spotinfo.x);
+		if (abs(p.x) >= 1.0 || abs(p.y) >= 1.0)
+			discard;
+		cookie = texture2D(u_cookie, p * 0.5 + 0.5).rgb;
+		float k = 1.0 - dist / u_radius;
+		if (k <= 0.0)
+			discard;
+		atten = k * sqrt(k);
+	} else {
+		atten = (u_radius - dist) / 255.0;
+		if (atten <= 0.0)
+			discard;
+	}
 
 	vec3 n = normalize(v_normal);
 	vec3 t = normalize(v_tangent.xyz - n * dot(n, v_tangent.xyz));
@@ -108,10 +149,11 @@ void main()
 	if (u_shadow > 0.5 && ndl > 0.0) {
 		// look the shadow up a little off the surface, more where the light grazes it, so a face doesn't
 		// shadow itself between shadow map pixels ("acne"); one pixel is 2 * distance / size wide there
-		float pixel = 2.0 * dist * u_shadowinfo.w;
+		float pixel = 2.0 * dist * (u_spot > 0.5 ? u_spotinfo.x * u_spotinfo.y : u_shadowinfo.w);
 		vec3 offset = n * pixel * (1.0 + 2.0 * (1.0 - max(dot(n, L), 0.0)));
-		lit = Shadow(u_rot * (offset - v_tolight));
+		vec3 d = u_rot * (offset - v_tolight);
+		lit = u_spot > 0.5 ? SpotShadow(d) : Shadow(d);
 	}
 
-	gl_FragColor = vec4((albedo.rgb * ndl + s * spec) * u_lightcolor * atten * lit, u_blend > 0.5 ? albedo.a : 1.0);
+	gl_FragColor = vec4((albedo.rgb * ndl + s * spec) * u_lightcolor * cookie * atten * lit, u_blend > 0.5 ? albedo.a : 1.0);
 }

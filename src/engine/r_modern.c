@@ -9,7 +9,58 @@ static char fallback[160];   // why modern was asked for but classic is drawing
 
 static GLuint light_prog;
 static GLint u_lightorg, u_vieworg, u_lightcolor, u_radius, u_gloss, u_specscale, u_shadow, u_shadowinfo, u_shadowsoft, u_rot, u_blend;
+static GLint u_spot, u_spotdir, u_spotright, u_spotup, u_spotinfo;
 static gltexture_t *flat_normal, *no_specular;
+static gltexture_t *cookie;     // the flashlight beam's pattern, on texture unit 4
+static qboolean spots_ok;
+
+qboolean R_SpotlightsAvailable(void)
+{
+	return spots_ok;
+}
+
+// A soft round beam: brightest in the middle, a faint ring further out, fading to black before the edge (the
+// edge pixels must be black: the shader cuts the beam there). textures/flashlight.png replaces it.
+static gltexture_t *MakeCookie(void)
+{
+	int w, h;
+	unsigned char *rgba = Image_LoadAny("textures", "flashlight", &w, &h);
+	if (rgba) {
+		// whatever the file has at its border, the beam ends there
+		for (int x = 0; x < w; x++) {
+			memset(rgba + x * 4, 0, 3);
+			memset(rgba + ((h - 1) * w + x) * 4, 0, 3);
+		}
+		for (int y = 0; y < h; y++) {
+			memset(rgba + (y * w) * 4, 0, 3);
+			memset(rgba + (y * w + w - 1) * 4, 0, 3);
+		}
+		gltexture_t *t = GL_UploadTexture("*flashlight", rgba, w, h, TF_DATA | TF_CLAMP | TF_MIPMAP);
+		Mem_Free(rgba);
+		Con_Printf("Flashlight pattern: textures/flashlight (%dx%d)\n", w, h);
+		return t;
+	}
+	const int size = 128;
+	rgba = Mem_Alloc(size * size * 4);
+	for (int y = 0; y < size; y++)
+		for (int x = 0; x < size; x++) {
+			float u = (x + 0.5f) / size * 2 - 1, v = (y + 0.5f) / size * 2 - 1;
+			float r = sqrtf(u * u + v * v);   // 0 in the middle, 1 at the circle's edge
+			float edge = r >= 0.98f ? 0 : r <= 0.75f ? 1 : (0.98f - r) / 0.23f;
+			edge = edge * edge * (3 - 2 * edge);
+			float hot = 0.3f * expf(-(r * r) / (0.3f * 0.3f));
+			float ring = 0.12f * expf(-((r - 0.62f) * (r - 0.62f)) / (0.07f * 0.07f));
+			float value = (0.7f + hot + ring) * edge;
+			int c = (int)(value * 255);
+			if (c > 255) c = 255;
+			unsigned char *p = rgba + (y * size + x) * 4;
+			p[0] = p[1] = p[2] = (unsigned char)c;
+			p[3] = 255;
+		}
+	gltexture_t *t = GL_UploadTexture("*flashlight", rgba, size, size, TF_DATA | TF_CLAMP | TF_MIPMAP);
+	Mem_Free(rgba);
+	return t;
+}
 static int materials_n, materials_s;
 
 static qboolean ModernInit(void)
@@ -36,11 +87,17 @@ static qboolean ModernInit(void)
 	u_shadowsoft = qglGetUniformLocation(light_prog, "u_shadowsoft");
 	u_rot = qglGetUniformLocation(light_prog, "u_rot");
 	u_blend = qglGetUniformLocation(light_prog, "u_blend");
+	u_spot = qglGetUniformLocation(light_prog, "u_spot");
+	u_spotdir = qglGetUniformLocation(light_prog, "u_spotdir");
+	u_spotright = qglGetUniformLocation(light_prog, "u_spotright");
+	u_spotup = qglGetUniformLocation(light_prog, "u_spotup");
+	u_spotinfo = qglGetUniformLocation(light_prog, "u_spotinfo");
 	qglUseProgram(light_prog);
 	qglUniform1i(qglGetUniformLocation(light_prog, "u_diffuse"), 0);
 	qglUniform1i(qglGetUniformLocation(light_prog, "u_normalmap"), 1);
 	qglUniform1i(qglGetUniformLocation(light_prog, "u_specmap"), 2);
 	qglUniform1i(qglGetUniformLocation(light_prog, "u_shadowmap"), 3);
+	qglUniform1i(qglGetUniformLocation(light_prog, "u_cookie"), 4);
 	qglUseProgram(0);
 
 	if (!flat_normal) {
@@ -48,6 +105,11 @@ static qboolean ModernInit(void)
 		flat_normal = GL_UploadTexture("*flatnormal", up, 1, 1, TF_DATA | TF_NEAREST);
 		no_specular = GL_UploadTexture("*nospecular", black, 1, 1, TF_DATA | TF_NEAREST);
 	}
+	GLint units = 0;
+	glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &units);
+	spots_ok = units >= 5;
+	if (spots_ok && !cookie)
+		cookie = MakeCookie();
 	return true;
 }
 
@@ -154,6 +216,10 @@ void R_ModernBeginLights(GLuint diffuse, const gltexture_t *normalmap, const glt
 	glBindTexture(GL_TEXTURE_2D, normalmap ? normalmap->id : flat_normal->id);
 	qglActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, specmap ? specmap->id : no_specular->id);
+	if (cookie) {
+		qglActiveTexture(GL_TEXTURE4);
+		glBindTexture(GL_TEXTURE_2D, cookie->id);
+	}
 	qglActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, diffuse);
 
@@ -184,8 +250,20 @@ void R_ModernSetLight(int i)
 	qglUniform3f(u_lightorg, org[0], org[1], org[2]);
 	qglUniform1f(u_radius, radius);
 	qglUniform3f(u_lightcolor, color[0] * scale, color[1] * scale, color[2] * scale);
+	vec3_t dir, right, up;
+	float tanhalf = 1;
+	qboolean spot = R_DlightIsSpot(i, dir, &tanhalf);
+	qglUniform1f(u_spot, spot ? 1.0f : 0.0f);
+	if (spot) {
+		R_SpotBasis(dir, right, up);
+		qglUniform3f(u_spotdir, dir[0], dir[1], dir[2]);
+		qglUniform3f(u_spotright, right[0], right[1], right[2]);
+		qglUniform3f(u_spotup, up[0], up[1], up[2]);
+	}
 	int slot = R_ShadowSlot(i);
 	qglUniform1f(u_shadow, slot >= 0 ? 1.0f : 0.0f);
+	if (spot)
+		qglUniform4f(u_spotinfo, tanhalf, slot >= 0 ? 1.0f / R_ShadowTextureSize(slot) : 1.0f, 0, 0);
 	if (slot >= 0) {
 		float znear, zfar, bias, soft;
 		int size;
@@ -205,6 +283,10 @@ void R_ModernEndLights(void)
 	glDepthMask(GL_TRUE);
 	glDisable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	if (cookie) {
+		qglActiveTexture(GL_TEXTURE4);
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
 	qglActiveTexture(GL_TEXTURE3);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	qglActiveTexture(GL_TEXTURE2);

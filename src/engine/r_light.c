@@ -112,7 +112,10 @@ typedef struct {
 	float  radius, minlight;
 	float  color[3];
 	int    id;         // stays the same while the light lives (the shadow choice sticks to it)
-	qboolean shadow;   // may cast shadows (muzzle flashes and the flashlight don't)
+	qboolean shadow;   // may cast shadows (muzzle flashes and the classic flashlight don't)
+	qboolean spot;     // modern only: a beam along dir (world axes), tan(half angle) wide; radius is its range
+	vec3_t dir;
+	float  tanhalf;
 } rdlight_t;
 
 static rdlight_t rdlights[MAX_DLIGHTS];
@@ -125,6 +128,14 @@ static qboolean testlight_on;
 static vec3_t testlight_org;
 static float testlight_radius, testlight_color[3];
 static cvar_t *r_testlight_orbit;
+
+// spotlights: the flashlight (set by the client each frame it's on) and r_testspot
+static cvar_t *r_flashlight_fov, *r_flashlight_range, *r_flashlight_brightness, *r_flashlight_cone;
+static int flashlight_frame = -1;
+static vec3_t flashlight_org, flashlight_dir;
+static int testspot_mode;   // 0 off, 1 fixed where it was placed, 2 follows the view
+static vec3_t testspot_org, testspot_dir;
+static float testspot_fov, testspot_range;
 
 void R_ClearDlights(void)
 {
@@ -142,6 +153,7 @@ void R_AddDlight(const float *origin, float radius, const float *color, float mi
 	VectorCopy(color, l->color);
 	l->id = id;
 	l->shadow = shadow;
+	l->spot = false;
 	client_count = rdlight_count;
 }
 
@@ -190,6 +202,96 @@ static void AddTestLight(void)
 	VectorCopy(testlight_color, l->color);
 	l->id = R_TESTLIGHT_ID;
 	l->shadow = true;
+	l->spot = false;
+}
+
+qboolean R_DlightIsSpot(int i, float *dir, float *tanhalf)
+{
+	if (!rdlights[i].spot)
+		return false;
+	VectorCopy(rdlights[i].dir, dir);
+	*tanhalf = rdlights[i].tanhalf;
+	return true;
+}
+
+// right and up across a beam along dir (the shadow map's view and the shader use the same pair)
+void R_SpotBasis(const float *dir, float *right, float *up)
+{
+	vec3_t worldup = { 0, 0, 1 };
+	if (fabsf(dir[2]) > 0.99f)
+		VectorSet(worldup, 1, 0, 0);
+	CrossProduct(dir, worldup, right);
+	VectorNormalize(right);
+	CrossProduct(right, dir, up);
+}
+
+// The cone flashlight needs the modern renderer and a fifth texture unit for its pattern
+qboolean R_FlashlightCone(void)
+{
+	return r_modern && r_flashlight_cone->value && R_SpotlightsAvailable();
+}
+
+void R_SetFlashlight(const float *org, const float *dir)
+{
+	VectorCopy(org, flashlight_org);
+	VectorCopy(dir, flashlight_dir);
+	VectorNormalize(flashlight_dir);
+	flashlight_frame = r_refdef.framecount;
+}
+
+static void AddSpot(const vec3_t org, const vec3_t dir, float fov, float range, const float *color, int id)
+{
+	if (rdlight_count >= MAX_DLIGHTS || range <= 0)
+		return;
+	if (fov < 1) fov = 1;
+	if (fov > 170) fov = 170;
+	rdlight_t *l = &rdlights[rdlight_count++];
+	VectorCopy(org, l->origin);
+	l->radius = range;
+	l->minlight = 0;
+	VectorCopy(color, l->color);
+	l->id = id;
+	l->shadow = true;
+	l->spot = true;
+	VectorCopy(dir, l->dir);
+	VectorNormalize(l->dir);
+	l->tanhalf = tanf(DEG2RAD(fov * 0.5f));
+}
+
+static void AddSpots(void)
+{
+	if (!R_FlashlightCone())
+		return;
+	float b = r_flashlight_brightness->value;
+	vec3_t color = { b, b * 0.97f, b * 0.9f };   // a little warm, like an incandescent bulb
+	if (flashlight_frame == r_refdef.framecount)
+		AddSpot(flashlight_org, flashlight_dir, r_flashlight_fov->value, r_flashlight_range->value, color, R_FLASHLIGHT_ID);
+	if (testspot_mode == 2) {
+		VectorCopy(r_refdef.origin, testspot_org);
+		VectorCopy(r_refdef.forward, testspot_dir);
+	}
+	if (testspot_mode)
+		AddSpot(testspot_org, testspot_dir, testspot_fov, testspot_range, color, R_TESTSPOT_ID);
+}
+
+static void TestSpot_f(void)
+{
+	int argc = Cmd_Argc();
+	const char *what = argc > 1 ? Cmd_Argv(1) : "";
+	if (!stricmp(what, "off")) {
+		testspot_mode = 0;
+	} else if (!stricmp(what, "here") || !stricmp(what, "follow")) {
+		testspot_mode = !stricmp(what, "here") ? 1 : 2;
+		VectorCopy(r_refdef.origin, testspot_org);
+		VectorCopy(r_refdef.forward, testspot_dir);
+		testspot_fov = argc > 2 ? (float)atof(Cmd_Argv(2)) : r_flashlight_fov->value;
+		testspot_range = argc > 3 ? (float)atof(Cmd_Argv(3)) : r_flashlight_range->value;
+	} else {
+		Con_Printf("usage: r_testspot here|follow [angle range] | off   (modern renderer)\n");
+		return;
+	}
+	if (testspot_mode && !R_FlashlightCone())
+		Con_Warnf("Spotlights need r_renderer modern (and r_flashlight_cone 1)\n");
 }
 
 static void TestLight_f(void)
@@ -228,6 +330,11 @@ static void TestLight_f(void)
 void R_InitLights(void)
 {
 	r_testlight_orbit = Cvar_Get("r_testlight_orbit", "0", 0, "the test light circles its point at this distance");
+	r_flashlight_cone = Cvar_Get("r_flashlight_cone", "1", FCVAR_ARCHIVE, "modern: the flashlight is a beam with a shadow (0 = classic's spot of light)");
+	r_flashlight_fov = Cvar_Get("r_flashlight_fov", "30", FCVAR_ARCHIVE, "modern: the flashlight beam's width in degrees");
+	r_flashlight_range = Cvar_Get("r_flashlight_range", "1000", FCVAR_ARCHIVE, "modern: how far the flashlight reaches");
+	r_flashlight_brightness = Cvar_Get("r_flashlight_brightness", "1", FCVAR_ARCHIVE, "modern: the flashlight's brightness");
+	Cmd_AddCommand("r_testspot", TestSpot_f, "r_testspot here|follow [angle range] | off - an engine-owned spotlight for testing (modern)");
 	Cmd_AddCommand("r_testlight", TestLight_f, "r_testlight <x y z radius> [r g b] | here [radius] | off - an engine-owned dynamic light for testing");
 }
 
@@ -295,6 +402,7 @@ void R_PushDlights(void)
 {
 	rdlight_count = client_count;
 	AddTestLight();
+	AddSpots();
 	R_DlightSpace(NULL, NULL);
 	if (!world.numnodes)
 		return;
@@ -307,8 +415,8 @@ void R_SurfaceDlights(const msurface_t *s, int *blocks)
 {
 	const mtexinfo_t *ti = s->texinfo;
 	for (int i = 0; i < rdlight_count; i++) {
-		if (!(s->dlightbits & (1u << i)))
-			continue;
+		if (!(s->dlightbits & (1u << i)) || rdlights[i].spot)
+			continue;   // a beam isn't a sphere: only the modern light passes draw spotlights
 		const rdlight_t *l = &rdlights[i];
 		const float *lo = rdlight_local[i];
 		float dist = DotProduct(lo, s->plane->normal) - s->plane->dist;
@@ -341,6 +449,8 @@ void R_DlightPoint(const vec3_t p, vec3_t color)
 {
 	for (int i = 0; i < rdlight_count; i++) {
 		const rdlight_t *l = &rdlights[i];
+		if (l->spot)
+			continue;
 		vec3_t d;
 		VectorSubtract(p, l->origin, d);
 		float dist = VectorLength(d);

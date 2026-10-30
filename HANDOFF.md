@@ -477,10 +477,10 @@ newen would read it), VIS hints for big open areas.
 **Renderer plan: `docs/RENDERER_PLAN.md`.** An optional `r_renderer modern` path (per-pixel dynamic lights,
 normal/specular maps, shadow maps) beside the current renderer, which stays the default. The owner accepted every
 recommendation in its section 8 (2026-10-29) and said go. **All of its steps (0-11) are done (branch
-`modern-renderer`); the owner reviewed 0-5 in game ("it works") and said continue through 11. Later options from
-the plan, each needing the owner's choice: a projected (cone) flashlight with its own shadow, HDR/bloom, sunlight
-shadows, a material descriptor file, a lit shader for see-through surfaces, sharing model poses between the shadow
-and main passes.** What was built:
+`modern-renderer`); the owner reviewed 0-5 in game ("it works") and said continue through 11. After the plan (owner's pick, 2026-10-29,
+recommendations accepted): the cone flashlight, below. Later options, each needing the owner's choice: HDR/bloom,
+sunlight shadows, a material descriptor file, a lit shader for see-through surfaces, sharing model poses between
+the shadow and main passes.** What was built:
 - `r_renderer classic|modern` (archived, applied in `R_LoadMap` before `BSP_Load` via `R_SelectRenderer`), the
   capability check (`LoadShaderExtensions` in `image.c`: GL 2.0 entry points, GLSL >= 1.20, 3 texture units and
   coordinate sets), `r_modern_forcefail`, `r_rendererinfo`. Any failure prints the reason and draws classic.
@@ -555,6 +555,19 @@ and main passes.** What was built:
   per-pixel light like world models (`r_modern_viewmodel`, default 1); it draws in its 0..0.3 depth range and
   receives shadows but casts none. See-through studio models keep classic's point light. Sky, water, sprites,
   beams, particles, client triangles and the HUD stay on the classic path (program 0) unchanged.
+- Cone flashlight (after the plan): spotlights are `rdlight_t`s with `spot`, `dir` (world axes) and `tanhalf`; their
+  radius is the range. `Flashlight` in `cl_tent.c` calls `R_SetFlashlight` (modern, `R_FlashlightCone`: a lamp 8
+  units right of and below the eyes, aimed at the crosshair's hit) instead of classic's point light; `AddSpots` in
+  `R_PushDlights` adds it for the frame it was set, plus `r_testspot here|follow`. Ids `R_FLASHLIGHT_ID`,
+  `R_TESTSPOT_ID`. In `light.frag` a spot projects the point onto its beam (`u_spotdir/right/up`, `R_SpotBasis`),
+  reads the pattern (`u_cookie`, unit 4: `MakeCookie` in `r_modern.c` draws a soft round beam with a brighter
+  middle and a faint ring, or loads `textures/flashlight.*`, its border forced black) and fades as (1 - d/range)^1.5
+  times `r_flashlight_brightness`. Its shadow is one perspective view (`SpotModelview`, a square texture twice
+  `r_shadow_size`) in its own slot ahead of the point lights' (`MAX_SPOT_SLOTS` 2, outside `r_shadow_lights`);
+  `SpotShadow` reads it. Spots are skipped by classic-style dynamic light (`R_SurfaceDlights`, `R_DlightPoint`),
+  so see-through things don't glow in a 1000-unit sphere. Needs 5 texture units (`R_SpotlightsAvailable`), else the
+  classic flashlight. Cvars `r_flashlight_cone`, `_fov` (30), `_range` (1000), `_brightness` (1). The spot marks
+  every surface in its range sphere and the shader throws away what's outside the cone (not culled on the CPU).
 
 Verified (2026-10-29, RTX 3050): classic is pixel-identical to the pre-change build in c1a0d and c2a5 world shots
 (`r_drawentities 0`, `-nogamedll`, notify lines, FPS and watermark off; models animate, so full scenes aren't
@@ -588,7 +601,10 @@ under a light like classic's. The hivehand in your hands is lit from the light's
 and evenly with 0. c2a5's firefight spot (soldiers, god mode) ran 540 frames in modern without errors (22 decals,
 blood; no soldier reached the camera's view). Loading modern, then `r_renderer classic` and the map again in the
 same run is pixel-identical to the classic baseline; `vid_restart` to 960x600 in modern draws correctly. Classic
-and modern-without-lights still pixel-identical.
+and modern-without-lights still pixel-identical. Cone flashlight: `r_testspot` in c1a0d's lab draws a round soft
+beam and the left scientist's head and shoulders shadow the corkboard; with the game (`impulse 101`, `impulse
+100`) the beam lands on what the crosshair is on, moves when the view turns, and a scientist in it casts a
+shadow beside him; classic keeps its spot of light. Classic and modern-without-lights still pixel-identical.
 Not checked: a client light
 (muzzle flash) or an explosion's shadow on screen in modern (scripted weapon switches picked the hivehand), mirrored texture alignments,
 bodygroup/skin changes and chrome under a light, performance numbers (`r_speeds` counts world passes only), shadows

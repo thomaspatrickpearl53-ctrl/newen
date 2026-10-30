@@ -947,6 +947,18 @@ static void Flashlight(edict_t *pl)
 	vec3_t end;
 	VectorMA(r_refdef.origin, 2048, r_refdef.forward, end);
 	trace_t tr = SV_Move(r_refdef.origin, zero_vec, zero_vec, end, 0, pl);
+	if (R_FlashlightCone()) {
+		// modern: a beam from a lamp a little below and right of the eyes (so shadows fall beside things, not
+		// straight behind them), aimed at what the crosshair is on
+		vec3_t lamp, dir;
+		VectorMA(r_refdef.origin, 8, r_refdef.right, lamp);
+		VectorMA(lamp, -8, r_refdef.up, lamp);
+		VectorSubtract(tr.endpos, lamp, dir);
+		if (tr.fraction >= 1 || VectorNormalize(dir) < 16)
+			VectorCopy(r_refdef.forward, dir);
+		R_SetFlashlight(lamp, dir);
+		return;
+	}
 	float dist = tr.fraction * 2048;
 	float bright = dist < 400 ? 1.0f : dist > 1600 ? 0.0f : 1.0f - (dist - 400) / 1200;
 	if (bright <= 0)

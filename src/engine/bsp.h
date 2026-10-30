@@ -155,7 +155,14 @@ const char *R_LightStylePattern(int style);
 void        R_ClearDlights(void);
 // color 0..1; id: the same number every frame for the same light; shadow: it may cast shadows
 void        R_AddDlight(const float *origin, float radius, const float *color, float minlight, int id, qboolean shadow);
-#define R_TESTLIGHT_ID 0x7fffffff
+#define R_TESTLIGHT_ID  0x7fffffff
+#define R_FLASHLIGHT_ID 0x7ffffffe
+#define R_TESTSPOT_ID   0x7ffffffd
+qboolean    R_DlightIsSpot(int i, float *dir, float *tanhalf);   // world-axes direction
+void        R_SpotBasis(const float *dir, float *right, float *up);
+qboolean    R_FlashlightCone(void);   // the flashlight is a modern spotlight
+void        R_SetFlashlight(const float *org, const float *dir);   // the client, every frame it's on
+qboolean    R_SpotlightsAvailable(void);   // r_modern.c: the pattern's texture unit exists
 void        R_PushDlights(void);                                  // marks the world's surfaces they touch
 void        R_DlightSpace(const float *origin, const float *angles);   // a brush entity's space, NULL for the world's
 void        R_MarkSurfaceDlights(msurface_t *s);                  // marks one of a brush entity's surfaces
@@ -175,6 +182,7 @@ void        R_InitShadows(void);
 void        R_RenderShadows(void);
 int         R_ShadowSlot(int light);   // the light's shadow map this frame, or -1
 GLuint      R_ShadowTexture(int slot);
+int         R_ShadowTextureSize(int slot);   // a spotlight's whole texture (point lights: one of its six views)
 void        R_ShadowParams(int slot, float *znear, float *zfar, float *bias, int *size, float *soft);
 // light i in the space set by R_DlightSpace
 void        R_GetDlight(int i, float *local_origin, float *radius, float *color);
