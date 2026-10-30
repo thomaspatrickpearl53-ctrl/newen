@@ -39,6 +39,17 @@ static int slots_used;
 static int last_ids[MAX_SHADOW_SLOTS], last_ids_count;
 static int warned_solid_frame = -1000;
 
+// the sun (see the sun section below)
+static cvar_t *r_sun_shadows, *r_sun_shadow_size, *r_sun_shadow_range, *r_sun_shadow_darkness, *r_sun_angles;
+static qboolean sun_in_map;        // the map has a light_environment
+static vec3_t sun_map_dir;         // the way its light travels
+static qboolean sun_active;        // the sun maps were drawn this frame
+static vec3_t sun_dir, sun_right, sun_up, sun_eye;
+static float sun_half, sun_depth;  // half the covered square's side; the depth range
+static GLuint sun_fbo[2], sun_tex[2];
+static int sun_size;
+static qboolean sun_failed;
+
 // casters: faces collected for this frame's light, then sorted into batches (one per entity and '{' texture)
 typedef struct {
 	const msurface_t *surf;
@@ -51,6 +62,7 @@ typedef struct {
 } casterbatch_t;
 typedef struct {
 	vec3_t origin, angles;
+	qboolean fixed;             // scenery: drawn with the world into the sun's world map
 } casterent_t;
 
 static castsurf_t *castsurfs;
@@ -214,7 +226,8 @@ static void CollectBrushCasters(const vec3_t org, float radius)
 	for (int i = 0; i < n; i++) {
 		int model, rendermode;
 		vec3_t origin, angles;
-		R_GetBrushEntity(i, &model, origin, angles, &rendermode);
+		qboolean fixed;
+		R_GetBrushEntity(i, &model, origin, angles, &rendermode, &fixed);
 		if (rendermode != kRenderNormal && rendermode != kRenderTransAlpha)
 			continue;   // see-through: light goes through it
 		const msubmodel_t *m = &world.submodels[model];
@@ -246,6 +259,7 @@ static void CollectBrushCasters(const vec3_t org, float radius)
 		casterent_t *ce = &casterents[casterents_count];
 		VectorCopy(origin, ce->origin);
 		VectorCopy(angles, ce->angles);
+		ce->fixed = fixed;
 		for (int f = 0; f < m->numfaces; f++)
 			AddCastSurf(&world.surfaces[m->firstface + f], casterents_count);
 		casterents_count++;
@@ -381,6 +395,105 @@ static void SetView(const shadowslot_t *sl, int k, const vec3_t org, float m[16]
 	}
 }
 
+// Depth-only drawing of the collected casters, into whatever framebuffer and viewport are bound
+static void BeginCasterDraw(void)
+{
+	glDisable(GL_SCISSOR_TEST);
+	glDepthMask(GL_TRUE);
+	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LEQUAL);
+	glDisable(GL_CULL_FACE);   // both sides: thin walls cast too, and the bias handles acne
+	glDisable(GL_BLEND);
+	glDisable(GL_ALPHA_TEST);
+	qglActiveTexture(GL_TEXTURE1);
+	glDisable(GL_TEXTURE_2D);
+	qglActiveTexture(GL_TEXTURE0);
+	glDisable(GL_TEXTURE_2D);
+	glEnable(GL_POLYGON_OFFSET_FILL);
+	glPolygonOffset(1.5f, 2.0f);
+	qglClientActiveTexture(GL_TEXTURE0);
+	glEnableClientState(GL_VERTEX_ARRAY);
+	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+}
+
+static void EndCasterDraw(void)
+{
+	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+	glDisableClientState(GL_VERTEX_ARRAY);
+	qglBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+enum { CASTERS_ALL, CASTERS_WORLD, CASTERS_MOVING };
+
+// the batched world and brush entity faces through view matrix m; which: all, only the world's, only the entities'
+static void DrawCasterBatches(const float m[16], int which)
+{
+	qglBindBuffer(GL_ARRAY_BUFFER, world.vbo);
+	glVertexPointer(3, GL_FLOAT, sizeof(worldvert_t), (void *)offsetof(worldvert_t, xyz));
+	// '{' faces need their texture's alpha, so fences cast shadows with holes
+	glTexCoordPointer(2, GL_FLOAT, sizeof(worldvert_t), (void *)offsetof(worldvert_t, st));
+	glAlphaFunc(GL_GREATER, 0.25f);
+	int ent = -2;
+	for (int i = 0; i < batches_count; i++) {
+		const casterbatch_t *b = &batches[i];
+		qboolean scenery = b->ent < 0 || casterents[b->ent].fixed;
+		if ((which == CASTERS_WORLD && !scenery) || (which == CASTERS_MOVING && scenery))
+			continue;
+		if (b->ent != ent) {
+			// the same transform DrawBrushEntity uses
+			ent = b->ent;
+			glLoadMatrixf(m);
+			if (ent >= 0) {
+				const casterent_t *ce = &casterents[ent];
+				glTranslatef(ce->origin[0], ce->origin[1], ce->origin[2]);
+				if (ce->angles[0] || ce->angles[1] || ce->angles[2]) {
+					glRotatef(ce->angles[1], 0, 0, 1);
+					glRotatef(ce->angles[0], 0, 1, 0);
+					glRotatef(ce->angles[2], 1, 0, 0);
+				}
+			}
+		}
+		if (b->tex) {
+			glEnable(GL_TEXTURE_2D);
+			glEnable(GL_ALPHA_TEST);
+			glBindTexture(GL_TEXTURE_2D, b->tex->gl ? b->tex->gl->id : GL_MissingTexture()->id);
+		}
+		glDrawElements(GL_TRIANGLES, b->count, GL_UNSIGNED_INT, casters + b->first);
+		if (b->tex) {
+			glDisable(GL_ALPHA_TEST);
+			glDisable(GL_TEXTURE_2D);
+		}
+	}
+}
+
+// the posed models (world space, CPU memory) through view matrix m
+static void DrawModelCasters(const float m[16])
+{
+	if (!model_verts)
+		return;
+	qglBindBuffer(GL_ARRAY_BUFFER, 0);
+	glVertexPointer(3, GL_FLOAT, 0, model_xyz);
+	glTexCoordPointer(2, GL_FLOAT, 0, model_st);
+	glAlphaFunc(GL_GREATER, 0.5f);   // the studio renderer's cut for masked meshes
+	glLoadMatrixf(m);
+	for (int i = 0; i < modelruns_count; i++) {
+		const modelrun_t *r = &modelruns[i];
+		if (r->masked) {
+			glEnable(GL_TEXTURE_2D);
+			glEnable(GL_ALPHA_TEST);
+			glBindTexture(GL_TEXTURE_2D, r->masked->id);
+		}
+		glDrawArrays(GL_TRIANGLES, r->first, r->count);
+		if (r->masked) {
+			glDisable(GL_ALPHA_TEST);
+			glDisable(GL_TEXTURE_2D);
+		}
+	}
+}
+
+static void RenderSun(void);
+
 // One light's views (six, or a spot's one) into its slot (the GL state is set up by R_RenderShadows)
 static void RenderSlot(shadowslot_t *sl, const vec3_t org, float radius)
 {
@@ -404,90 +517,15 @@ static void RenderSlot(shadowslot_t *sl, const vec3_t org, float radius)
 		glViewport(0, 0, atlas_size, atlas_size);
 	else
 		glViewport(0, 0, atlas_size * 3, atlas_size * 2);
-	glDisable(GL_SCISSOR_TEST);
-	glDepthMask(GL_TRUE);
+	BeginCasterDraw();
 	glClear(GL_DEPTH_BUFFER_BIT);
-	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-	glEnable(GL_DEPTH_TEST);
-	glDepthFunc(GL_LEQUAL);
-	glDisable(GL_CULL_FACE);   // both sides: thin walls cast too, and the bias handles acne
-	glDisable(GL_BLEND);
-	glDisable(GL_ALPHA_TEST);
-	qglActiveTexture(GL_TEXTURE1);
-	glDisable(GL_TEXTURE_2D);
-	qglActiveTexture(GL_TEXTURE0);
-	glDisable(GL_TEXTURE_2D);
-	glEnable(GL_POLYGON_OFFSET_FILL);
-	glPolygonOffset(1.5f, 2.0f);
-
-	qglBindBuffer(GL_ARRAY_BUFFER, world.vbo);
-	glEnableClientState(GL_VERTEX_ARRAY);
-	glVertexPointer(3, GL_FLOAT, sizeof(worldvert_t), (void *)offsetof(worldvert_t, xyz));
-	// '{' faces need their texture's alpha, so fences cast shadows with holes
-	qglClientActiveTexture(GL_TEXTURE0);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-	glTexCoordPointer(2, GL_FLOAT, sizeof(worldvert_t), (void *)offsetof(worldvert_t, st));
-	glAlphaFunc(GL_GREATER, 0.25f);
 	for (int k = 0; k < views && (casters_count || model_verts); k++) {
 		float m[16];
 		SetView(sl, k, org, m);
-		int ent = -2;
-		for (int i = 0; i < batches_count; i++) {
-			const casterbatch_t *b = &batches[i];
-			if (b->ent != ent) {
-				// the same transform DrawBrushEntity uses
-				ent = b->ent;
-				glLoadMatrixf(m);
-				if (ent >= 0) {
-					const casterent_t *ce = &casterents[ent];
-					glTranslatef(ce->origin[0], ce->origin[1], ce->origin[2]);
-					if (ce->angles[0] || ce->angles[1] || ce->angles[2]) {
-						glRotatef(ce->angles[1], 0, 0, 1);
-						glRotatef(ce->angles[0], 0, 1, 0);
-						glRotatef(ce->angles[2], 1, 0, 0);
-					}
-				}
-			}
-			if (b->tex) {
-				glEnable(GL_TEXTURE_2D);
-				glEnable(GL_ALPHA_TEST);
-				glBindTexture(GL_TEXTURE_2D, b->tex->gl ? b->tex->gl->id : GL_MissingTexture()->id);
-			}
-			glDrawElements(GL_TRIANGLES, b->count, GL_UNSIGNED_INT, casters + b->first);
-			if (b->tex) {
-				glDisable(GL_ALPHA_TEST);
-				glDisable(GL_TEXTURE_2D);
-			}
-		}
+		DrawCasterBatches(m, CASTERS_ALL);
+		DrawModelCasters(m);
 	}
-	// the models' triangles are already in world space, in CPU memory
-	if (model_verts) {
-		qglBindBuffer(GL_ARRAY_BUFFER, 0);
-		glVertexPointer(3, GL_FLOAT, 0, model_xyz);
-		glTexCoordPointer(2, GL_FLOAT, 0, model_st);
-		glAlphaFunc(GL_GREATER, 0.5f);   // the studio renderer's cut for masked meshes
-		for (int k = 0; k < views; k++) {
-			float m[16];
-			SetView(sl, k, org, m);
-			glLoadMatrixf(m);
-			for (int i = 0; i < modelruns_count; i++) {
-				const modelrun_t *r = &modelruns[i];
-				if (r->masked) {
-					glEnable(GL_TEXTURE_2D);
-					glEnable(GL_ALPHA_TEST);
-					glBindTexture(GL_TEXTURE_2D, r->masked->id);
-				}
-				glDrawArrays(GL_TRIANGLES, r->first, r->count);
-				if (r->masked) {
-					glDisable(GL_ALPHA_TEST);
-					glDisable(GL_TEXTURE_2D);
-				}
-			}
-		}
-	}
-	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-	glDisableClientState(GL_VERTEX_ARRAY);
-	qglBindBuffer(GL_ARRAY_BUFFER, 0);
+	EndCasterDraw();
 
 	if (r_shadow_debug->value > 1)
 		Con_Printf("shadow light %d id %d (slot %d): %d faces (%d brush entities) in %d batches, %d triangles; %d models, "
@@ -559,6 +597,7 @@ static int ChooseLights(shadowpick_t *picks, int budget)
 void R_RenderShadows(void)
 {
 	slots_used = 0;
+	sun_active = false;
 	if (!r_modern || !r_shadows->value || !gl_fbo || !world.numnodes)
 		return;
 	int budget = (int)r_shadow_lights->value;
@@ -578,7 +617,8 @@ void R_RenderShadows(void)
 			spots[nspots++] = i;
 	}
 	last_ids_count = 0;
-	if (!n && !nspots)
+	sun_active = false;
+	if (!n && !nspots && !(r_sun_shadows->value && (sun_in_map || r_sun_angles->string[0])))
 		return;
 
 	glMatrixMode(GL_PROJECTION);
@@ -612,6 +652,7 @@ void R_RenderShadows(void)
 		last_ids[last_ids_count++] = sl->id;
 		slots_used++;
 	}
+	RenderSun();
 
 	// back to the main view exactly as R_RenderView set it up
 	glDisable(GL_POLYGON_OFFSET_FILL);
@@ -623,6 +664,172 @@ void R_RenderShadows(void)
 	glMatrixMode(GL_MODELVIEW);
 	glPopMatrix();
 	glEnable(GL_TEXTURE_2D);
+}
+
+// ---------------------------------------------------------------- sun
+//
+// Half-Life's lightmaps already have the sun and its shadows from the map itself, so the sun only adds the
+// shadows of what moves (models, doors, trains). Two orthographic depth maps follow the viewer along the sun's
+// direction: the world's own faces, and the moving things. A surface is darkened where something moving is between
+// it and the sun but the world isn't (indoors and in baked shade the world already is).
+
+
+// light_environment: "pitch" (down is negative) and "angle"/"angles" for the yaw, as the map compiler reads them
+void R_SunNewMap(void)
+{
+	sun_in_map = false;
+	for (int i = 0; i < world.numentities; i++) {
+		const bspentity_t *e = &world.entities[i];
+		if (stricmp(BSP_ValueForKey(e, "classname"), "light_environment"))
+			continue;
+		vec3_t angles = { 0, 0, 0 };
+		const char *a = BSP_ValueForKey(e, "angles");
+		if (*a)
+			sscanf(a, "%f %f %f", &angles[0], &angles[1], &angles[2]);
+		const char *yaw = BSP_ValueForKey(e, "angle");
+		if (*yaw)
+			angles[1] = (float)atof(yaw);
+		const char *pitch = BSP_ValueForKey(e, "pitch");
+		if (*pitch)
+			angles[0] = (float)atof(pitch);
+		float p = DEG2RAD(angles[0]), y = DEG2RAD(angles[1]);
+		VectorSet(sun_map_dir, cosf(y) * cosf(p), sinf(y) * cosf(p), sinf(p));
+		sun_in_map = true;
+		break;
+	}
+}
+
+static qboolean EnsureSunMaps(void)
+{
+	int size = (int)r_sun_shadow_size->value;
+	if (size < 256) size = 256;
+	if (size > gl_max_texture_size) size = gl_max_texture_size;
+	if (sun_fbo[0] && size == sun_size)
+		return true;
+	if (sun_failed && size == sun_size)
+		return false;
+	for (int i = 0; i < 2; i++) {
+		if (sun_fbo[i]) qglDeleteFramebuffers(1, &sun_fbo[i]);
+		if (sun_tex[i]) glDeleteTextures(1, &sun_tex[i]);
+		sun_fbo[i] = sun_tex[i] = 0;
+	}
+	sun_size = size;
+	sun_failed = false;
+	for (int i = 0; i < 2; i++) {
+		glGenTextures(1, &sun_tex[i]);
+		glBindTexture(GL_TEXTURE_2D, sun_tex[i]);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, size, size, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+		glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_TEXTURE_MODE, GL_LUMINANCE);
+		qglGenFramebuffers(1, &sun_fbo[i]);
+		qglBindFramebuffer(GL_FRAMEBUFFER, sun_fbo[i]);
+		qglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sun_tex[i], 0);
+		glDrawBuffer(GL_NONE);
+		glReadBuffer(GL_NONE);
+		GLenum status = qglCheckFramebufferStatus(GL_FRAMEBUFFER);
+		qglBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glDrawBuffer(GL_BACK);
+		glReadBuffer(GL_BACK);
+		if (status != GL_FRAMEBUFFER_COMPLETE) {
+			Con_Warnf("Sun shadows are off: the framebuffer isn't usable (status 0x%x)\n", status);
+			sun_failed = true;
+			return false;
+		}
+	}
+	glBindTexture(GL_TEXTURE_2D, 0);
+	return true;
+}
+
+static void RenderSun(void)
+{
+	sun_active = false;
+	if (!r_sun_shadows->value || !EnsureSunMaps())
+		return;
+	VectorCopy(sun_map_dir, sun_dir);
+	float pitch, yaw;
+	if (sscanf(r_sun_angles->string, "%f %f", &pitch, &yaw) == 2) {
+		float p = DEG2RAD(pitch), y = DEG2RAD(yaw);
+		VectorSet(sun_dir, cosf(y) * cosf(p), sinf(y) * cosf(p), sinf(p));
+	} else if (!sun_in_map) {
+		return;
+	}
+	if (sun_dir[2] > -0.05f)
+		return;   // a sun at or below the horizon throws no useful shadow
+	R_SpotBasis(sun_dir, sun_right, sun_up);
+
+	sun_half = r_sun_shadow_range->value > 128 ? r_sun_shadow_range->value : 128;
+	// the square follows the viewer in whole shadow map pixels, so shadow edges don't crawl as you walk
+	float texel = sun_half * 2 / sun_size;
+	float cr = floorf(DotProduct(r_refdef.origin, sun_right) / texel) * texel;
+	float cu = floorf(DotProduct(r_refdef.origin, sun_up) / texel) * texel;
+	float cf = DotProduct(r_refdef.origin, sun_dir);
+	// from high above along the sun: cliffs and roofs up to that far away still count
+	sun_depth = sun_half * 4;
+	for (int i = 0; i < 3; i++)
+		sun_eye[i] = sun_right[i] * cr + sun_up[i] * cu + sun_dir[i] * (cf - sun_depth * 0.5f);
+
+	// casters: everything in a sphere round the column the maps cover
+	vec3_t mid;
+	VectorMA(sun_eye, sun_depth * 0.5f, sun_dir, mid);
+	float reach = sqrtf(2 * sun_half * sun_half + sun_depth * sun_depth * 0.25f);
+	castsurfs_count = 0;
+	CollectWorldCasters(mid, reach, &world.nodes[0], 0);
+	CollectBrushCasters(mid, reach);
+	BuildBatches();
+	CollectModelCasters(mid, reach);
+
+	float m[16];
+	const float *r = sun_right, *u = sun_up, *f = sun_dir;
+	m[0] = r[0]; m[4] = r[1]; m[8] = r[2];   m[12] = -DotProduct(r, sun_eye);
+	m[1] = u[0]; m[5] = u[1]; m[9] = u[2];   m[13] = -DotProduct(u, sun_eye);
+	m[2] = -f[0]; m[6] = -f[1]; m[10] = -f[2]; m[14] = DotProduct(f, sun_eye);
+	m[3] = m[7] = m[11] = 0;
+	m[15] = 1;
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+	glOrtho(-sun_half, sun_half, -sun_half, sun_half, 0, sun_depth);
+	glMatrixMode(GL_MODELVIEW);
+
+	for (int i = 0; i < 2; i++) {
+		qglBindFramebuffer(GL_FRAMEBUFFER, sun_fbo[i]);
+		glViewport(0, 0, sun_size, sun_size);
+		BeginCasterDraw();
+		glClear(GL_DEPTH_BUFFER_BIT);
+		if (i == 0) {
+			DrawCasterBatches(m, CASTERS_WORLD);
+		} else {
+			DrawCasterBatches(m, CASTERS_MOVING);
+			DrawModelCasters(m);
+		}
+		EndCasterDraw();
+	}
+	sun_active = true;
+	if (r_shadow_debug->value > 1)
+		Con_Printf("sun: %d faces, %d brush entities, %d models within %.0f, map %d\n", c_casters, casterents_count, c_models,
+			reach, sun_size);
+}
+
+qboolean R_SunActive(void)
+{
+	return sun_active && r_modern;
+}
+
+void R_SunParams(GLuint *worldtex, GLuint *movingtex, float *eye, float *dir, float *right, float *up, float *info)
+{
+	*worldtex = sun_tex[0];
+	*movingtex = sun_tex[1];
+	VectorCopy(sun_eye, eye);
+	VectorCopy(sun_dir, dir);
+	VectorCopy(sun_right, right);
+	VectorCopy(sun_up, up);
+	info[0] = sun_half;
+	info[1] = sun_depth;
+	info[2] = r_sun_shadow_darkness->value;
+	info[3] = 1.0f / sun_size;
 }
 
 // r_shadow_debug 1: the shadow maps down the left side (depth as grey: near is dark)
@@ -651,6 +858,11 @@ void R_ShadowDrawDebug(void)
 void R_InitShadows(void)
 {
 	r_shadows = Cvar_Get("r_shadows", "1", FCVAR_ARCHIVE, "modern: dynamic lights cast shadows");
+	r_sun_shadows = Cvar_Get("r_sun_shadows", "1", FCVAR_ARCHIVE, "modern: people, monsters, doors and trains cast shadows in sunlight");
+	r_sun_shadow_size = Cvar_Get("r_sun_shadow_size", "2048", FCVAR_ARCHIVE, "modern: pixels per side of the sun's shadow map");
+	r_sun_shadow_range = Cvar_Get("r_sun_shadow_range", "2000", FCVAR_ARCHIVE, "modern: how far round you sun shadows reach");
+	r_sun_shadow_darkness = Cvar_Get("r_sun_shadow_darkness", "0.45", FCVAR_ARCHIVE, "modern: how much a sun shadow darkens the ground (0-1)");
+	r_sun_angles = Cvar_Get("r_sun_angles", "", 0, "modern: \"pitch yaw\" for the sun instead of the map's light_environment (pitch -90 = straight down)");
 	r_shadow_lights = Cvar_Get("r_shadow_lights", "2", FCVAR_ARCHIVE, va("modern: how many lights cast shadows at once (up to %d)", MAX_SHADOW_SLOTS));
 	r_shadow_minradius = Cvar_Get("r_shadow_minradius", "64", FCVAR_ARCHIVE, "modern: smaller lights don't cast shadows (the test light always may)");
 	r_shadow_soft = Cvar_Get("r_shadow_soft", "1", FCVAR_ARCHIVE, "modern: 1 = softer shadow edges (16 samples), 0 = 4");

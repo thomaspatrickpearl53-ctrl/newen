@@ -12,6 +12,8 @@ static GLint u_lightorg, u_vieworg, u_lightcolor, u_radius, u_gloss, u_specscale
 static GLint u_spot, u_spotdir, u_spotright, u_spotup, u_spotinfo;
 static gltexture_t *flat_normal, *no_specular;
 static gltexture_t *cookie;     // the flashlight beam's pattern, on texture unit 4
+static GLuint sun_prog;
+static GLint us_rot, us_origin, us_eye, us_dir, us_right, us_up, us_info;
 static qboolean spots_ok;
 
 qboolean R_SpotlightsAvailable(void)
@@ -104,6 +106,25 @@ static qboolean ModernInit(void)
 		static const unsigned char up[4] = { 128, 128, 255, 255 }, black[4] = { 0, 0, 0, 255 };
 		flat_normal = GL_UploadTexture("*flatnormal", up, 1, 1, TF_DATA | TF_NEAREST);
 		no_specular = GL_UploadTexture("*nospecular", black, 1, 1, TF_DATA | TF_NEAREST);
+	}
+	// sun shadows are optional: a broken sun shader only turns them off
+	R_FreeProgram(&sun_prog);
+	sun_prog = R_LoadProgram("modern/sun");
+	if (sun_prog) {
+		us_rot = qglGetUniformLocation(sun_prog, "u_rot");
+		us_origin = qglGetUniformLocation(sun_prog, "u_origin");
+		us_eye = qglGetUniformLocation(sun_prog, "u_suneye");
+		us_dir = qglGetUniformLocation(sun_prog, "u_sundir");
+		us_right = qglGetUniformLocation(sun_prog, "u_sunright");
+		us_up = qglGetUniformLocation(sun_prog, "u_sunup");
+		us_info = qglGetUniformLocation(sun_prog, "u_suninfo");
+		qglUseProgram(sun_prog);
+		qglUniform1i(qglGetUniformLocation(sun_prog, "u_diffuse"), 0);
+		qglUniform1i(qglGetUniformLocation(sun_prog, "u_sunworld"), 1);
+		qglUniform1i(qglGetUniformLocation(sun_prog, "u_sunmoving"), 2);
+		qglUseProgram(0);
+	} else {
+		Con_Warnf("Sun shadows are off: the sun shader failed (the error is above)\n");
 	}
 	GLint units = 0;
 	glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &units);
@@ -274,6 +295,41 @@ void R_ModernSetLight(int i)
 		glBindTexture(GL_TEXTURE_2D, R_ShadowTexture(slot));
 		qglActiveTexture(GL_TEXTURE0);
 	}
+}
+
+// ---------------------------------------------------------------- sun shadows
+
+qboolean R_ModernSunReady(void)
+{
+	return sun_prog && R_SunActive();
+}
+
+// Multiplies the surfaces about to be drawn by their sun shadow (arrays as for the light passes; rot and origin
+// place the drawn model in the world, NULL = it's the world)
+void R_ModernBeginSun(GLuint diffuse, const float *rot, const float *origin)
+{
+	static const float identity[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 }, zero[3] = { 0, 0, 0 };
+	GLuint wtex, mtex;
+	float eye[3], dir[3], right[3], up[3], info[4];
+	R_SunParams(&wtex, &mtex, eye, dir, right, up, info);
+	qglActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, wtex);
+	qglActiveTexture(GL_TEXTURE2);
+	glBindTexture(GL_TEXTURE_2D, mtex);
+	qglActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, diffuse);
+	glDepthMask(GL_FALSE);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_DST_COLOR, GL_ZERO);
+	qglUseProgram(sun_prog);
+	qglUniformMatrix3fv(us_rot, 1, GL_FALSE, rot ? rot : identity);
+	const float *o = origin ? origin : zero;
+	qglUniform3f(us_origin, o[0], o[1], o[2]);
+	qglUniform3f(us_eye, eye[0], eye[1], eye[2]);
+	qglUniform3f(us_dir, dir[0], dir[1], dir[2]);
+	qglUniform3f(us_right, right[0], right[1], right[2]);
+	qglUniform3f(us_up, up[0], up[1], up[2]);
+	qglUniform4f(us_info, info[0], info[1], info[2], info[3]);
 }
 
 // Back to the fixed-function state the classic drawing expects (the caller rebinds its lightmap)

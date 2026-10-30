@@ -680,7 +680,7 @@ static void StepLerp(int i, const edict_t *e, vec3_t org, vec3_t ang)
 
 void R_ClearBrushEntities(void);
 void R_AddBrushEntity(int submodel, const vec3_t origin, const vec3_t angles, int rendermode, int renderamt, const int color[3],
-	int frame);
+	int frame, const char *classname);
 void R_ClearFrameEntities(void);
 rentity_t *R_AddFrameEntity(void);
 extern refdef_t r_refdef;
@@ -710,7 +710,8 @@ void SV_SetupRenderEntities(void)
 		}
 		int color[3] = { (int)e->v.rendercolor[0], (int)e->v.rendercolor[1], (int)e->v.rendercolor[2] };
 		if (m->type == mod_brush) {
-			R_AddBrushEntity(m->submodel, e->v.origin, e->v.angles, e->v.rendermode, (int)e->v.renderamt, color, (int)e->v.frame);
+			R_AddBrushEntity(m->submodel, e->v.origin, e->v.angles, e->v.rendermode, (int)e->v.renderamt, color, (int)e->v.frame,
+				SV_String(e->v.classname));
 			continue;
 		}
 		rentity_t *r = R_AddFrameEntity();

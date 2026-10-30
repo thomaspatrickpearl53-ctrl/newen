@@ -75,6 +75,9 @@ a map's or a model's own textures for trying it out.
   (`r_flashlight_cone 0` gives classic's spot of light back). `r_flashlight_fov` (30 degrees), `r_flashlight_range`
   (1000), `r_flashlight_brightness` (1); `textures/flashlight.png` replaces the pattern (black at the edges).
   `r_testspot here|follow [angle range]` / `off` is a test spotlight that works without the game.
+- Sun shadows: outdoors, people, monsters, items, doors and trains cast shadows in the map's sunlight (the map's own
+  walls and cliffs already have theirs baked in). `r_sun_shadows`, `r_sun_shadow_darkness` (0.45),
+  `r_sun_shadow_range` (2000), `r_sun_shadow_size` (2048), `r_sun_angles "pitch yaw"` to move the sun.
 - Decals (bullet holes, blood, scorch marks) and the gun in your hands get per-pixel light too
   (`r_modern_viewmodel 0` gives the gun classic's). See-through models and brushes (glass) keep classic's dynamic
   light.

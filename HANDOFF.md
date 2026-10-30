@@ -478,8 +478,8 @@ newen would read it), VIS hints for big open areas.
 normal/specular maps, shadow maps) beside the current renderer, which stays the default. The owner accepted every
 recommendation in its section 8 (2026-10-29) and said go. **All of its steps (0-11) are done (branch
 `modern-renderer`); the owner reviewed 0-5 in game ("it works") and said continue through 11. After the plan (owner's pick, 2026-10-29,
-recommendations accepted): the cone flashlight, below. Later options, each needing the owner's choice: HDR/bloom,
-sunlight shadows, a material descriptor file, a lit shader for see-through surfaces, sharing model poses between
+recommendations accepted): the cone flashlight and sun shadows of moving things, below. Later options, each needing the owner's
+choice: HDR/bloom, a material descriptor file, a lit shader for see-through surfaces, sharing model poses between
 the shadow and main passes.** What was built:
 - `r_renderer classic|modern` (archived, applied in `R_LoadMap` before `BSP_Load` via `R_SelectRenderer`), the
   capability check (`LoadShaderExtensions` in `image.c`: GL 2.0 entry points, GLSL >= 1.20, 3 texture units and
@@ -568,6 +568,18 @@ the shadow and main passes.** What was built:
   so see-through things don't glow in a 1000-unit sphere. Needs 5 texture units (`R_SpotlightsAvailable`), else the
   classic flashlight. Cvars `r_flashlight_cone`, `_fov` (30), `_range` (1000), `_brightness` (1). The spot marks
   every surface in its range sphere and the shader throws away what's outside the cone (not culled on the CPU).
+- Sun shadows (owner's pick and recommendations, 2026-10-29): the lightmaps already hold the sun and the world's own
+  shadows, so only moving things add any. `R_SunNewMap` reads `light_environment` (`pitch`, `angle`/`angles`, the
+  compiler's convention) or `r_sun_angles "pitch yaw"`. `RenderSun` (r_shadow.c, after the light slots) draws two
+  orthographic depth maps (`r_sun_shadow_size` 2048) of a square `r_sun_shadow_range` (2000) round the viewer,
+  snapped to whole pixels, 4x that deep along the sun: the world plus fixed brush entities (`FixedClass` in
+  r_world.c: func_wall, func_wall_toggle, func_illusionary, func_detail; c2a5 builds its canyon from them, and
+  counting them as moving darkened everything), and the moving ones plus models. `R_AddBrushEntity` takes the
+  classname for that. `sun.vert/frag` multiplies (`GL_DST_COLOR, GL_ZERO`) each lit world/brush batch after its
+  base pass and before its light passes (`DrawSunPass` in r_world.c) by 1 - `r_sun_shadow_darkness` (0.45) where
+  the moving map is nearer the sun than the surface and the world map isn't, filtered like the light shadows,
+  only on faces turned to the sun, fading out at the square's edge. Models don't receive sun shadows; decals drawn
+  over a sun shadow aren't darkened. `r_sun_shadows 0` turns it off; a broken sun shader only turns this off.
 
 Verified (2026-10-29, RTX 3050): classic is pixel-identical to the pre-change build in c1a0d and c2a5 world shots
 (`r_drawentities 0`, `-nogamedll`, notify lines, FPS and watermark off; models animate, so full scenes aren't
@@ -605,6 +617,9 @@ and modern-without-lights still pixel-identical. Cone flashlight: `r_testspot` i
 beam and the left scientist's head and shoulders shadow the corkboard; with the game (`impulse 101`, `impulse
 100`) the beam lands on what the crosshair is on, moves when the view turns, and a scientist in it casts a
 shadow beside him; classic keeps its spot of light. Classic and modern-without-lights still pixel-identical.
+Sun: in c2a5 at 1856 300 350 only the barrels' ground shadows change (8,310 pixels) once func_walls count as
+scenery; c1a0d with a forced sun (`r_sun_angles "-60 30"`) changes only the animating scientists (the ceiling
+blocks it); c2a5's firefight spot runs with the game. Classic and modern world shots still pixel-identical.
 Not checked: a client light
 (muzzle flash) or an explosion's shadow on screen in modern (scripted weapon switches picked the hivehand), mirrored texture alignments,
 bodygroup/skin changes and chrome under a light, performance numbers (`r_speeds` counts world passes only), shadows

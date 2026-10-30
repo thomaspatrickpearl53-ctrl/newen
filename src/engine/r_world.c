@@ -30,6 +30,7 @@ static qboolean lightpass_ok;
 static vec3_t lightpass_viewer;
 static qboolean lightpass_rotated;   // a turned brush entity: its axes as columns, for the shadow lookup
 static float lightpass_rot[9];
+static const float *lightpass_origin; // where that brush entity is, NULL = the world
 
 // ---------------------------------------------------------------- light styles
 
@@ -273,6 +274,29 @@ static void DrawWaterSurface(const msurface_t *s, const texture_t *tx, float alp
 	glColor4f(1, 1, 1, 1);
 }
 
+// normals and tangents come from the second stream; positions and st stay on the world's buffer
+static void SetupModernArrays(void)
+{
+	qglBindBuffer(GL_ARRAY_BUFFER, world.modern_vbo);
+	glEnableClientState(GL_NORMAL_ARRAY);
+	glNormalPointer(GL_FLOAT, sizeof(modernvert_t), (void *)offsetof(modernvert_t, normal));
+	qglClientActiveTexture(GL_TEXTURE2);
+	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	glTexCoordPointer(4, GL_FLOAT, sizeof(modernvert_t), (void *)offsetof(modernvert_t, tangent));
+	qglClientActiveTexture(GL_TEXTURE0);
+	qglBindBuffer(GL_ARRAY_BUFFER, world.vbo);
+}
+
+// Modern: the batch's sun shadows, with the indices its base pass just drew
+static void DrawSunPass(int n, const texture_t *tx)
+{
+	SetupModernArrays();
+	R_ModernBeginSun(tx->gl ? tx->gl->id : GL_MissingTexture()->id, lightpass_rotated ? lightpass_rot : NULL,
+		lightpass_origin);
+	glDrawElements(GL_TRIANGLES, n, GL_UNSIGNED_INT, indices);
+	R_ModernEndLights();
+}
+
 // Modern: one additive pass per dynamic light that reaches any surface of the batch [first, last)
 static void DrawLightPasses(int first, int last, const texture_t *tx)
 {
@@ -284,15 +308,7 @@ static void DrawLightPasses(int first, int last, const texture_t *tx)
 	}
 	if (!bits)
 		return;
-	// normals and tangents come from the second stream; positions and st stay on the world's buffer
-	qglBindBuffer(GL_ARRAY_BUFFER, world.modern_vbo);
-	glEnableClientState(GL_NORMAL_ARRAY);
-	glNormalPointer(GL_FLOAT, sizeof(modernvert_t), (void *)offsetof(modernvert_t, normal));
-	qglClientActiveTexture(GL_TEXTURE2);
-	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-	glTexCoordPointer(4, GL_FLOAT, sizeof(modernvert_t), (void *)offsetof(modernvert_t, tangent));
-	qglClientActiveTexture(GL_TEXTURE0);
-	qglBindBuffer(GL_ARRAY_BUFFER, world.vbo);
+	SetupModernArrays();
 	R_ModernBeginLights(tx->gl ? tx->gl->id : GL_MissingTexture()->id, tx->normalmap, tx->specmap, lightpass_viewer,
 		lightpass_rotated ? lightpass_rot : NULL);
 	int count = R_DlightCount();
@@ -374,6 +390,8 @@ static void DrawBatches(float alpha)
 				glDisable(GL_ALPHA_TEST);
 			c_batches++;
 			if (r_modern && lightpass_ok && !r_fullbright->value && !r_lightmap->value) {
+				if ((key & 0xffff) != 0xffff && R_ModernSunReady())
+					DrawSunPass(n, tx);   // lit faces only: an unlit one has no sunlight to take away
 				DrawLightPasses(i, j, tx);
 				BindLightmap(key & 0xffff);
 			}
@@ -463,6 +481,7 @@ typedef struct {
 	int    color[3];
 	int    frame;       // non-zero: the "+a" alternate textures (a pressed button, a lit sign)
 	float  dist;
+	qboolean fixed;     // never moves (func_wall and friends): part of the scenery for sun shadows
 } brushent_t;
 
 static brushent_t *brushents;
@@ -490,8 +509,19 @@ void R_ClearBrushEntities(void)
 	brushents_count = 0;
 }
 
+// Brush entities that stand still for good. Maps use them for scenery (canyon walls, pillars); the map compiler
+// gave them no baked shadows, so for the sun they count as world rather than as something moving.
+static qboolean FixedClass(const char *cls)
+{
+	static const char *fixed[] = { "func_wall", "func_wall_toggle", "func_illusionary", "func_detail", NULL };
+	for (int i = 0; fixed[i]; i++)
+		if (!stricmp(cls, fixed[i]))
+			return true;
+	return false;
+}
+
 void R_AddBrushEntity(int submodel, const vec3_t origin, const vec3_t angles, int rendermode, int renderamt, const int color[3],
-	int frame)
+	int frame, const char *classname)
 {
 	if (submodel <= 0 || submodel >= world.numsubmodels)
 		return;
@@ -507,6 +537,7 @@ void R_AddBrushEntity(int submodel, const vec3_t origin, const vec3_t angles, in
 	b->rendermode = rendermode;
 	b->renderamt = rendermode == kRenderNormal ? 255 : renderamt;
 	b->frame = frame;
+	b->fixed = classname && FixedClass(classname);
 	for (int i = 0; i < 3; i++)
 		b->color[i] = color[i];
 }
@@ -531,7 +562,8 @@ void R_BuildBrushEntities(void)
 		sscanf(BSP_ValueForKey(e, "angles"), "%f %f %f", &angles[0], &angles[1], &angles[2]);
 		sscanf(BSP_ValueForKey(e, "rendercolor"), "%d %d %d", &color[0], &color[1], &color[2]);
 		const char *amt = BSP_ValueForKey(e, "renderamt");
-		R_AddBrushEntity(m, origin, angles, atoi(BSP_ValueForKey(e, "rendermode")), *amt ? atoi(amt) : 255, color, 0);
+		R_AddBrushEntity(m, origin, angles, atoi(BSP_ValueForKey(e, "rendermode")), *amt ? atoi(amt) : 255, color, 0,
+			BSP_ValueForKey(e, "classname"));
 	}
 }
 
@@ -621,6 +653,7 @@ static void DrawBrushEntity(const brushent_t *b)
 	// see-through modes blend, so a light added on top would show twice; they stay without dynamic light
 	lightpass_ok = b->rendermode == kRenderNormal || b->rendermode == kRenderTransAlpha;
 	VectorCopy(local, lightpass_viewer);
+	lightpass_origin = b->origin;
 	lightpass_rotated = rotated;
 	if (rotated) {
 		vec3_t f, r, u;
@@ -645,6 +678,7 @@ static void DrawBrushEntity(const brushent_t *b)
 	glPopMatrix();
 	R_DlightSpace(NULL, NULL);
 	lightpass_rotated = false;
+	lightpass_origin = NULL;
 }
 
 // for the shadow pass, which needs every brush entity near its light, not just the visible ones
@@ -653,9 +687,10 @@ int R_BrushEntityCount(void)
 	return r_drawentities->value ? brushents_count : 0;
 }
 
-void R_GetBrushEntity(int i, int *model, float *origin, float *angles, int *rendermode)
+void R_GetBrushEntity(int i, int *model, float *origin, float *angles, int *rendermode, qboolean *fixed)
 {
 	const brushent_t *b = &brushents[i];
+	*fixed = b->fixed;
 	*model = b->model;
 	VectorCopy(b->origin, origin);
 	VectorCopy(b->angles, angles);
@@ -762,6 +797,7 @@ void R_NewMap(void)
 	viewleaf = oldviewleaf = NULL;
 	old_novis = -1;
 	R_ClearDecals();
+	R_SunNewMap();
 	R_BuildBrushEntities();
 	R_BuildMapEntities();
 }

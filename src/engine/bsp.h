@@ -175,7 +175,7 @@ void        R_GetDlightWorld(int i, float *origin, float *radius, float *color);
 
 // brush entities being drawn this frame (r_world.c)
 int         R_BrushEntityCount(void);
-void        R_GetBrushEntity(int i, int *model, float *origin, float *angles, int *rendermode);
+void        R_GetBrushEntity(int i, int *model, float *origin, float *angles, int *rendermode, qboolean *fixed);
 
 // shadow maps (r_shadow.c): each chosen light's six depth views in a 3x2 atlas, rendered before the world
 void        R_InitShadows(void);
@@ -183,6 +183,10 @@ void        R_RenderShadows(void);
 int         R_ShadowSlot(int light);   // the light's shadow map this frame, or -1
 GLuint      R_ShadowTexture(int slot);
 int         R_ShadowTextureSize(int slot);   // a spotlight's whole texture (point lights: one of its six views)
+void        R_SunNewMap(void);   // reads the map's light_environment
+qboolean    R_SunActive(void);   // this frame has sun shadow maps
+// the world's and the moving things' depth, the maps' eye and axes, and half side, depth range, darkness, 1/size
+void        R_SunParams(GLuint *worldtex, GLuint *movingtex, float *eye, float *dir, float *right, float *up, float *info);
 void        R_ShadowParams(int slot, float *znear, float *zfar, float *bias, int *size, float *soft);
 // light i in the space set by R_DlightSpace
 void        R_GetDlight(int i, float *local_origin, float *radius, float *color);
@@ -198,6 +202,9 @@ void        R_ModernBeginLights(GLuint diffuse, const gltexture_t *normalmap, co
 void        R_ModernSetLight(int i);
 void        R_ModernBlendedLights(void);   // after Begin: the next passes keep the texture's alpha (decals)
 void        R_ModernEndLights(void);   // also turns the normal and set-2 arrays off
+qboolean    R_ModernSunReady(void);
+// a sun shadow pass over what's drawn next (end it with R_ModernEndLights)
+void        R_ModernBeginSun(GLuint diffuse, const float *rot, const float *origin);
 // true if any leaf the box touches is in the current view's PVS (r_world.c)
 qboolean    R_BoxVisible(const vec3_t mins, const vec3_t maxs);
 
