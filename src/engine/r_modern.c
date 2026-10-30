@@ -8,7 +8,7 @@ static cvar_t *r_renderer, *r_modern_forcefail, *r_dlightscale, *r_gloss, *r_spe
 static char fallback[160];   // why modern was asked for but classic is drawing
 
 static GLuint light_prog;
-static GLint u_lightorg, u_vieworg, u_lightcolor, u_radius, u_gloss, u_specscale, u_shadow, u_shadowinfo, u_shadowsoft, u_rot;
+static GLint u_lightorg, u_vieworg, u_lightcolor, u_radius, u_gloss, u_specscale, u_shadow, u_shadowinfo, u_shadowsoft, u_rot, u_blend;
 static gltexture_t *flat_normal, *no_specular;
 static int materials_n, materials_s;
 
@@ -35,6 +35,7 @@ static qboolean ModernInit(void)
 	u_shadowinfo = qglGetUniformLocation(light_prog, "u_shadowinfo");
 	u_shadowsoft = qglGetUniformLocation(light_prog, "u_shadowsoft");
 	u_rot = qglGetUniformLocation(light_prog, "u_rot");
+	u_blend = qglGetUniformLocation(light_prog, "u_blend");
 	qglUseProgram(light_prog);
 	qglUniform1i(qglGetUniformLocation(light_prog, "u_diffuse"), 0);
 	qglUniform1i(qglGetUniformLocation(light_prog, "u_normalmap"), 1);
@@ -164,6 +165,14 @@ void R_ModernBeginLights(GLuint diffuse, const gltexture_t *normalmap, const glt
 	qglUniform1f(u_gloss, r_gloss->value > 1 ? r_gloss->value : 1);
 	qglUniform1f(u_specscale, r_specscale->value);
 	qglUniformMatrix3fv(u_rot, 1, GL_FALSE, rot ? rot : identity);
+	qglUniform1f(u_blend, 0);
+}
+
+// Decals: the light is added through the decal's own alpha (the surface under it already has its share)
+void R_ModernBlendedLights(void)
+{
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+	qglUniform1f(u_blend, 1);
 }
 
 void R_ModernSetLight(int i)

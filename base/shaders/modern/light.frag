@@ -9,6 +9,7 @@ uniform vec3  u_lightcolor;
 uniform float u_radius;
 uniform float u_gloss;
 uniform float u_specscale;
+uniform float u_blend;           // 1 = drawn over something with its alpha (decals): no cut, alpha kept
 
 // shadow map (r_shadow.c): six 90-degree depth views of the light in a 3x2 atlas, in this order
 uniform float u_shadow;          // 1 = this light has the shadow map
@@ -80,7 +81,7 @@ float Shadow(vec3 d)
 void main()
 {
 	vec4 albedo = texture2D(u_diffuse, v_st);
-	if (albedo.a <= 0.25)
+	if (u_blend < 0.5 && albedo.a <= 0.25)
 		discard;   // the same cut as the '{' textures' alpha test
 	float dist = length(v_tolight);
 	float atten = (u_radius - dist) / 255.0;
@@ -112,5 +113,5 @@ void main()
 		lit = Shadow(u_rot * (offset - v_tolight));
 	}
 
-	gl_FragColor = vec4((albedo.rgb * ndl + s * spec) * u_lightcolor * atten * lit, 1.0);
+	gl_FragColor = vec4((albedo.rgb * ndl + s * spec) * u_lightcolor * atten * lit, u_blend > 0.5 ? albedo.a : 1.0);
 }

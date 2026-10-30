@@ -11,7 +11,7 @@
 #include "model.h"
 #include "bsp.h"
 
-static cvar_t *r_studio_lambert, *r_studio_ambient, *r_studio_shade, *r_fullbright_ref;
+static cvar_t *r_studio_lambert, *r_studio_ambient, *r_studio_shade, *r_fullbright_ref, *r_modern_viewmodel;
 
 // per-frame scratch, grown to the biggest model seen
 static float (*bonetransform)[3][4];
@@ -447,8 +447,8 @@ typedef struct {
 	int    lights[32];
 } studiolight_t;
 
-// Modern draws dynamic lights per pixel on opaque world models; the rest (see-through models, the view model)
-// keep classic's point light
+// Modern draws dynamic lights per pixel on opaque models (the gun in your hands too, unless r_modern_viewmodel
+// is 0); see-through ones keep classic's point light
 static void SetupLighting(const rentity_t *e, studiolight_t *l)
 {
 	vec3_t c;
@@ -456,7 +456,7 @@ static void SetupLighting(const rentity_t *e, studiolight_t *l)
 	l->numlights = 0;
 	vec3_t p = { e->origin[0], e->origin[1], e->origin[2] + 1 };
 	R_LightPoint(p, c);
-	if (r_modern && e->rendermode == kRenderNormal && !r_studio_viewmodel && !l->fullbright) {
+	if (r_modern && e->rendermode == kRenderNormal && (!r_studio_viewmodel || r_modern_viewmodel->value) && !l->fullbright) {
 		float r = e->model->radius > 16 ? e->model->radius : 16;
 		int count = R_DlightCount();
 		for (int i = 0; i < count && l->numlights < 32; i++) {
@@ -788,4 +788,5 @@ void R_StudioInit(void)
 	r_studio_ambient = Cvar_Get("r_studio_ambient", "0.1", 0, "share of the floor light that lights every side of a model");
 	r_studio_shade = Cvar_Get("r_studio_shade", "0.9", 0, "share of the floor light that comes from above");
 	r_fullbright_ref = Cvar_Get("r_fullbright", "0", 0, "1 = no lightmaps");
+	r_modern_viewmodel = Cvar_Get("r_modern_viewmodel", "1", FCVAR_ARCHIVE, "modern: the gun in your hands gets per-pixel dynamic light (0 = classic's)");
 }

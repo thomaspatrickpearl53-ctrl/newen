@@ -316,11 +316,57 @@ void R_DecalShoot(int tex, int entity, int modelIndex, const float *pos, int fla
 
 // Draws the decals of faces [first, first + count) that are visible this frame; the caller restores
 // its vertex arrays afterwards. viewer is the camera in the faces' own space.
-void R_DrawDecals(int first, int count, const float *viewer, qboolean world_pass)
+// Modern: the dynamic lights on the decal's surface, added through the decal's alpha. Its normal is the face's;
+// decals have no normal maps, so any tangent along the face will do.
+static void DecalLightPasses(const decal_t *dc, const decaltex_t *dt, const float *viewer, const float *rot)
+{
+	const msurface_t *s = dc->surf;
+	if (s->dlightframe != r_refdef.framecount || !s->dlightbits)
+		return;
+	static float (*tan)[4];
+	static int tan_cap;
+	if (dc->numverts > tan_cap) {
+		tan_cap = dc->numverts * 2;
+		tan = Mem_Realloc(tan, sizeof(*tan) * tan_cap);
+	}
+	vec3_t n, t;
+	VectorCopy(s->plane->normal, n);
+	if (s->flags & SURF_PLANEBACK)
+		VectorScale(n, -1, n);
+	vec3_t any = { fabsf(n[2]) < 0.9f ? 0.0f : 1.0f, 0, fabsf(n[2]) < 0.9f ? 1.0f : 0.0f };
+	CrossProduct(any, n, t);
+	VectorNormalize(t);
+	for (int v = 0; v < dc->numverts; v++) {
+		VectorCopy(t, tan[v]);
+		tan[v][3] = 1;
+	}
+	glNormal3fv(n);
+	qglClientActiveTexture(GL_TEXTURE2);
+	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	glTexCoordPointer(4, GL_FLOAT, 0, tan);
+	qglClientActiveTexture(GL_TEXTURE0);
+	R_ModernBeginLights(dt->gl->id, NULL, NULL, viewer, rot);
+	R_ModernBlendedLights();
+	int lights = R_DlightCount();
+	for (int i = 0; i < lights; i++) {
+		if (!(s->dlightbits & (1u << i)))
+			continue;
+		R_ModernSetLight(i);
+		glDrawArrays(GL_TRIANGLE_FAN, 0, dc->numverts);
+	}
+	R_ModernEndLights();
+	// back to the decal drawing's own state
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDepthMask(GL_FALSE);
+}
+
+void R_DrawDecals(int first, int count, const float *viewer, const float *rot, qboolean world_pass)
 {
 	if (!decals_count)
 		return;
 	qboolean fullbright = Cvar_VariableValue("r_fullbright") != 0;
+	qboolean lightpasses = r_modern && !fullbright && !Cvar_VariableValue("r_lightmap");
 	qboolean started = false;
 	for (int i = 0; i < decals_count; i++) {
 		decal_t *dc = &decals[i];
@@ -370,6 +416,8 @@ void R_DrawDecals(int first, int count, const float *viewer, qboolean world_pass
 		glEnable(GL_TEXTURE_2D);
 		glBindTexture(GL_TEXTURE_2D, dt->gl->id);
 		glDrawArrays(GL_TRIANGLE_FAN, 0, dc->numverts);
+		if (lightpasses)
+			DecalLightPasses(dc, dt, viewer, rot);
 	}
 	if (started) {
 		glDisable(GL_POLYGON_OFFSET_FILL);

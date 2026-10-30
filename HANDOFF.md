@@ -5,7 +5,7 @@ out, how to build and test it, what works, what doesn't, and what comes next. Re
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
 2026-10-29: **the modern renderer's steps 0-7 are built on branch `modern-renderer`** (section 9, "Renderer plan");
-the compatibility pass (step 11) is next.
+the plan is finished; what comes next is the owner's call.
 
 Status as of 2026-10-22: **Phase 1 is done. Phase 2 started with big maps: the ±32768 check, the NBSP format,
 the compiler and a TrenchBroom configuration are done, and so are closed captions (section 9). Designs for an
@@ -476,9 +476,11 @@ newen would read it), VIS hints for big open areas.
 
 **Renderer plan: `docs/RENDERER_PLAN.md`.** An optional `r_renderer modern` path (per-pixel dynamic lights,
 normal/specular maps, shadow maps) beside the current renderer, which stays the default. The owner accepted every
-recommendation in its section 8 (2026-10-29) and said go. **Steps 0-10 are done (branch `modern-renderer`); the
-owner reviewed 0-5 in game ("it works") and said continue. Next: step 11 (compatibility completion: decals,
-see-through models/brushes and the view model under modern light, final checks).** What was built:
+recommendation in its section 8 (2026-10-29) and said go. **All of its steps (0-11) are done (branch
+`modern-renderer`); the owner reviewed 0-5 in game ("it works") and said continue through 11. Later options from
+the plan, each needing the owner's choice: a projected (cone) flashlight with its own shadow, HDR/bloom, sunlight
+shadows, a material descriptor file, a lit shader for see-through surfaces, sharing model poses between the shadow
+and main passes.** What was built:
 - `r_renderer classic|modern` (archived, applied in `R_LoadMap` before `BSP_Load` via `R_SelectRenderer`), the
   capability check (`LoadShaderExtensions` in `image.c`: GL 2.0 entry points, GLSL >= 1.20, 3 texture units and
   coordinate sets), `r_modern_forcefail`, `r_rendererinfo`. Any failure prints the reason and draws classic.
@@ -544,6 +546,15 @@ see-through models/brushes and the view model under modern light, final checks).
   `R_ModernSetLight` binds the light's own atlas on unit 3. Filtering: `Pcf` in `light.frag` compares the 4
   nearest pixels and blends them bilinearly; `r_shadow_soft 1` (default) averages 4 of those a pixel apart (16
   reads) for a ~3-pixel soft edge. The tile clamp is 2.5 pixels now.
+- Step 11, compatibility: decals get a light pass each (`DecalLightPasses` in `r_decal.c`) right after they're
+  drawn: the face's normal, a made-up tangent, and `R_ModernBlendedLights` (`u_blend`: no alpha cut, the decal's
+  alpha kept, `GL_SRC_ALPHA, GL_ONE`), so the light goes in through the decal's alpha (the surface under it already
+  had its share). `R_DrawDecals` takes the model space's `rot` for the shadow lookup. See-through brush entities
+  (blended render modes) have no light passes, so their lightmaps keep classic's dynamic light in modern too
+  (`BSP_BuildSurfaceLightmap(..., dlights)`, decided in `UpdateLightmap` from `lightpass_ok`). The view model gets
+  per-pixel light like world models (`r_modern_viewmodel`, default 1); it draws in its 0..0.3 depth range and
+  receives shadows but casts none. See-through studio models keep classic's point light. Sky, water, sprites,
+  beams, particles, client triangles and the HUD stay on the classic path (program 0) unchanged.
 
 Verified (2026-10-29, RTX 3050): classic is pixel-identical to the pre-change build in c1a0d and c2a5 world shots
 (`r_drawentities 0`, `-nogamedll`, notify lines, FPS and watermark off; models animate, so full scenes aren't
@@ -571,8 +582,15 @@ Lua plus the test light: with `r_shadow_lights 2` the same two ids (the test lig
 all 32 frames logged; 1/2/3 give visibly more shadows; `r_shadow_debug 1` shows one atlas per light. Soft edges
 replace the stair-steps (scientist's shadow at 256). Classic and modern-without-lights still pixel-identical
 (re-run after a mouse movement turned the camera in one batch: setpos right before the screenshot avoids it).
+Step 11: c1a0c's infodecal blood under a test light looks like classic's (dark red takes little light in both);
+a debug override showed every decal getting its pass. c1a0d's glass doors (rendermode 2, models 8/11) brighten
+under a light like classic's. The hivehand in your hands is lit from the light's side with `r_modern_viewmodel 1`
+and evenly with 0. c2a5's firefight spot (soldiers, god mode) ran 540 frames in modern without errors (22 decals,
+blood; no soldier reached the camera's view). Loading modern, then `r_renderer classic` and the map again in the
+same run is pixel-identical to the classic baseline; `vid_restart` to 960x600 in modern draws correctly. Classic
+and modern-without-lights still pixel-identical.
 Not checked: a client light
-(muzzle flash) on screen in modern (the scripted weapon switch didn't happen), mirrored texture alignments,
+(muzzle flash) or an explosion's shadow on screen in modern (scripted weapon switches picked the hivehand), mirrored texture alignments,
 bodygroup/skin changes and chrome under a light, performance numbers (`r_speeds` counts world passes only), shadows
 on rotated brush entities, very large lights (the far plane is the radius; precision past ~1000 units untested).
 

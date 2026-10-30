@@ -142,7 +142,8 @@ void        BSP_Free(void);
 const char *BSP_ValueForKey(const bspentity_t *ent, const char *key);
 mnode_t    *BSP_PointInLeaf(const vec3_t p);
 const unsigned char *BSP_LeafPVS(const mnode_t *leaf);   // decompressed; all visible when no vis
-void        BSP_BuildSurfaceLightmap(msurface_t *s, unsigned char *dest, int stride);
+// dlights: add this frame's dynamic lights (classic; modern's see-through brush entities)
+void        BSP_BuildSurfaceLightmap(msurface_t *s, unsigned char *dest, int stride, qboolean dlights);
 extern unsigned char lightgammatable[1024];   // summed light (0..1023) to displayed brightness
 
 // lightstyles (r_world.c)
@@ -187,6 +188,7 @@ void        R_LoadModelMaterial(const char *model, const char *texture, gltextur
 void        R_ModernBeginLights(GLuint diffuse, const gltexture_t *normalmap, const gltexture_t *specmap,
                                 const float *vieworg, const float *rot);
 void        R_ModernSetLight(int i);
+void        R_ModernBlendedLights(void);   // after Begin: the next passes keep the texture's alpha (decals)
 void        R_ModernEndLights(void);   // also turns the normal and set-2 arrays off
 // true if any leaf the box touches is in the current view's PVS (r_world.c)
 qboolean    R_BoxVisible(const vec3_t mins, const vec3_t maxs);
@@ -197,4 +199,5 @@ int         R_DecalIndex(const char *name);   // the game's, the client's and th
 void        R_DecalShoot(int tex, int entity, int modelIndex, const float *pos, int flags, float scale);
 void        R_DecalRemoveAll(int tex);
 void        R_ClearDecals(void);
-void        R_DrawDecals(int first, int count, const float *viewer, qboolean world_pass);
+// viewer and rot (see R_ModernBeginLights) in the drawn model's space
+void        R_DrawDecals(int first, int count, const float *viewer, const float *rot, qboolean world_pass);

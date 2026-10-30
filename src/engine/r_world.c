@@ -74,8 +74,9 @@ static void UpdateLightmap(msurface_t *s)
 {
 	if (!s->samples)
 		return;
-	// modern adds dynamic lights in their own passes, so its lightmaps only follow the light styles
-	qboolean lit = !r_modern && s->dlightframe == r_refdef.framecount;
+	// modern adds dynamic lights in their own passes, so its lightmaps only follow the light styles; but
+	// see-through brush entities get no passes (they blend), so they keep classic's dynamic light
+	qboolean lit = (!r_modern || !lightpass_ok) && s->dlightframe == r_refdef.framecount;
 	qboolean changed = lit || s->dlit;   // a dynamic light is on it, or was last time
 	for (int m = 0; m < 4 && s->styles[m] != 255; m++)
 		if (s->cached_light[m] != lightstyle_value[s->styles[m] & 63])
@@ -85,7 +86,7 @@ static void UpdateLightmap(msurface_t *s)
 	s->dlit = lit;
 	unsigned char *page = world.lightmap_pixels[s->lm_page];
 	unsigned char *dest = page + (s->lm_y * LM_PAGE + s->lm_x) * 4;
-	BSP_BuildSurfaceLightmap(s, dest, LM_PAGE * 4);
+	BSP_BuildSurfaceLightmap(s, dest, LM_PAGE * 4, lit);
 	glBindTexture(GL_TEXTURE_2D, world.lightmaps[s->lm_page]);
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, LM_PAGE);
 	glTexSubImage2D(GL_TEXTURE_2D, 0, s->lm_x, s->lm_y, s->lm_w, s->lm_h, GL_RGBA, GL_UNSIGNED_BYTE, dest);
@@ -631,9 +632,9 @@ static void DrawBrushEntity(const brushent_t *b)
 		}
 	}
 	DrawBatches(alpha);
-	lightpass_ok = lightpass_rotated = false;
+	lightpass_ok = false;
 	if (b->rendermode == kRenderNormal || b->rendermode == kRenderTransAlpha) {
-		R_DrawDecals(m->firstface, m->numfaces, local, false);
+		R_DrawDecals(m->firstface, m->numfaces, local, rotated ? lightpass_rot : NULL, false);
 		SetupArrays();
 	}
 	glDisable(GL_ALPHA_TEST);
@@ -643,6 +644,7 @@ static void DrawBrushEntity(const brushent_t *b)
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glPopMatrix();
 	R_DlightSpace(NULL, NULL);
+	lightpass_rotated = false;
 }
 
 // for the shadow pass, which needs every brush entity near its light, not just the visible ones
@@ -792,7 +794,7 @@ void R_DrawWorld(void)
 		VectorCopy(r_refdef.origin, lightpass_viewer);
 		DrawBatches(1.0f);
 		lightpass_ok = false;
-		R_DrawDecals(world.submodels[0].firstface, world.submodels[0].numfaces, r_refdef.origin, true);
+		R_DrawDecals(world.submodels[0].firstface, world.submodels[0].numfaces, r_refdef.origin, NULL, true);
 		SetupArrays();
 	}
 	DrawBrushEntities();

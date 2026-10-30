@@ -579,7 +579,7 @@ static void BuildLightGamma(void)
 	}
 }
 
-void BSP_BuildSurfaceLightmap(msurface_t *s, unsigned char *dest, int stride)
+void BSP_BuildSurfaceLightmap(msurface_t *s, unsigned char *dest, int stride, qboolean dlights)
 {
 	int size = s->lm_w * s->lm_h;
 	static int *blocks;
@@ -605,7 +605,7 @@ void BSP_BuildSurfaceLightmap(msurface_t *s, unsigned char *dest, int stride)
 			lm += size * 3;
 		}
 	}
-	if (s->dlightframe == r_refdef.framecount && !r_modern)
+	if (dlights && s->dlightframe == r_refdef.framecount)
 		R_SurfaceDlights(s, blocks);
 
 	const int *b = blocks;
@@ -629,7 +629,7 @@ static void BuildLightmaps(void)
 		if ((s->flags & SURF_NOLIGHT) || !s->numverts)
 			continue;
 		unsigned char *page = world.lightmap_pixels[s->lm_page];
-		BSP_BuildSurfaceLightmap(s, page + (s->lm_y * LM_PAGE + s->lm_x) * 4, LM_PAGE * 4);
+		BSP_BuildSurfaceLightmap(s, page + (s->lm_y * LM_PAGE + s->lm_x) * 4, LM_PAGE * 4, !r_modern);
 	}
 	world.lightmaps = Mem_Alloc(sizeof(GLuint) * (world.numlightmaps ? world.numlightmaps : 1));
 	glGenTextures(world.numlightmaps, world.lightmaps);

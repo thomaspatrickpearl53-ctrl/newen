@@ -71,8 +71,9 @@ a map's or a model's own textures for trying it out.
   `r_shadow_size` (256, pixels per side of each of its six views), `r_shadow_bias`, `r_shadow_debug 1` (shows the
   shadow map). Doors, lifts and other moving brushes cast shadows too, and see-through textures (grates, fences)
   cast them with holes. People, monsters and items cast shadows that follow their animation (`r_shadow_models`).
-- Not in modern yet: the gun in your hands and see-through models and brush entities keep classic dynamic light;
-  decals don't get it.
+- Decals (bullet holes, blood, scorch marks) and the gun in your hands get per-pixel light too
+  (`r_modern_viewmodel 0` gives the gun classic's). See-through models and brushes (glass) keep classic's dynamic
+  light.
 
 ## Game DLL (server)
 
