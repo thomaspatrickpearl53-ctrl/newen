@@ -580,6 +580,18 @@ the shadow and main passes.** What was built:
   the moving map is nearer the sun than the surface and the world map isn't, filtered like the light shadows,
   only on faces turned to the sun, fading out at the square's edge. Models don't receive sun shadows; decals drawn
   over a sun shadow aren't darkened. `r_sun_shadows 0` turns it off; a broken sun shader only turns this off.
+- Speed pass (2026-10-29): `r_timerefresh [frames]` (r_main.c) draws the view N times while turning once round,
+  `glFinish` after each, and prints the average and slowest frame. Two fixes: the sun's square now follows the
+  viewer in steps of an eighth of its size and its world map is drawn again only after a step or a sun change
+  (`sun_world_valid`); and `DrawBatches` draws every batch's base first, then one sun pass for all solid faces
+  (plus one per `{` texture), then the light passes per batch, instead of switching shaders twice per batch.
+  Measured on the RTX 3050 at 1280x720, `-nogamedll`, 256 frames (the numbers wander by ~0.1-0.3 ms run to run):
+  lab classic 0.47 ms, modern 0.49, + a light 1.08, + its shadow 1.53-1.60, + flashlight with shadow 1.25;
+  canyon classic 0.54, modern 0.57-0.74, + sun 1.21-1.28 (was 1.80-1.90), + sun, light and flashlight 2.09 (was
+  2.59). An A/B against the previous commit's build gave pixel-identical shots of the lab with a light, the lab
+  with the test spot and the door room; the canyon differed only on an animating model. Not done: the point
+  lights' world casters are still drawn every frame (a static light could keep them), models are posed again for
+  each shadow, the spotlight marks everything in its range sphere.
 
 Verified (2026-10-29, RTX 3050): classic is pixel-identical to the pre-change build in c1a0d and c2a5 world shots
 (`r_drawentities 0`, `-nogamedll`, notify lines, FPS and watermark off; models animate, so full scenes aren't

@@ -332,6 +332,38 @@ static void Texlist_f(void)
 	Con_Printf("%d textures, %d HD replacements (put them in textures/<name>.png)\n", world.numtextures, hd);
 }
 
+// r_timerefresh [frames]: draws the view that many times while turning once round, waiting for the GPU after each
+// (so the time is the whole frame's, not just the CPU's), and prints the average and the slowest. Without a game
+// the camera turns; with one the client places the view, so it stays put.
+static void TimeRefresh_f(void)
+{
+	if (!world.loaded) {
+		Con_Printf("load a map first\n");
+		return;
+	}
+	int frames = Cmd_Argc() > 1 ? atoi(Cmd_Argv(1)) : 128;
+	if (frames < 1)
+		frames = 1;
+	vec3_t saved;
+	VectorCopy(cl_viewangles, saved);
+	double total = 0, worst = 0;
+	glFinish();
+	for (int i = 0; i < frames; i++) {
+		cl_viewangles[1] = saved[1] + 360.0f * i / frames;
+		double t0 = Sys_FloatTime();
+		Vid_BeginFrame();
+		R_RenderView();
+		glFinish();
+		double t = Sys_FloatTime() - t0;
+		total += t;
+		if (t > worst)
+			worst = t;
+	}
+	VectorCopy(saved, cl_viewangles);
+	Con_Printf("timerefresh: %d frames, %.2f ms average (%.0f fps), slowest %.2f ms\n", frames, total * 1000 / frames,
+		frames / total, worst * 1000);
+}
+
 const char *R_CurrentMap(void)
 {
 	return current_map;
@@ -354,6 +386,7 @@ void R_Init(void)
 	Cmd_AddCommand("viewpos", Viewpos_f, "prints the camera position");
 	Cmd_AddCommand("setpos", Setpos_f, "moves the camera");
 	Cmd_AddCommand("texlist", Texlist_f, "lists the map's textures and which have HD replacements");
+	Cmd_AddCommand("r_timerefresh", TimeRefresh_f, "r_timerefresh [frames] - times drawing the view while turning once round");
 	GL_LoadExtensions();
 	Image_Init();
 	R_ModernInitCvars();

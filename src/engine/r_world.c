@@ -287,14 +287,63 @@ static void SetupModernArrays(void)
 	qglBindBuffer(GL_ARRAY_BUFFER, world.vbo);
 }
 
-// Modern: the batch's sun shadows, with the indices its base pass just drew
-static void DrawSunPass(int n, const texture_t *tx)
+static qboolean SunSurface(const drawsurf_t *d)
 {
+	// lit faces only: an unlit one has no sunlight to take away
+	return !(d->surf->flags & (SURF_WATER | SURF_SKY)) && (d->key & 0xffff) != 0xffff;
+}
+
+static int AddSurfIndices(const msurface_t *s, int n)
+{
+	for (int v = 2; v < s->numverts; v++) {
+		indices[n++] = s->firstvert;
+		indices[n++] = s->firstvert + v - 1;
+		indices[n++] = s->firstvert + v;
+	}
+	return n;
+}
+
+// Modern: the sun shadows of everything just drawn. The solid faces go in one draw (they don't need their
+// texture: any fully opaque one will do for the alpha cut); '{' faces go per texture, for their holes.
+static void DrawSunPass(void)
+{
+	int total = 0;
+	for (int k = 0; k < drawsurfs_count; k++)
+		if (SunSurface(&drawsurfs[k]))
+			total += (drawsurfs[k].surf->numverts - 2) * 3;
+	if (!total)
+		return;
+	EnsureIndices(total);
 	SetupModernArrays();
-	R_ModernBeginSun(tx->gl ? tx->gl->id : GL_MissingTexture()->id, lightpass_rotated ? lightpass_rot : NULL,
-		lightpass_origin);
-	glDrawElements(GL_TRIANGLES, n, GL_UNSIGNED_INT, indices);
-	R_ModernEndLights();
+	const float *rot = lightpass_rotated ? lightpass_rot : NULL;
+	int n = 0;
+	for (int k = 0; k < drawsurfs_count; k++)
+		if (SunSurface(&drawsurfs[k]) && drawsurfs[k].tex->kind != TEXKIND_ALPHA)
+			n = AddSurfIndices(drawsurfs[k].surf, n);
+	if (n) {
+		R_ModernBeginSun(GL_MissingTexture()->id, rot, lightpass_origin);
+		glDrawElements(GL_TRIANGLES, n, GL_UNSIGNED_INT, indices);
+		R_ModernEndLights();
+	}
+	for (int i = 0; i < drawsurfs_count;) {
+		int j = i;
+		while (j < drawsurfs_count && drawsurfs[j].key == drawsurfs[i].key)
+			j++;
+		const texture_t *tx = drawsurfs[i].tex;
+		if (tx->kind == TEXKIND_ALPHA) {
+			n = 0;
+			for (int k = i; k < j; k++)
+				if (SunSurface(&drawsurfs[k]))
+					n = AddSurfIndices(drawsurfs[k].surf, n);
+			if (n) {
+				SetupModernArrays();
+				R_ModernBeginSun(tx->gl ? tx->gl->id : GL_MissingTexture()->id, rot, lightpass_origin);
+				glDrawElements(GL_TRIANGLES, n, GL_UNSIGNED_INT, indices);
+				R_ModernEndLights();
+			}
+		}
+		i = j;
+	}
 }
 
 // Modern: one additive pass per dynamic light that reaches any surface of the batch [first, last)
@@ -389,14 +438,23 @@ static void DrawBatches(float alpha)
 			if (tx->kind == TEXKIND_ALPHA)
 				glDisable(GL_ALPHA_TEST);
 			c_batches++;
-			if (r_modern && lightpass_ok && !r_fullbright->value && !r_lightmap->value) {
-				if ((key & 0xffff) != 0xffff && R_ModernSunReady())
-					DrawSunPass(n, tx);   // lit faces only: an unlit one has no sunlight to take away
-				DrawLightPasses(i, j, tx);
-				BindLightmap(key & 0xffff);
-			}
 		}
 		i = j;
+	}
+
+	// Modern, once every batch's base is down: the sun shadows (they darken the lightmap's sunlight only, so they
+	// come before the dynamic lights), then each batch's light passes
+	if (r_modern && lightpass_ok && !r_fullbright->value && !r_lightmap->value) {
+		if (R_ModernSunReady())
+			DrawSunPass();
+		for (int i = 0; i < drawsurfs_count;) {
+			int j = i;
+			while (j < drawsurfs_count && drawsurfs[j].key == drawsurfs[i].key)
+				j++;
+			if (drawsurfs[i].tex->kind != TEXKIND_WATER)
+				DrawLightPasses(i, j, drawsurfs[i].tex);
+			i = j;
+		}
 	}
 	drawsurfs_count = 0;
 }

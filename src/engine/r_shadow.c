@@ -49,6 +49,8 @@ static float sun_half, sun_depth;  // half the covered square's side; the depth 
 static GLuint sun_fbo[2], sun_tex[2];
 static int sun_size;
 static qboolean sun_failed;
+static qboolean sun_world_valid;   // sun_tex[0] holds the world for sun_world_eye and sun_world_dir
+static vec3_t sun_world_eye, sun_world_dir;
 
 // casters: faces collected for this frame's light, then sorted into batches (one per entity and '{' texture)
 typedef struct {
@@ -678,6 +680,7 @@ void R_RenderShadows(void)
 void R_SunNewMap(void)
 {
 	sun_in_map = false;
+	sun_world_valid = false;
 	for (int i = 0; i < world.numentities; i++) {
 		const bspentity_t *e = &world.entities[i];
 		if (stricmp(BSP_ValueForKey(e, "classname"), "light_environment"))
@@ -715,6 +718,7 @@ static qboolean EnsureSunMaps(void)
 	}
 	sun_size = size;
 	sun_failed = false;
+	sun_world_valid = false;
 	for (int i = 0; i < 2; i++) {
 		glGenTextures(1, &sun_tex[i]);
 		glBindTexture(GL_TEXTURE_2D, sun_tex[i]);
@@ -762,22 +766,29 @@ static void RenderSun(void)
 	R_SpotBasis(sun_dir, sun_right, sun_up);
 
 	sun_half = r_sun_shadow_range->value > 128 ? r_sun_shadow_range->value : 128;
-	// the square follows the viewer in whole shadow map pixels, so shadow edges don't crawl as you walk
+	// The square follows the viewer in steps of an eighth of its size, each a whole number of shadow map pixels:
+	// shadow edges don't crawl as you walk, and the world's map only has to be drawn again after a step (the
+	// world doesn't move; only the moving things' map is drawn every frame)
 	float texel = sun_half * 2 / sun_size;
-	float cr = floorf(DotProduct(r_refdef.origin, sun_right) / texel) * texel;
-	float cu = floorf(DotProduct(r_refdef.origin, sun_up) / texel) * texel;
-	float cf = DotProduct(r_refdef.origin, sun_dir);
+	float step = floorf(sun_half / 8 / texel) * texel;
+	if (step < texel)
+		step = texel;
+	float cr = floorf(DotProduct(r_refdef.origin, sun_right) / step) * step;
+	float cu = floorf(DotProduct(r_refdef.origin, sun_up) / step) * step;
+	float cf = floorf(DotProduct(r_refdef.origin, sun_dir) / step) * step;
 	// from high above along the sun: cliffs and roofs up to that far away still count
 	sun_depth = sun_half * 4;
 	for (int i = 0; i < 3; i++)
 		sun_eye[i] = sun_right[i] * cr + sun_up[i] * cu + sun_dir[i] * (cf - sun_depth * 0.5f);
+	qboolean world_again = !sun_world_valid || !VectorCompare(sun_eye, sun_world_eye) || !VectorCompare(sun_dir, sun_world_dir);
 
 	// casters: everything in a sphere round the column the maps cover
 	vec3_t mid;
 	VectorMA(sun_eye, sun_depth * 0.5f, sun_dir, mid);
 	float reach = sqrtf(2 * sun_half * sun_half + sun_depth * sun_depth * 0.25f);
 	castsurfs_count = 0;
-	CollectWorldCasters(mid, reach, &world.nodes[0], 0);
+	if (world_again)
+		CollectWorldCasters(mid, reach, &world.nodes[0], 0);
 	CollectBrushCasters(mid, reach);
 	BuildBatches();
 	CollectModelCasters(mid, reach);
@@ -794,7 +805,7 @@ static void RenderSun(void)
 	glOrtho(-sun_half, sun_half, -sun_half, sun_half, 0, sun_depth);
 	glMatrixMode(GL_MODELVIEW);
 
-	for (int i = 0; i < 2; i++) {
+	for (int i = world_again ? 0 : 1; i < 2; i++) {
 		qglBindFramebuffer(GL_FRAMEBUFFER, sun_fbo[i]);
 		glViewport(0, 0, sun_size, sun_size);
 		BeginCasterDraw();
@@ -807,10 +818,15 @@ static void RenderSun(void)
 		}
 		EndCasterDraw();
 	}
+	if (world_again) {
+		VectorCopy(sun_eye, sun_world_eye);
+		VectorCopy(sun_dir, sun_world_dir);
+		sun_world_valid = true;
+	}
 	sun_active = true;
 	if (r_shadow_debug->value > 1)
-		Con_Printf("sun: %d faces, %d brush entities, %d models within %.0f, map %d\n", c_casters, casterents_count, c_models,
-			reach, sun_size);
+		Con_Printf("sun: %d faces%s, %d brush entities, %d models within %.0f, map %d\n", c_casters,
+			world_again ? " (world drawn again)" : "", casterents_count, c_models, reach, sun_size);
 }
 
 qboolean R_SunActive(void)

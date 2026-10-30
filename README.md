@@ -78,6 +78,7 @@ a map's or a model's own textures for trying it out.
 - Sun shadows: outdoors, people, monsters, items, doors and trains cast shadows in the map's sunlight (the map's own
   walls and cliffs already have theirs baked in). `r_sun_shadows`, `r_sun_shadow_darkness` (0.45),
   `r_sun_shadow_range` (2000), `r_sun_shadow_size` (2048), `r_sun_angles "pitch yaw"` to move the sun.
+- `r_timerefresh [frames]` times drawing the view (turning once round) and prints milliseconds per frame.
 - Decals (bullet holes, blood, scorch marks) and the gun in your hands get per-pixel light too
   (`r_modern_viewmodel 0` gives the gun classic's). See-through models and brushes (glass) keep classic's dynamic
   light.
