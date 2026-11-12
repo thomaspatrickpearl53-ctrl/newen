@@ -426,6 +426,7 @@ static void ConnectLocalClient(qboolean restored)
 
 void SV_Deactivate(void)
 {
+	SV_GameObjClear();
 	LuaG_ClearPlayerHurt();
 	if (!sv.edicts)
 		return;
@@ -530,6 +531,7 @@ qboolean SV_SpawnServer(const char *mapname, const char *oldmap, const char *lan
 		SV_Physics();
 	}
 	ConnectLocalClient(player);
+	SV_GameObjProbe();
 	sv.loading = false;
 	LuaG_CheckNewEntities();
 	if (SV_LocalPlayer())
@@ -929,6 +931,7 @@ void SV_Init(void)
 	Cmd_AddCommand("kill", Kill_f, "kills the player");
 	Cmd_AddCommand("reload", Reload_f, "restarts the current map");
 	SV_InitSave();
+	SV_InitGameObj();
 
 	if (COM_CheckParm("-nogamedll")) {
 		Con_Printf("Game DLL disabled (-nogamedll)\n");

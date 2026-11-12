@@ -135,6 +135,10 @@ If newen crashes, the end of `bin/userdata/<game>/console.log` has the call stac
 any message from a game DLL's failed assert.
 
 - `status` shows the game DLL, map and player health; `edicts [classname]` lists the game's entities.
+- `gameobj_info` shows the compatibility probe for calls into the game's entity objects. Every map checks
+  the player, world and a scientist before enabling calls. A failed probe disables calls until restart.
+  `gameobj_testbadslot 1` before `map` deliberately tests refusal; it is not saved. This is the first
+  Lua API expansion step; the new damage functions are not implemented yet.
 - `god`, `notarget` and `noclip` toggle invulnerability, being ignored by monsters, and flying through walls;
   `kill` kills you (the map restarts on the next attack press, like Half-Life).
 - `impulse <n>` sends an impulse (`sv_cheats 1` then `impulse 101` gives every weapon).

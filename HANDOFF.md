@@ -231,8 +231,9 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `r_light.c` | 253 | `R_LightPoint` (trace down 2048 units through the BSP, read the lightmap sample with light styles, same gamma table as the lightmaps), `R_LineBlocked` (segment vs solid leaves), and dynamic lights (up to 32 a frame, one bit each in a surface's `dlightbits`): `R_PushDlights` marks world faces, `R_DlightSpace` moves them into a brush entity's space, `R_DlightPoint` adds them to model light |
 | `r_ents.c` | 343 | The renderer's entity list: built from the entity lump (model keys plus a temporary classname-to-model preview table), frustum + PVS culling (`R_BoxVisible` in `r_world.c`), opaque first, then translucent far to near. `mdlview`, `r_entlist` |
 | `game_api.h` | 716 | Clean-room GoldSrc game interface: `entvars_t`, `edict_t`, `globalvars_t`, `TraceResult`, `KeyValueData`, `enginefuncs_t` (159 entries in order, plus 32 reserved slots in case a newer DLL copies a bigger table), `DLL_FUNCTIONS`, `NEW_DLL_FUNCTIONS`, constants. Static asserts check the sizes (entvars 676, edict 804) |
-| `server.h` | 180 | Server state (`sv`: edicts, precache lists, client info), `trace_t`/`hull_t`, entry points of the `sv_*.c` files |
-| `sv_main.c` | 943 | Loads the game DLL (`liblist.gam` `gamedll`, `GiveFnptrsToDll` is stdcall, `GetEntityAPI2`/`GetEntityAPI`, optional `GetNewDLLFunctions`), string pool (`string_t` = offset from an empty `pStringBase`), edict alloc/free (0.5 s reuse delay), precache lists (model 1 = world, 2.. = `*n`), map spawn (class export, `KeyValue`, `Spawn`; "angle" becomes "angles"), `ServerActivate`, 2 settling frames, local client connect, the ghost player, `SV_SetupRenderEntities` (edicts to the renderer every frame), commands `edicts`, `status`, `god`, `notarget`, `tracetest`, unknown commands to `pfnClientCommand` |
+| `server.h` | 185 | Server state (`sv`: edicts, precache lists, client info), `trace_t`/`hull_t`, entry points of the `sv_*.c` files, including the checked game-object probe |
+| `sv_main.c` | 953 | Loads the game DLL (`liblist.gam` `gamedll`, `GiveFnptrsToDll` is stdcall, `GetEntityAPI2`/`GetEntityAPI`, optional `GetNewDLLFunctions`), string pool (`string_t` = offset from an empty `pStringBase`), edict alloc/free (0.5 s reuse delay), precache lists (model 1 = world, 2.. = `*n`), map spawn (class export, `KeyValue`, `Spawn`; "angle" becomes "angles"), `ServerActivate`, 2 settling frames, local client connect, the ghost player, `SV_SetupRenderEntities` (edicts to the renderer every frame), commands `edicts`, `status`, `god`, `notarget`, `tracetest`, unknown commands to `pfnClientCommand`; runs the game-object probe before Lua's spawn hooks |
+| `sv_gameobj.c` | 164 | Checked C++ game-object calls: map-start player/world/scientist probe, session failure latch, guarded temporary scientist construction/cleanup, `gameobj_info` and the deliberately wrong-slot check. Linux and MSVC guards; MinGW calls remain unguarded |
 | `sv_engfuncs.c` | 1410 | Every `enginefuncs_t` function. Real: precache, models, traces (line, hull, toss, model, texture), PVS (`FindClientInPVS`, `EntitiesInPVS`, fat PVS, `CheckVisibility`), entity search, private data, cvars (game cvars via `Cvar_RegisterExternal`), info strings, bone/attachment positions, CRC32, random, files, the game's own command buffer (`ServerCommand`/`ServerExecute`), `NameForFunction` via the DLL's export table. Stubs: sound, messages, events, deltas, voice, save/restore helpers |
 | `sv_world.c` | 433 | Collision: hulls from the BSP clipnodes (hull 0 built from the render nodes in `bsp.c`), box hull, `SV_HullPointContents`, `RecursiveHullCheck`, rotated brush entities, `SV_Move` (world + every linked edict: owner, monsterclip, ignore-glass, `ShouldCollide`), linking (`pfnSetAbsBox`, touched leafs for PVS, brush-shaped trigger touches) |
 | `sv_phys.c` | 781 | `SV_Physics`: `StartFrame`, then per movetype: push (move and rotate, blocking, riders), step (gravity, ground friction), toss/bounce/fly/missile, noclip, follow; think timing (`ltime` for pushers), `FL_KILLME` removal; monster movement: `SV_movestep` (step up/down 18), `SV_CheckBottom`, `SV_MoveToOrigin`, `SV_DropToFloor` |
@@ -968,6 +969,15 @@ GoldSrc header for the DLLs. Written fresh (NewenSource couldn't be found on the
   committed). Still open from the HL2 map plan: its static props should use this loader. After that the owner
   wants physics and ragdolls, Lua SWEPs and a much bigger Lua API, each planned first.
 
+**Three plans (original design handover, 2026-11-12; current implementation status is below):**
+`docs/LUA_API_PLAN.md` (damage through `hl.dll`'s method table checked by probing, sound, effects, drawing
+in the world, clientside models; decision L1), `docs/SWEP_PLAN.md` (Lua weapons in Half-Life's own HUD by
+sitting between `hl.dll` and `client.dll`'s messages, plus scripted entities; S1-S4), `docs/PHYSICS_PLAN.md`
+(Jolt beside Half-Life's movement: ragdolls from `.phy`, props as scripted entities solid to `hl.dll` as
+boxes, pushes; P1 is the Jolt decision, P5 the order). `docs/BRIEF_FOR_AGENTS.md` is a hand-over brief for another
+coding agent (ChatGPT/Codex) to build them: rules, the recommended decisions taken as accepted, order of work,
+build and test recipes, and the pitfalls found in the Source models work.
+
 **Closed captions, done (owner's pick and recommendations, 2026-10-22).** See `cl_caption.c` in the code map and
 README's "Closed captions". The owner chose automatic captions from word sentences plus a caption file that
 overrides them. `base/captions/english.txt` ships the automatic setup (VOX, HEV, soldiers), word fixes, a few
@@ -988,3 +998,44 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### Lua API plan: step 1 built; decision needed before step 2 (2026-11-12)
+
+Owner authorized the brief's implementation. Step 1 is on `codex/luaapi-1`; the rest of the Lua API,
+SWEP and physics work has not been built. See `docs/LUA_API_PLAN.md`, section 10, for the stop before damage.
+
+- `sv_gameobj.c` is compiled on both platforms. `SV_SpawnServer` probes after the local client connects,
+  before Lua's entity/spawn hooks. It checks IsPlayer on player/world (1/0) and Classify on a scientist (3).
+  A map without a scientist gets a temporary, unspawned one, freed after the check. Allocation capacity is
+  checked first. Disconnect/map unload clears readiness; a failure stays latched until process restart.
+- `gameobj_info` reports readiness, slots, answers and the guard in use. `gameobj_testbadslot 1` before a
+  map deliberately uses Classify for IsPlayer (same call signature, wrong answer 2); it is not archived.
+- ABI correction: Valve's public CBaseEntity declaration has **no virtual destructor**. Classify 8 and
+  IsPlayer 40 are identical in Linux and Windows; VGUI's destructor-slot offset does not apply. Only
+  method declarations/order were consulted, no SDK implementation or other engine code was imported.
+- Linux uses the existing nestable `SYS_GUARDED` signal guard; Visual C++ uses structured exceptions.
+  Object calls and temporary construction/cleanup are guarded. A fault in temporary cleanup quarantines
+  its private data and finishes freeing the edict, deliberately leaking that one allocation rather than
+  retrying a broken DLL callback at map unload. **MinGW remains unguarded**, as with CLIENT_CALL.
+- Builds/checks: Linux gcc `-m32`, MinGW i686 and a strict gcc C11 syntax/warning check pass. Normal builds
+  still show the pre-existing `S_Update` array-parameter warnings; no new warnings in this file.
+  Linux `hl.so` and Windows `hl.dll` under Wine pass on c0a0/c1a0d (answers 1, 0, 3). Both reject the
+  deliberately wrong slot without a crash; Linux also keeps calls off after another map with the test
+  reset to 0. `gameobj_info` is safe before a map, after disconnect and with `-nogamedll`.
+- Regression: compared against an executable using the original `sv_main.c` and without `sv_gameobj.c`.
+  All 226 stock models checked before/after: 225 load, doctor.mdl is refused as before. Paused c1a0,
+  c2a5 and c1a0d screenshots, ignoring the top 120 pixels of console notifications: c1a0/c1a0d have no
+  differences; c2a5 differs by one pixel at (632, 595), with no visible scene change. Screenshots were
+  inspected. Logs and images are in `bin/userdata/valve/luaapi_checks/` (ignored). Saved settings restored.
+- Memory: separate 32-bit AddressSanitizer build in `build-asan/out/`, c0a0 then c1a0d and the probes:
+  no reports, with `detect_leaks=0:halt_on_error=1:alloc_dealloc_mismatch=0`. Normal `bin/newen` is intact.
+- Not checked: real Windows or Visual C++; client/HUD/menu interaction (these runs use `-noclientdll`;
+  VGUI could not load in the baseline setup); deliberately crashing a constructor or cleanup callback.
+  No damage API or gameplay interception is enabled by this step.
+
+**Stop required by the brief's section 8:** `ApplyMultiDamage` is a global function, not a virtual slot,
+and neither installed game library dynamically exports it or its accumulator. A Lua-only wrapper also
+cannot intercept stock game damage, which the physics plan needs for bullets hitting scripted props.
+Current traces do not identify studio hit groups. The plan's full bullet/hook/headshot check therefore
+needs a reviewed damage bridge; do not silently substitute reduced behavior. Recommended: retain the
+intended scope and add the investigation/validation described in `docs/LUA_API_PLAN.md`, section 10.

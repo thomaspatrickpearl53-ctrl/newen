@@ -120,6 +120,11 @@ qboolean    SV_RestoreSavedLevel(const char *map);     // a loaded save's level,
 void        SV_RestoreGlobalState(void);               // from a loaded save
 void        SV_AutoSave(void);
 const char *SV_LastSave(void);                          // NULL in a new game
+
+// sv_gameobj.c: checked C++ object calls; probe before Lua sees a newly started server
+void        SV_InitGameObj(void);
+void        SV_GameObjProbe(void);
+void        SV_GameObjClear(void);
 // r_main.c: loads a map and starts the server on it (oldmap: a level change; loadgame: from a save)
 void        R_LoadMap(const char *mapname, const char *oldmap, const char *landmark, qboolean loadgame);
 
