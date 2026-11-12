@@ -7,7 +7,10 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
 endif()
 
 set(CMAKE_C_STANDARD 11)
-set(OUT_DIR ${CMAKE_SOURCE_DIR}/bin)
+# where the exe and base/ go; a second build (another compiler, a release) can point somewhere else
+if(NOT DEFINED OUT_DIR)
+	set(OUT_DIR ${CMAKE_SOURCE_DIR}/bin)
+endif()
 foreach(cfg Debug Release RelWithDebInfo MinSizeRel)
 	string(TOUPPER ${cfg} CFG)
 	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${CFG} ${OUT_DIR})
@@ -121,7 +124,14 @@ else()
 	target_compile_options(newen PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function -fno-strict-aliasing)
 endif()
 if(WIN32)
-	target_link_libraries(newen PRIVATE lua54 SDL2main SDL2 opengl32 winmm gdi32 advapi32 dbghelp)
+	if(MSVC)
+		target_link_libraries(newen PRIVATE lua54 SDL2main SDL2 opengl32 winmm gdi32 advapi32 dbghelp)
+	else()
+		# MinGW (cross-builds from Linux): SDL2main.lib is Visual C++'s, so main() is the engine's own
+		target_compile_definitions(newen PRIVATE SDL_MAIN_HANDLED)
+		target_link_libraries(newen PRIVATE lua54 SDL2 opengl32 winmm gdi32 advapi32 dbghelp)
+		target_link_options(newen PRIVATE -static-libgcc)
+	endif()
 	# copy SDL2.dll and newen's own content next to the exe
 	add_custom_command(TARGET newen POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SDL2_DIR}/lib/x86/SDL2.dll ${OUT_DIR}/SDL2.dll

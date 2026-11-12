@@ -1,3 +1,6 @@
 build/
 bin/
 build-linux/
+dist/
+build-mingw/
+build-asan/

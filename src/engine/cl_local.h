@@ -33,7 +33,14 @@ static inline int   CL_RandomInt(int lo, int hi) { return hi <= lo ? lo : lo + r
 
 // A crash in the client is turned into an error and the client is switched off, instead of
 // taking the engine down with it
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(_MSC_VER)
+// MinGW has no structured exception handling in 32-bit C: the call runs unguarded, and a crash in the
+// client goes to the engine's crash handler (the Visual C++ build guards it)
+#define CLIENT_CALL(what, call) \
+	do { \
+		if (client_ok) { call; } \
+	} while (0)
+#elif defined(_WIN32)
 #define CLIENT_CALL(what, call) \
 	do { \
 		if (client_ok) { \

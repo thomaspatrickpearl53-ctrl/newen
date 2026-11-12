@@ -950,6 +950,19 @@ GoldSrc header for the DLLs. Written fresh (NewenSource couldn't be found on the
     -Wconversion` and use nothing outside C11 and the engine's own helpers (no POSIX calls), but MSVC hasn't
     seen them. First thing on the Windows machine: `build.bat`, then the `mdlview hl2:...` and `mdl_replace`
     checks from README. `bin\basedir_hl2.txt` caches where Half-Life 2 was found.
+- **Release 0.2.0 and the MinGW Windows build (2026-11-12):** `tools/make_release.sh` builds both archives
+  on Linux into `dist/` (ignored by git): `newen-<version>-linux-x86.tar.gz` from `build.sh`, and
+  `newen-<version>-win32.zip` cross-built with `i686-w64-mingw32-gcc` into `build-mingw/`. The version is
+  `ENGINE_VERSION` in `common.h`. `THIRD_PARTY_LICENSES.txt` (from the 0.1.0 archive) is in the repository now.
+  For MinGW: `CMakeLists.txt` takes `-DOUT_DIR=` (so a second build doesn't overwrite `bin/`), skips Visual
+  C++'s `SDL2main.lib` and defines `SDL_MAIN_HANDLED`; `CLIENT_CALL` (`cl_local.h`) and the `VGUI_Paint` guard
+  (`cl_main.c`) run unguarded there, because 32-bit MinGW C has no `__try`. The Visual C++ build is unchanged.
+  This was the first time the Windows side of `gameui.c` / `vgui2_*.c` and the Source model files went through
+  a Windows compiler: no errors. Run under Wine against the Linux Steam install (which carries `hl.dll` and
+  `client.dll` but not `vgui.dll`): the Windows `hl.dll` loads and runs c1a0 and c1a0d, Half-Life 2 is read
+  from `-hl2dir`, Source models load and draw. **Not tested: anything needing client.dll (HUD, weapons, view
+  models, the menu), because `vgui.dll` isn't in the Linux install, and real Windows.** 0.1.0 was a Visual C++
+  build; the MinGW one needs Windows 10+ (system UCRT) and no VCRUNTIME140.dll.
 - Not built: IK, layers of layers.
 - Next: the Windows build, step 10 (docs review by the owner), and a commit (nothing from this work is
   committed). Still open from the HL2 map plan: its static props should use this loader. After that the owner

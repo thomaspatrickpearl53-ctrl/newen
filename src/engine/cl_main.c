@@ -1214,7 +1214,9 @@ void CL_DrawHUD(void)
 		int w = Draw_StringWidth(center_text);
 		Draw_String((float)((vid_width - w) / 2), vid_height * 0.35f, center_text, 255, 255, 255, 255);
 	}
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(_MSC_VER)
+	VGUI_Paint();   // MinGW: unguarded, see CLIENT_CALL
+#elif defined(_WIN32)
 	__try {
 		VGUI_Paint();
 	} __except (EXCEPTION_EXECUTE_HANDLER) {

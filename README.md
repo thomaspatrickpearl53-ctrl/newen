@@ -4,8 +4,10 @@ A Half-Life (GoldSrc-compatible) engine with Lua built into the engine. Written 
 "newen" is a placeholder name.
 
 You need your own copy of Half-Life (Steam). newen contains no Valve code or game files: it loads the game's own
-files and DLLs from your install. Building needs Visual Studio (x86 C compiler) on Windows, or gcc with 32-bit libraries on Linux; a prebuilt Windows build is on the
-Releases page: unzip it anywhere and run `newen.exe`.
+files and DLLs from your install. Building needs Visual Studio (x86 C compiler) on Windows, or gcc with 32-bit libraries on Linux; prebuilt Windows and Linux builds are on the
+Releases page: unpack one anywhere and run `newen.exe` (Windows) or `./newen` (Linux, which needs the 32-bit SDL2 and
+OpenGL libraries: `lib32-sdl2-compat` and `lib32-mesa` or your GPU's 32-bit driver on Arch, `libsdl2-2.0-0:i386` on
+Debian/Ubuntu).
 
 ## Build and run
 
