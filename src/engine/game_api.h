@@ -698,7 +698,12 @@ typedef struct saverestore_s {
 _Static_assert(sizeof(ENTITYTABLE) == 24 && sizeof(LEVELLIST) == 80, "save/restore table layout");
 _Static_assert(offsetof(SAVERESTOREDATA, fUseLandmark) == 44 + 16 * 80, "SAVERESTOREDATA layout");
 
-typedef void (__stdcall *GIVEFNPTRSTODLL)(enginefuncs_t *engfuncs, globalvars_t *globals);
+#ifdef _WIN32
+#define GIVEFNPTRS_CALL __stdcall   // the Windows SDK declares it WINAPI; Linux builds have no such thing
+#else
+#define GIVEFNPTRS_CALL
+#endif
+typedef void (GIVEFNPTRS_CALL *GIVEFNPTRSTODLL)(enginefuncs_t *engfuncs, globalvars_t *globals);
 typedef int  (*APIFUNCTION)(DLL_FUNCTIONS *functionTable, int interfaceVersion);
 typedef int  (*APIFUNCTION2)(DLL_FUNCTIONS *functionTable, int *interfaceVersion);
 typedef int  (*NEW_DLL_FUNCTIONS_FN)(NEW_DLL_FUNCTIONS *functionTable, int *interfaceVersion);

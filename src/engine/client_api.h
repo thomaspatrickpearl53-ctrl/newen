@@ -645,10 +645,13 @@ typedef struct {
 	void     *(*GetCareerGameUI)(void);
 	void      (*Cvar_Set)(const char *cvar, const char *value);
 	int       (*pfnIsPlayingCareerMatch)(void);
+	void      (*pfnPlaySoundVoiceByName)(char *szSound, float volume, int pitch);
+	void      (*pfnPrimeMusicStream)(char *szFilename, int looping);
 	double    (*pfnGetAbsoluteTime)(void);
 	void      (*pfnProcessTutorMessageDecayBuffer)(int *buffer, int bufferLength);
 	void      (*pfnConstructTutorMessageDecayBuffer)(int *buffer, int bufferLength);
 	void      (*pfnResetTutorMessageDecayData)(void);
+	void      (*pfnPlaySoundByNameAtPitch)(char *szSound, float volume, int pitch);
 	void      (*pfnFillRGBABlend)(int x, int y, int width, int height, int r, int g, int b, int a);
 	int       (*pfnGetAppID)(void);
 	void     *(*pfnGetAliases)(void);
@@ -705,6 +708,7 @@ _Static_assert(sizeof(client_sprite_t) == 152, "client_sprite_t layout");
 _Static_assert(offsetof(TEMPENTITY, entity) == 68, "TEMPENTITY layout");
 // the tables are arrays of pointers in a fixed order; these catch an entry added or lost by mistake
 _Static_assert(offsetof(efx_api_t, R_FireCustomDecal) == 73 * 4, "efx_api_t layout");
+_Static_assert(offsetof(cl_enginefunc_t, pfnFilteredClientCmd) == 134 * 4, "cl_enginefunc_t layout (HL25)");
 _Static_assert(offsetof(event_api_t, EV_KillEvents) == 21 * 4, "event_api_t layout");
 _Static_assert(offsetof(triangleapi_t, FogParams) == 19 * 4, "triangleapi_t layout");
 _Static_assert(offsetof(engine_studio_api_t, IsHardware) == 40 * 4, "engine_studio_api_t layout");

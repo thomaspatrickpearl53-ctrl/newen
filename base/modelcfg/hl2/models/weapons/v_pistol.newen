@@ -1,0 +1,4 @@
+// Half-Life 2's pistol in place of Half-Life's 9mm handgun:
+//   mdl_replace models/v_9mmhandgun.mdl hl2:models/weapons/v_pistol.mdl
+// idle1, idle2, idle3, shoot, shoot empty, reload, reload (not empty), draw, holster, add silencer
+order idle01 idle01 idle01 fire fireempty reload reload draw holster idle01

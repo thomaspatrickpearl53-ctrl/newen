@@ -254,6 +254,17 @@ static void ComputeAttachments(cl_entity_t *ent, const rentity_t *r)
 		}
 		for (int k = 0; k < 3; k++)
 			ent->attachment[i][k] = DotProduct(a[i].org, bones[a[i].bone][k]) + bones[a[i].bone][k][3];
+		// a view model drawn with its own field of view: effects are drawn with the world's, so the
+		// barrel is moved to where it shows on screen
+		float scale = ent == &cl_viewent ? R_ViewModelFovScale(R_StudioViewModelFov(r->model)) : 1;
+		if (scale != 1) {
+			vec3_t d;
+			VectorSubtract(ent->attachment[i], r_refdef.origin, d);
+			float df = DotProduct(d, r_refdef.forward), dr = DotProduct(d, r_refdef.right), du = DotProduct(d, r_refdef.up);
+			for (int k = 0; k < 3; k++)
+				ent->attachment[i][k] = r_refdef.origin[k] + r_refdef.forward[k] * df +
+					(r_refdef.right[k] * dr + r_refdef.up[k] * du) * scale;
+		}
 	}
 }
 

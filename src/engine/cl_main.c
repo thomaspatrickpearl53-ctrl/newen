@@ -10,7 +10,9 @@
 // Not yet: sound, the studio model interface (the engine draws models itself), dynamic lights.
 #include "cl_local.h"
 
+#ifdef _MSC_VER
 #pragma warning(disable: 4152)   // GetProcAddress results become function pointers
+#endif
 
 qboolean VGUI_Init(void);
 void    *VGUI_GetPanel(void);
@@ -20,9 +22,8 @@ void     CL_CreateCmdEngine(float frametime, usercmd_t *cmd);
 const char *SV_UserMsgName(int type);
 pmtrace_t *SV_PM_TraceLine(float *start, float *end, int flags, int usehull, int ignore_pe);
 movevars_t *SV_MoveVars(void);
-const char *Key_KeynameForBinding(const char *binding);
 
-static HMODULE client_dll;
+static void *client_dll;
 cldll_exports_t cl;
 static cl_enginefunc_t cl_funcs;
 qboolean client_ok;
@@ -44,10 +45,27 @@ static cvar_t *crosshair, *cl_drawhud;
 
 qboolean CL_HasClient(void) { return client_ok; }
 
+static void InitEngineFuncs(void);
+
+// GameUI gets the same engine functions as the client DLL
+void *CL_EngineFuncs(void)
+{
+	if (!cl_funcs.pfnSPR_Load)
+		InitEngineFuncs();
+	return &cl_funcs;
+}
+
+// the client DLL's CreateInterface (GameUI asks it for "GameClientExports001"), or NULL
+void *CL_InterfaceFactory(void)
+{
+	return client_ok ? Sys_GetProcAddress(client_dll, "CreateInterface") : NULL;
+}
+
 // ---------------------------------------------------------------- guarded calls into the DLL
 
 char cl_crash_where[256];
 
+#ifdef _WIN32
 // remembers where a crash happened: module and offset, for finding the engine function at fault
 int CL_CrashFilter(EXCEPTION_POINTERS *ep)
 {
@@ -64,6 +82,7 @@ int CL_CrashFilter(EXCEPTION_POINTERS *ep)
 	Sys_LogException(ep);
 	return EXCEPTION_EXECUTE_HANDLER;
 }
+#endif
 
 // ---------------------------------------------------------------- sprites (HUD)
 
@@ -509,6 +528,8 @@ static void GetPlayerInfo(int ent_num, hud_player_info_t *info)
 }
 
 static void PlaySoundByName(const char *s, float vol) { S_LocalSound(s, vol); }
+static void PlaySoundAtPitch(char *s, float vol, int pitch) { S_StartSound(-1, 0, s, NULL, vol, 0, 0, pitch); }
+static void PrimeMusicStream(char *name, int looping) {}
 
 static void PlaySoundByIndex(int i, float vol)
 {
@@ -864,10 +885,13 @@ static void InitEngineFuncs(void)
 	f->GetCareerGameUI = GetCareerGameUI;
 	f->Cvar_Set = ClCvar_Set;
 	f->pfnIsPlayingCareerMatch = IsPlayingCareerMatch;
+	f->pfnPlaySoundVoiceByName = PlaySoundAtPitch;
+	f->pfnPrimeMusicStream = PrimeMusicStream;
 	f->pfnGetAbsoluteTime = GetAbsoluteTime;
 	f->pfnProcessTutorMessageDecayBuffer = TutorStub;
 	f->pfnConstructTutorMessageDecayBuffer = TutorStub;
 	f->pfnResetTutorMessageDecayData = TutorReset;
+	f->pfnPlaySoundByNameAtPitch = PlaySoundAtPitch;
 	f->pfnFillRGBABlend = FillRGBABlend;
 	f->pfnGetAppID = GetAppID;
 	f->pfnGetAliases = GetAliases;
@@ -1101,9 +1125,14 @@ void CL_DrawViewModel(void)
 	glDepthRange(0, 0.3);
 	glEnable(GL_CULL_FACE);
 	glCullFace(GL_FRONT);
+	float vmfov = R_StudioViewModelFov(r.model);
+	if (vmfov)
+		R_BeginViewModelFov(vmfov);
 	r_studio_viewmodel = true;
 	R_StudioDrawModel(&r);
 	r_studio_viewmodel = false;
+	if (vmfov)
+		R_EndViewModelFov();
 	glDisable(GL_CULL_FACE);
 	glDepthRange(0, 1);
 }
@@ -1185,12 +1214,16 @@ void CL_DrawHUD(void)
 		int w = Draw_StringWidth(center_text);
 		Draw_String((float)((vid_width - w) / 2), vid_height * 0.35f, center_text, 255, 255, 255, 255);
 	}
+#ifdef _WIN32
 	__try {
 		VGUI_Paint();
 	} __except (EXCEPTION_EXECUTE_HANDLER) {
 		Con_Errorf("vgui.dll crashed while painting (exception 0x%08lx)\n", GetExceptionCode());
 		client_ok = false;
 	}
+#else
+	SYS_GUARDED(VGUI_Paint(), (Con_Errorf("vgui.so crashed while painting at %s\n", sys_crash_where), client_ok = false));
+#endif
 	glDisable(GL_SCISSOR_TEST);
 	glColor4f(1, 1, 1, 1);
 }
@@ -1241,7 +1274,7 @@ void CL_MapEnded(void)
 
 static void *Export(const char *name)
 {
-	return (void *)GetProcAddress(client_dll, name);
+	return Sys_GetProcAddress(client_dll, name);
 }
 
 // Steam features the client asks for; nothing to do here
@@ -1267,8 +1300,13 @@ void CL_Init(void)
 	R_InitParticles();
 	R_InitBeams();
 
+#ifdef _WIN32
+	const char *client_name = "cl_dlls/client.dll";
+#else
+	const char *client_name = "cl_dlls/client.so";
+#endif
 	char path[MAX_OSPATH];
-	if (COM_CheckParm("-noclientdll") || COM_CheckParm("-nogamedll") || !FS_FullPath("cl_dlls/client.dll", path, sizeof(path))) {
+	if (COM_CheckParm("-noclientdll") || COM_CheckParm("-nogamedll") || !FS_FullPath(client_name, path, sizeof(path))) {
 		CL_InitInput();
 		return;
 	}
@@ -1276,9 +1314,9 @@ void CL_Init(void)
 		CL_InitInput();
 		return;
 	}
-	client_dll = LoadLibraryA(path);
+	client_dll = Sys_LoadLibrary(path);
 	if (!client_dll) {
-		Con_Errorf("Couldn't load %s (error %lu)\n", path, GetLastError());
+		Con_Errorf("Couldn't load %s (%s)\n", path, Sys_LibraryError());
 		CL_InitInput();
 		return;
 	}
@@ -1335,7 +1373,7 @@ void CL_Init(void)
 	}
 	CL_LoadTitles();
 	CL_InitStudioAPI();
-	Con_Printf("Client DLL: cl_dlls/client.dll\n");
+	Con_Printf("Client DLL: %s\n", client_name);
 }
 
 void CL_Shutdown(void)

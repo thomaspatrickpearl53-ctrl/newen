@@ -212,6 +212,9 @@ typedef struct {
 	studiotex_t  *textures;     // texhdr->numtextures
 	studiomesh_t **meshes;      // per studio model (flattened bodypart index), per mesh
 	int          numsubmodels;
+	// A Source model (MDL 44-48): drawn from this, while hdr is a stand-in GoldSrc header that describes
+	// it to the game and client DLLs. NULL for GoldSrc models.
+	struct srcmodel_s *source;
 } studiomodel_t;
 
 typedef struct {
@@ -294,6 +297,7 @@ void     R_StudioInit(void);
 extern qboolean r_studio_viewmodel;   // the gun in your hands is being drawn (it keeps classic lighting)
 void     R_StudioDrawModel(rentity_t *e);
 float    R_StudioFrame(const rentity_t *e);             // current frame of the sequence
+float    R_StudioViewModelFov(const model_t *m);        // Source view models: their own field of view; else 0
 void     R_StudioInitControllers(const model_t *m, rentity_t *e);   // every controller to 0 degrees
 int      R_StudioLookupSequence(const model_t *m, const char *label);   // -1 if none
 qboolean R_StudioCull(const rentity_t *e);

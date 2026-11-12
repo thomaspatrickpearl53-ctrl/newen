@@ -4,7 +4,8 @@ A from-scratch, GoldSrc-compatible Half-Life engine in C (32-bit, Windows, SDL2,
 engine. **Read `HANDOFF.md` before changing anything.** It has the decisions, code map, status, known issues and
 next steps. `README.md` covers commands, cvars and the Lua API.
 
-- Build: `build.bat` (MSVC x86 + bundled CMake/Ninja). Output: `bin\newen.exe`.
+- Build: `build.bat` (MSVC x86 + bundled CMake/Ninja). Output: `bin\newen.exe`. On Linux: `./build.sh` (gcc -m32,
+  output `bin/newen`, build folder `build-linux/`).
 - Test without a human: `bin\newen.exe +map c1a0 +wait 30 +screenshot +wait 1 +quit`, then read
   `bin\userdata\valve\console.log` and convert `bin\userdata\valve\screenshots\*.tga` with ffmpeg.
 - Clean-room: never copy Xash3D (GPL) code. Never write into the Half-Life folder.

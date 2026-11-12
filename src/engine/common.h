@@ -54,9 +54,9 @@ extern char **com_argv;
 int         COM_CheckParm(const char *parm);     // index or 0
 const char *COM_ParmValue(const char *parm);     // value after parm, or NULL
 
-// ---------------------------------------------------------------- sys_win.c
+// ---------------------------------------------------------------- sys_win.c / sys_linux.c
 NORETURN void Sys_Error(const char *fmt, ...);
-void Sys_LogException(void *exception_pointers);   // EXCEPTION_POINTERS: the call stack into the log
+void Sys_LogException(void *exception_pointers);   // Windows: EXCEPTION_POINTERS; the call stack into the log
 double      Sys_FloatTime(void);
 void        Sys_Sleep(int ms);
 const char *Sys_ExeDir(void);
@@ -66,6 +66,17 @@ void        Sys_MakeDirs(const char *path);    // creates every directory in the
 const char *Sys_SteamPath(void);               // NULL if unknown
 typedef void (*sys_listfn_t)(const char *name, qboolean isdir, void *ctx);
 void        Sys_ListDir(const char *dir, sys_listfn_t fn, void *ctx);
+#ifndef _WIN32
+qboolean    Sys_FixCase(char *path, size_t keep);   // finds a file whose name differs only in case
+#endif
+// where libraries' own dependencies are found (Linux: may restart the process with dir in LD_LIBRARY_PATH)
+void        Sys_AddLibraryPath(const char *dir);
+// game, client and vgui libraries (.dll / .so)
+void       *Sys_LoadLibrary(const char *path);      // NULL on failure; Sys_LibraryError says why
+void       *Sys_GetProcAddress(void *lib, const char *name);
+void        Sys_FreeLibrary(void *lib);
+const char *Sys_LibraryError(void);
+const char *Sys_ExportName(void *lib, void *addr);  // the exported name at an address, or NULL
 
 // ---------------------------------------------------------------- cvar.c
 // Layout matches GoldSrc's cvar_t so game DLLs can register their own.
@@ -178,6 +189,8 @@ void        Key_Event(int key, qboolean down);
 qboolean    Key_IsDown(int key);
 int         Key_StringToKeynum(const char *str);
 const char *Key_KeynumToString(int key);
+const char *Key_GetBinding(int key);            // NULL if unbound
+const char *Key_KeynameForBinding(const char *binding);   // a key bound to it, or NULL
 void        Key_WriteBindings(FILE *f);
 void        Key_SnapshotDefaults(void);
 void        Key_ClearStates(void);
@@ -185,6 +198,7 @@ void        Key_ClearStates(void);
 // ---------------------------------------------------------------- filesystem.c
 void        FS_Init(void);
 void        FS_Shutdown(void);
+void        SrcFS_Shutdown(void);   // src_fs.c: Half-Life 2 archives
 const char *FS_BaseDir(void);    // Half-Life install folder
 const char *FS_GameDir(void);    // e.g. "valve"
 const char *FS_WriteDir(void);   // where configs and saves go
@@ -198,6 +212,8 @@ FILE       *FS_OpenWrite(const char *path);
 int         FS_ListFiles(const char *dir, const char *pattern, char ***out);
 void        FS_FreeList(char **list, int count);
 void        FS_AddSearchPath(const char *dir, qboolean front);
+qboolean    FS_FindSteamGame(const char *folder, const char *marker, char *out, size_t outsize);
+qboolean    FS_SearchPath(int i, char *out, size_t size);   // the i-th search path, false past the end
 
 // ---------------------------------------------------------------- vid_sdl.c
 extern int vid_width, vid_height;  // drawable size in pixels
@@ -242,8 +258,30 @@ void     CL_Frame(double frametime);  // messages to the client, HUD_Frame
 void     CL_DrawHUD(void);            // 2D: HUD, crosshair, VGUI
 qboolean CL_KeyEvent(int key, qboolean down, const char *binding);   // false = the client ate it
 qboolean CL_HasClient(void);
+void    *CL_EngineFuncs(void);        // the client DLL's engine functions (cl_enginefunc_t), also given to GameUI
+void    *CL_InterfaceFactory(void);   // the client DLL's CreateInterface, or NULL
 void     CL_MapStarted(void);
 void     CL_MapEnded(void);
+
+// ---------------------------------------------------------------- gameui.c (Half-Life's own main menu)
+void     GameUI_Init(void);           // after CL_Init
+void     GameUI_Shutdown(void);
+qboolean GameUI_Loaded(void);
+qboolean GameUI_IsActive(void);       // the menu is showing
+qboolean GameUI_Paused(void);         // single player is paused (menu up, or "setpause")
+void     GameUI_Activate(void);
+void     GameUI_Hide(void);
+void     GameUI_Frame(void);          // before drawing
+void     GameUI_Paint(void);          // 2D, over the HUD
+qboolean GameUI_WantsMouse(void);
+qboolean GameUI_KeyEvent(int key, qboolean down);   // true = the menu used it
+void     GameUI_CharEvent(const char *utf8);
+void     GameUI_MouseMove(int x, int y);
+void     GameUI_MouseButton(int button, qboolean down, qboolean dbl);   // 0 left, 1 right, 2 middle, 3/4 side
+void     GameUI_MouseWheel(int delta);
+void     GameUI_LoadingStarted(const char *map);
+void     GameUI_LoadingFinished(const char *map);
+void     GameUI_Disconnected(void);
 
 // ---------------------------------------------------------------- snd_main.c
 void     S_Init(void);
@@ -276,7 +314,7 @@ int  Draw_StringWidth(const char *s);
 int  Draw_CharWidth(void);
 int  Draw_LineHeight(void);
 
-// font_win.c - rasterizes a system font into an 8-bit alpha atlas (ASCII 32..126)
+// font_win.c / font_stb.c - rasterizes a system font into an 8-bit alpha atlas (ASCII 32..126)
 typedef struct {
 	int width, height;          // atlas size
 	int cell_w, cell_h;         // monospace cell; for proportional fonts, the cell every glyph sits in
@@ -288,6 +326,16 @@ qboolean Font_Rasterize(const char *face, int pixel_height, fontatlas_t *out);
 // a proportional font like VGUI2's: cell height in pixels, weight 400 normal .. 700 bold, antialiased.
 // Character c is in the cell at column (c-32)%16, row (c-32)/16.
 qboolean Font_RasterizeProportional(const char *face, int tall, int weight, fontatlas_t *out);
+// one glyph at a time, any Unicode character (VGUI2's fonts). tall is the line height in pixels.
+typedef struct fontface_s fontface_t;
+void        Font_AddFile(const char *path);   // a font file whose faces Font_Open can then use
+fontface_t *Font_Open(const char *face, int tall, int weight, qboolean italic, qboolean antialias);
+void        Font_Close(fontface_t *f);
+int         Font_Height(fontface_t *f);
+int         Font_Ascent(fontface_t *f);
+// a, b, c: space before the glyph, its width, space after (the pen moves a+b+c);
+// alpha: b x Font_Height bytes of coverage (Mem_Free it), NULL when b is 0
+void        Font_Glyph(fontface_t *f, int ch, int *a, int *b, int *c, unsigned char **alpha);
 
 // ---------------------------------------------------------------- lua_host.c
 void     Lua_Init(void);

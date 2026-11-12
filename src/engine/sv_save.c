@@ -471,6 +471,56 @@ static char **ReadTokens(reader_t *r, int *count)
 	return t;
 }
 
+// GoldSrc's save header ("JSAV"): the Load and Save dialogs of Half-Life's menu (GameUI) read the map name
+// and the comment (the level's title and the time played) from it. A token table, then the "GameHeader"
+// fields the way the game DLLs' save code writes them: short size, short token, data.
+#define JSAV_VERSION 0x71
+
+static void WriteShort(FILE *f, int v) { short s = (short)v; fwrite(&s, 2, 1, f); }
+
+static void WriteGameHeader(FILE *f, const char *map, const char *comment)
+{
+	static const char *tokens[] = { "GameHeader", "mapCount", "mapName", "comment" };
+	char mapname[32] = "", text[80] = "";
+	Q_strncpy(mapname, map, sizeof(mapname));
+	Q_strncpy(text, comment, sizeof(text));
+	int tokensize = 0;
+	for (int i = 0; i < 4; i++)
+		tokensize += (int)strlen(tokens[i]) + 1;
+	int datasize = (2 + 2 + 4) + (2 + 2 + 4) + (2 + 2 + (int)sizeof(mapname)) + (2 + 2 + (int)sizeof(text));
+	fwrite("JSAV", 1, 4, f);
+	WriteInt(f, JSAV_VERSION);
+	WriteInt(f, datasize);
+	WriteInt(f, 4);
+	WriteInt(f, tokensize);
+	for (int i = 0; i < 4; i++)
+		fwrite(tokens[i], 1, strlen(tokens[i]) + 1, f);
+	WriteShort(f, 4);   // "GameHeader": the number of fields that follow
+	WriteShort(f, 0);
+	WriteInt(f, 3);
+	WriteShort(f, 4);
+	WriteShort(f, 1);
+	WriteInt(f, 1);     // mapCount
+	WriteShort(f, sizeof(mapname));
+	WriteShort(f, 2);
+	fwrite(mapname, 1, sizeof(mapname), f);
+	WriteShort(f, sizeof(text));
+	WriteShort(f, 3);
+	fwrite(text, 1, sizeof(text), f);
+}
+
+// where newen's own data starts: after a GoldSrc header if there is one
+static size_t SkipGameHeader(const unsigned char *file, size_t len)
+{
+	if (len < 20 || memcmp(file, "JSAV", 4))
+		return 0;
+	int datasize, tokensize;
+	memcpy(&datasize, file + 8, 4);
+	memcpy(&tokensize, file + 16, 4);
+	size_t skip = 20 + (size_t)tokensize + (size_t)datasize;
+	return datasize >= 0 && tokensize >= 0 && skip <= len ? skip : 0;
+}
+
 static qboolean SaveGame(const char *name, qboolean quiet)
 {
 	edict_t *pl = SV_LocalPlayer();
@@ -495,6 +545,12 @@ static qboolean SaveGame(const char *name, qboolean quiet)
 		FreeSaveData(gd);
 		return false;
 	}
+	// the comment as GoldSrc writes it: the level's title (worldspawn's "message", else the map), then mm:ss
+	const char *title = SV_String(sv.edicts->v.message);
+	if (!title || !*title)
+		title = sv.mapname;
+	int played = (int)sv.time;
+	WriteGameHeader(f, sv.mapname, va("%-64.64s %02d:%02d", title, played / 60, played % 60));
 	fwrite(SAVE_MAGIC, 1, 8, f);
 	WriteInt(f, SAVE_VERSION);
 	WriteString(f, sv.mapname);
@@ -540,8 +596,9 @@ static qboolean LoadGame(const char *name)
 		Con_Printf("No saved game called %s\n", name);
 		return false;
 	}
-	reader_t rd = { file + 8, file + len, false }, *r = &rd;
-	if (len < 12 || memcmp(file, SAVE_MAGIC, 8) || ReadInt(r) != SAVE_VERSION) {
+	size_t start = SkipGameHeader(file, len);
+	reader_t rd = { file + start + 8, file + len, false }, *r = &rd;
+	if (len < start + 12 || memcmp(file + start, SAVE_MAGIC, 8) || ReadInt(r) != SAVE_VERSION) {
 		Con_Printf("%s isn't a newen saved game (or it's from another version)\n", name);
 		Mem_Free(file);
 		return false;
@@ -627,26 +684,33 @@ static qboolean LoadGame(const char *name)
 	return true;
 }
 
-static void Save_f(void)
+// the save's name from the command: "quick" if none; GameUI's dialogs add ".sav", as GoldSrc allows
+static qboolean SaveName(char *out, size_t size)
 {
 	const char *name = Cmd_Argc() > 1 ? Cmd_Argv(1) : "quick";
 	if (strchr(name, '/') || strchr(name, '\\') || strstr(name, "..")) {
 		Con_Printf("A save name can't have / or ..\n");
-		return;
+		return false;
 	}
-	SaveGame(name, false);
+	Q_strncpy(out, name, size);   // the map load runs commands; Cmd_Argv won't last
+	size_t n = strlen(out);
+	if (n > 4 && !stricmp(out + n - 4, ".sav"))
+		out[n - 4] = 0;
+	return out[0] != 0;
+}
+
+static void Save_f(void)
+{
+	char name[64];
+	if (SaveName(name, sizeof(name)))
+		SaveGame(name, false);
 }
 
 static void Load_f(void)
 {
-	const char *name = Cmd_Argc() > 1 ? Cmd_Argv(1) : "quick";
-	if (strchr(name, '/') || strchr(name, '\\') || strstr(name, "..")) {
-		Con_Printf("A save name can't have / or ..\n");
-		return;
-	}
-	char copy[64];
-	Q_strncpy(copy, name, sizeof(copy));   // the map load runs commands; Cmd_Argv won't last
-	LoadGame(copy);
+	char name[64];
+	if (SaveName(name, sizeof(name)))
+		LoadGame(name);
 }
 
 // at each level change, and when the game asks (trigger_autosave)

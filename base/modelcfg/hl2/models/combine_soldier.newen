@@ -1,0 +1,24 @@
+// Half-Life 2's Combine soldier standing in for Half-Life's grunt:
+//   mdl_replace models/hgrunt.mdl hl2:models/combine_soldier.mdl
+// The grunt's code asks for its shooting sequences by name, and for plain walk/run/death activities
+// the soldier only has in rifle-carrying versions.
+
+blend 0 aim_pitch reverse
+
+sequence standing_mp5       shootSMG1s
+sequence crouching_mp5      shootSMG1c
+sequence standing_shotgun   shootSGs
+sequence crouching_shotgun  shootSGc
+sequence throwgrenade       grenThrow
+sequence launchgrenade      shootAR2g
+
+activity ACT_WALK           Walk_all
+activity ACT_RUN            RunALL
+activity ACT_IDLE_ANGRY     CombatIdle1_SMG1
+activity ACT_CROUCH         Combat_stand_to_crouch
+activity ACT_STAND          Crouch_to_combat_stand
+activity ACT_DIESIMPLE      deathpose_front
+activity ACT_DIEBACKWARD    deathpose_back
+activity ACT_DIEFORWARD     deathpose_front
+activity ACT_DIE_HEADSHOT   deathpose_back
+activity ACT_DIE_GUTSHOT    deathpose_front

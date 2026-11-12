@@ -94,6 +94,36 @@ static void SetupGL(void)
 	glTranslatef(-r_refdef.origin[0], -r_refdef.origin[1], -r_refdef.origin[2]);
 }
 
+// A view model with its own field of view (horizontal at 4:3, widened like the world's): how much wider the
+// world's view is than that one, 1 if fov is 0
+float R_ViewModelFovScale(float fov)
+{
+	if (fov <= 0)
+		return 1;
+	float tan_y = tanf(DEG2RAD(fov * 0.5f)) * 0.75f;
+	return tanf(DEG2RAD(r_refdef.fov_y * 0.5f)) / tan_y;
+}
+
+// Swaps the projection for that field of view until R_EndViewModelFov
+void R_BeginViewModelFov(float fov)
+{
+	float znear = r_nearclip->value > 0.5f ? r_nearclip->value : 4.0f;
+	float ymax = znear * tanf(DEG2RAD(fov * 0.5f)) * 0.75f;
+	float xmax = ymax * (float)vid_width / (float)(vid_height ? vid_height : 1);
+	glMatrixMode(GL_PROJECTION);
+	glPushMatrix();
+	glLoadIdentity();
+	glFrustum(-xmax, xmax, -ymax, ymax, znear, FarClip());
+	glMatrixMode(GL_MODELVIEW);
+}
+
+void R_EndViewModelFov(void)
+{
+	glMatrixMode(GL_PROJECTION);
+	glPopMatrix();
+	glMatrixMode(GL_MODELVIEW);
+}
+
 void R_RenderView(void)
 {
 	if (!world.loaded)
@@ -128,7 +158,7 @@ void R_RenderView(void)
 
 void R_UpdateCamera(void)
 {
-	qboolean active = world.loaded && !Con_IsVisible() && Vid_HasFocus() && !VGUI_WantsMouse();
+	qboolean active = world.loaded && !Con_IsVisible() && Vid_HasFocus() && !VGUI_WantsMouse() && !GameUI_IsActive();
 	// with m_rawinput 0 the client DLL reads the cursor and recenters it, so relative mode must be off
 	qboolean cursor_mode = active && CL_HasClient() && SV_LocalPlayer() && Cvar_VariableValue("m_rawinput") == 0;
 	Vid_SetRelativeMouse(active && !cursor_mode);
@@ -203,6 +233,7 @@ void R_LoadMap(const char *mapname, const char *oldmap, const char *landmark, qb
 		Q_strncpy(mark, landmark, sizeof(mark));
 
 	Lua_RunHookString("WorldUnloaded", current_map);
+	GameUI_LoadingStarted(name);
 	// models belong to the map they were loaded for (as in GoldSrc)
 	CL_MapEnded();
 	SV_Deactivate();
@@ -212,6 +243,7 @@ void R_LoadMap(const char *mapname, const char *oldmap, const char *landmark, qb
 	if (!BSP_Load(name)) {
 		current_map[0] = 0;
 		Con_SetForced(false);
+		GameUI_Disconnected();
 		return;
 	}
 	Q_strncpy(current_map, name, sizeof(current_map));
@@ -221,6 +253,7 @@ void R_LoadMap(const char *mapname, const char *oldmap, const char *landmark, qb
 	PlaceCamera();
 	if (Con_IsVisible())
 		Con_ToggleConsole();
+	GameUI_LoadingFinished(name);
 	Lua_RunHookString("WorldLoaded", current_map);
 }
 
@@ -263,7 +296,9 @@ static void Disconnect_f(void)
 	BSP_Free();
 	R_NewMap();
 	current_map[0] = 0;
-	if (!Con_IsVisible())
+	if (GameUI_Loaded())
+		GameUI_Disconnected();   // back to the main menu
+	else if (!Con_IsVisible())
 		Con_ToggleConsole();
 }
 

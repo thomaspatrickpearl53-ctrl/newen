@@ -218,6 +218,7 @@ void Vid_PumpEvents(void)
 		switch (e.type) {
 		case SDL_MOUSEMOTION:
 			VGUI_MouseMove(e.motion.x, e.motion.y);
+			GameUI_MouseMove(e.motion.x, e.motion.y);
 			if (relative_mouse) {
 				mouse_dx += e.motion.xrel;
 				mouse_dy += e.motion.yrel;
@@ -248,10 +249,19 @@ void Vid_PumpEvents(void)
 			if (Con_IsVisible())
 				for (const char *p = e.text.text; *p; p++)
 					Con_CharEvent((unsigned char)*p);
+			else if (GameUI_IsActive())
+				GameUI_CharEvent(e.text.text);
 			break;
 		case SDL_MOUSEBUTTONDOWN:
 		case SDL_MOUSEBUTTONUP: {
 			qboolean down = e.type == SDL_MOUSEBUTTONDOWN;
+			if (GameUI_IsActive() && !Con_IsVisible()) {
+				// SDL: 1 left, 2 middle, 3 right, 4/5 side; vgui2: 0 left, 1 right, 2 middle, 3/4 side
+				static const int code[6] = { 0, 0, 2, 1, 3, 4 };
+				if (e.button.button <= 5)
+					GameUI_MouseButton(code[e.button.button], down, down && e.button.clicks == 2);
+				break;
+			}
 			if (VGUI_WantsMouse() && !Con_IsVisible() && e.button.button <= SDL_BUTTON_RIGHT) {
 				// SDL's buttons are 1 left, 2 middle, 3 right; vgui's 0 left, 1 right, 2 middle
 				static const int code[4] = { 0, 0, 2, 1 };
@@ -264,7 +274,9 @@ void Vid_PumpEvents(void)
 			break;
 		}
 		case SDL_MOUSEWHEEL:
-			if (e.wheel.y && VGUI_WantsMouse() && !Con_IsVisible()) {
+			if (e.wheel.y && GameUI_IsActive() && !Con_IsVisible()) {
+				GameUI_MouseWheel(e.wheel.y);
+			} else if (e.wheel.y && VGUI_WantsMouse() && !Con_IsVisible()) {
 				VGUI_MouseWheel(e.wheel.y);
 			} else if (e.wheel.y) {
 				int key = e.wheel.y > 0 ? K_MWHEELUP : K_MWHEELDOWN;

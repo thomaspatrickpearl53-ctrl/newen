@@ -146,6 +146,8 @@ void Con_SetForced(qboolean forced)
 }
 
 static void ToggleConsole_f(void) { Con_ToggleConsole(); }
+static void ShowConsole_f(void) { if (!con_visible) Con_ToggleConsole(); }
+static void HideConsole_f(void) { if (con_visible) Con_ToggleConsole(); }
 
 static void Clear_f(void)
 {
@@ -446,6 +448,8 @@ void Con_Init(void)
 	con_speed = Cvar_Get("con_speed", "600", FCVAR_ARCHIVE, "console slide speed");
 
 	Cmd_AddCommand("toggleconsole", ToggleConsole_f, "opens or closes the console");
+	Cmd_AddCommand("showconsole", ShowConsole_f, "opens the console");
+	Cmd_AddCommand("hideconsole", HideConsole_f, "closes the console");
 	Cmd_AddCommand("clear", Clear_f, "clears the console");
 	Cmd_AddCommand("condump", Condump_f, "writes the console text to a file");
 	con_ready = true;

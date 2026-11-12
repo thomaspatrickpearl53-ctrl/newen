@@ -1,0 +1,5 @@
+// Half-Life 2's crowbar in place of Half-Life's:
+//   mdl_replace models/v_crowbar.mdl hl2:models/weapons/v_crowbar.mdl
+// idle, draw, holster, attack 1 hit, attack 1 miss, attack 2 miss, attack 2 hit, attack 3 miss, attack 3 hit,
+// idle 2, idle 3
+order idle01 draw holster hitcenter1 misscenter1 misscenter2 hitcenter2 misscenter1 hitcenter3 idle01 idle01

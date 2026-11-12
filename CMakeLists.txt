@@ -3,7 +3,7 @@ project(newen C)
 
 # Half-Life's game DLLs are 32-bit, so the engine must be too.
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
-	message(FATAL_ERROR "newen must be built 32-bit (configure with -A Win32)")
+	message(FATAL_ERROR "newen must be built 32-bit (Windows: configure with -A Win32; Linux: use build.sh, which passes -m32)")
 endif()
 
 set(CMAKE_C_STANDARD 11)
@@ -21,21 +21,36 @@ list(REMOVE_ITEM LUA_SOURCES
 add_library(lua54 STATIC ${LUA_SOURCES})
 target_include_directories(lua54 PUBLIC ${CMAKE_SOURCE_DIR}/third_party/lua/src)
 target_compile_definitions(lua54 PRIVATE _CRT_SECURE_NO_WARNINGS)
+if(UNIX)
+	target_compile_definitions(lua54 PRIVATE LUA_USE_POSIX)   # mkstemp instead of tmpnam
+endif()
 
 # ---------------------------------------------------------------- SDL2
-set(SDL2_DIR ${CMAKE_SOURCE_DIR}/third_party/SDL2)
-add_library(SDL2 SHARED IMPORTED)
-set_target_properties(SDL2 PROPERTIES
-	IMPORTED_LOCATION ${SDL2_DIR}/lib/x86/SDL2.dll
-	IMPORTED_IMPLIB ${SDL2_DIR}/lib/x86/SDL2.lib
-	INTERFACE_INCLUDE_DIRECTORIES ${SDL2_DIR}/include)
-add_library(SDL2main STATIC IMPORTED)
-set_target_properties(SDL2main PROPERTIES IMPORTED_LOCATION ${SDL2_DIR}/lib/x86/SDL2main.lib)
+if(WIN32)
+	set(SDL2_DIR ${CMAKE_SOURCE_DIR}/third_party/SDL2)
+	add_library(SDL2 SHARED IMPORTED)
+	set_target_properties(SDL2 PROPERTIES
+		IMPORTED_LOCATION ${SDL2_DIR}/lib/x86/SDL2.dll
+		IMPORTED_IMPLIB ${SDL2_DIR}/lib/x86/SDL2.lib
+		INTERFACE_INCLUDE_DIRECTORIES ${SDL2_DIR}/include)
+	add_library(SDL2main STATIC IMPORTED)
+	set_target_properties(SDL2main PROPERTIES IMPORTED_LOCATION ${SDL2_DIR}/lib/x86/SDL2main.lib)
+else()
+	# the system's 32-bit SDL2 (Arch: lib32-sdl2-compat), or any libSDL2-2.0.so given with -DSDL2_LIBRARY
+	find_library(SDL2_LIBRARY NAMES SDL2-2.0 SDL2 PATHS /usr/lib32 /usr/lib/i386-linux-gnu NO_DEFAULT_PATH)
+	find_path(SDL2_INCLUDE_DIR SDL.h PATH_SUFFIXES SDL2)
+	if(NOT SDL2_LIBRARY OR NOT SDL2_INCLUDE_DIR)
+		message(FATAL_ERROR "32-bit SDL2 not found: install lib32-sdl2-compat (Arch) or libsdl2-dev:i386 (Debian/Ubuntu)")
+	endif()
+	add_library(SDL2 SHARED IMPORTED)
+	set_target_properties(SDL2 PROPERTIES
+		IMPORTED_LOCATION ${SDL2_LIBRARY}
+		INTERFACE_INCLUDE_DIRECTORIES ${SDL2_INCLUDE_DIR})
+endif()
 
 # ---------------------------------------------------------------- engine
 add_executable(newen WIN32
 	src/engine/common.c
-	src/engine/sys_win.c
 	src/engine/cvar.c
 	src/engine/cmd.c
 	src/engine/console.c
@@ -43,7 +58,6 @@ add_executable(newen WIN32
 	src/engine/filesystem.c
 	src/engine/vid_sdl.c
 	src/engine/draw.c
-	src/engine/font_win.c
 	src/engine/host.c
 	src/engine/lua_host.c
 	src/engine/lua_game.c
@@ -53,6 +67,10 @@ add_executable(newen WIN32
 	src/engine/r_world.c
 	src/engine/r_main.c
 	src/engine/model.c
+	src/engine/src_fs.c
+	src/engine/src_material.c
+	src/engine/src_studio.c
+	src/engine/src_anim.c
 	src/engine/r_studio.c
 	src/engine/r_sprite.c
 	src/engine/r_light.c
@@ -81,19 +99,37 @@ add_executable(newen WIN32
 	src/engine/snd_mem.c
 	src/engine/snd_codecs.c
 	src/engine/vgui_bridge.c
+	src/engine/gameui.c
+	src/engine/vgui2_surface.c
+	src/engine/vgui2_fs.c
 )
+if(WIN32)
+	target_sources(newen PRIVATE src/engine/sys_win.c src/engine/font_win.c)
+else()
+	target_sources(newen PRIVATE src/engine/sys_linux.c src/engine/font_stb.c)
+endif()
 target_include_directories(newen PRIVATE src/engine third_party/stb third_party/dr_libs)
-# the vendored decoders aren't ours: no warnings from them
-set_source_files_properties(src/engine/snd_codecs.c PROPERTIES COMPILE_OPTIONS "/W0")
 target_compile_definitions(newen PRIVATE _CRT_SECURE_NO_WARNINGS)
-target_link_libraries(newen PRIVATE lua54 SDL2main SDL2 opengl32 winmm gdi32 advapi32 dbghelp)
 if(MSVC)
+	# the vendored decoders aren't ours: no warnings from them
+	set_source_files_properties(src/engine/snd_codecs.c PROPERTIES COMPILE_OPTIONS "/W0")
 	target_compile_options(newen PRIVATE /W4 /wd4100 /wd4996)
 	# SDL2main.lib was built against an older CRT
 	target_link_options(newen PRIVATE /SAFESEH:NO)
+else()
+	set_source_files_properties(src/engine/snd_codecs.c src/engine/font_stb.c PROPERTIES COMPILE_OPTIONS "-w")
+	target_compile_options(newen PRIVATE -Wall -Wno-unused-parameter -Wno-unused-function -fno-strict-aliasing)
 endif()
-
-# copy SDL2.dll and newen's own content next to the exe
-add_custom_command(TARGET newen POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SDL2_DIR}/lib/x86/SDL2.dll ${OUT_DIR}/SDL2.dll
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/base ${OUT_DIR}/base)
+if(WIN32)
+	target_link_libraries(newen PRIVATE lua54 SDL2main SDL2 opengl32 winmm gdi32 advapi32 dbghelp)
+	# copy SDL2.dll and newen's own content next to the exe
+	add_custom_command(TARGET newen POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SDL2_DIR}/lib/x86/SDL2.dll ${OUT_DIR}/SDL2.dll
+		COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/base ${OUT_DIR}/base)
+else()
+	# -rdynamic: crash reports can name the engine's functions
+	target_link_libraries(newen PRIVATE lua54 SDL2 GL dl m pthread)
+	target_link_options(newen PRIVATE -rdynamic)
+	add_custom_command(TARGET newen POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/base ${OUT_DIR}/base)
+endif()

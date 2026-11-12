@@ -1,9 +1,13 @@
 // newen - what the client-side files share: the client DLL's exports, client time and entities,
 // and the effect systems (events, temp entities, particles, beams, decals, triangles, view effects)
 #pragma once
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <setjmp.h>
+#endif
 #include "client_api.h"
 #include "server.h"
 
@@ -14,7 +18,9 @@ extern qboolean        client_ok;
 extern double          cl_time, cl_oldtime;   // the server's clock, one process
 extern cl_entity_t     cl_viewent;
 extern char            cl_crash_where[256];
+#ifdef _WIN32
 int          CL_CrashFilter(EXCEPTION_POINTERS *ep);
+#endif
 cl_entity_t *CL_EntityByIndex(int i);         // NULL if out of range
 void         CL_SetViewModelAnim(int anim, int body);
 qboolean     CL_BuildViewModel(rentity_t *r);  // false when no view model should be drawn
@@ -27,6 +33,7 @@ static inline int   CL_RandomInt(int lo, int hi) { return hi <= lo ? lo : lo + r
 
 // A crash in the client is turned into an error and the client is switched off, instead of
 // taking the engine down with it
+#ifdef _WIN32
 #define CLIENT_CALL(what, call) \
 	do { \
 		if (client_ok) { \
@@ -37,6 +44,29 @@ static inline int   CL_RandomInt(int lo, int hi) { return hi <= lo ? lo : lo + r
 			} \
 		} \
 	} while (0)
+#else
+// sys_linux.c's signal handler jumps back to the innermost guard; the outer one is restored after
+extern sigjmp_buf *sys_crash_guard;
+extern char        sys_crash_where[256];
+#define SYS_GUARDED(call, on_crash) \
+	do { \
+		sigjmp_buf guard_, *outer_ = sys_crash_guard; \
+		if (!sigsetjmp(guard_, 1)) { \
+			sys_crash_guard = &guard_; \
+			call; \
+			sys_crash_guard = outer_; \
+		} else { \
+			sys_crash_guard = outer_; \
+			on_crash; \
+		} \
+	} while (0)
+#define CLIENT_CALL(what, call) \
+	do { \
+		if (client_ok) \
+			SYS_GUARDED(call, (Con_Errorf("client.so crashed in %s at %s; the client is now off\n", what, \
+				sys_crash_where), client_ok = false)); \
+	} while (0)
+#endif
 
 // ---------------------------------------------------------------- cl_event.c
 

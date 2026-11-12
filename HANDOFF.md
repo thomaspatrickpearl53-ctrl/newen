@@ -4,6 +4,14 @@ Everything someone new needs to pick this project up: what it is, what was decid
 out, how to build and test it, what works, what doesn't, and what comes next. Read `README.md` first for the
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
+2026-11-01: **Half-Life's own main menu** (owner: "exactly how Half-Life has it"): newen hosts the game's
+`gameui.so`/`GameUI.dll` on Half-Life's `vgui2`, as GoldSrc does, so the menu, its dialogs and the loading screen
+are Valve's own. This pulls part of Phase 3 (VGUI2) forward. Built and tested on Linux; the Windows side is written
+but not built yet (see "GameUI" in section 8). Code: `gameui.c`, `vgui2_surface.c`, `vgui2_fs.c`.
+
+2026-10-30: **Linux build** (owner's request): `build.sh`, `sys_linux.c`, `font_stb.c`; runs the Linux Steam
+Half-Life's `hl.so`, `client.so` and `vgui.so`. See "Linux" in section 5.
+
 2026-10-29: **the modern renderer's steps 0-7 are built on branch `modern-renderer`** (section 9, "Renderer plan");
 the plan is finished; what comes next is the owner's call.
 
@@ -43,11 +51,12 @@ hl-lua folder from this project.
 | Decision | Why |
 |---|---|
 | **Run real Half-Life**: load the stock `hl.dll` and `client.dll` through the exact GoldSrc ABI | Gameplay lives in the DLLs; matching the ABI means HL and mods run without rewriting game code |
-| **C (C11)**, MSVC, CMake + Ninja | Matches the GoldSrc ABI naturally |
+| **C (C11)**, MSVC on Windows, gcc `-m32` on Linux, CMake + Ninja | Matches the GoldSrc ABI naturally; the Linux game libraries are GCC-built, so GCC gives the same struct layout |
 | **32-bit only** for now | The Steam `hl.dll`/`client.dll` are 32-bit. CMake refuses a 64-bit build. 64-bit is a later goal (via a rebuilt open-source HLSDK) |
-| **Windows first**, SDL2 for window/input | Linux/Steam Deck later; keep platform code in `sys_win.c`, `font_win.c` |
+| **Windows and Linux** (Linux since 2026-10-30), SDL2 for window/input | Keep platform code in `sys_win.c`/`sys_linux.c` and `font_win.c`/`font_stb.c`; other files use `Sys_*` (libraries, files, crash guard) |
 | **Clean-room**: written from documented formats; **never copy Xash3D code** | Xash3D is GPL; copying would force GPL on newen. Reading public format docs is fine |
 | **Game interface headers are our own** (`game_api.h`, `client_api.h`), written from the public HL SDK layout, not copied from the SDK | Owner's choice (step 4). Keeps newen free of the SDK license; size asserts guard the layout |
+| **GameUI (the main menu) is hosted on Half-Life's own vgui2**, not redrawn | Owner's choice (2026-11-01): the menu must be exactly Half-Life's. vgui2 and GameUI only need the engine's interfaces (surface, file system, panels, a few services), which are written from the layouts in Half-Life's Linux binaries (they carry debug info) |
 | **VGUI1 is hosted, not reimplemented**: the engine loads Half-Life's own `vgui.dll` and provides the drawing surface | The stock client.dll imports 548 vgui.dll functions and builds its viewport on an engine panel at `HUD_VidInit`. vgui.dll exports its vtables, so the layout is read from the binary (no SDK headers) |
 | **Never write into the Half-Life folder** | All writes go to `bin/userdata/<game>/` |
 | **Lua in the engine**, GMod-style API names (`hook.Add`, `concommand.Add`, `CreateConVar`, `surface.*`...) | Familiar GMod-style names. Matching hl-lua exactly isn't required any more (owner, 2026-10-18) |
@@ -74,6 +83,7 @@ Ask before building these.
 ## 3. Working with the owner
 
 - They like to **discuss first**. When they said "don't make anything until I say exactly 'go'", they meant it. Wait for the word.
+- **Linux and Windows are updated together** (owner, 2026-11-01): every change is written for both in the same step.
 - They told the assistant **not to look in their other folders** unless asked. Only `hl_newen` and the Steam Half-Life install are in scope. (They did ask once for a quick look at `hl-lua`.)
 - They're not necessarily a programmer. Explain in plain terms and show screenshots of results.
 
@@ -87,6 +97,7 @@ Ask before building these.
 | CMake / Ninja | Bundled with VS: `Common7\IDE\CommonExtensions\Microsoft\CMake\...` (CMake isn't on PATH) |
 | GPU used for testing | NVIDIA RTX 3050, OpenGL 4.6 |
 | Other tools on the machine | git, Python 3.14, ffmpeg (on PATH; used to convert TGA screenshots to PNG) |
+| Linux machine | CachyOS (Arch), gcc with `-m32`, Steam's Linux Half-Life in `~/.local/share/Steam/steamapps/common/Half-Life`, same RTX 3050 (NVIDIA 615). Needs `cmake`, `ninja` (optional; make works) and `lib32-sdl2-compat` |
 
 The CMake "Visual Studio 18 2026" generator fails to find VS in this environment, so `build.bat` uses Ninja inside
 a `vcvars32` shell. Use `build.bat`.
@@ -99,6 +110,7 @@ a `vcvars32` shell. Use `build.bat`.
 | stb_image | 2.30 | raw.githubusercontent.com/nothings/stb/f58f558c120e9b32c217290b80bad1a0729fbb2c/stb_image.h | public domain |
 | stb_vorbis | 1.22 | raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/stb_vorbis.c (sha256 4c7cb2ff...5e65636) | public domain / MIT |
 | dr_mp3 | 0.7.4 | raw.githubusercontent.com/mackron/dr_libs/dfe8377631000664666519fdb83da193fd8037f4/dr_mp3.h (sha256 997b7ee1...e0a2f) | public domain / MIT-0 |
+| stb_truetype | 1.26 | raw.githubusercontent.com/nothings/stb/003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5/stb_truetype.h (sha256 ecd30b05...6b5090aab), downloaded 2026-10-30 for the Linux fonts | public domain / MIT |
 | dr_flac | (same commit) | .../dr_libs/dfe8377631000664666519fdb83da193fd8037f4/dr_flac.h (sha256 111144e7...cff945c) | public domain / MIT-0 |
 
 The decoders are downloaded with the owner's OK (2026-10-17) into `third_party/stb` and `third_party/dr_libs`, and
@@ -111,10 +123,53 @@ build.bat                       -> bin\newen.exe (+ SDL2.dll, + base\ copied nex
 bin\newen.exe +map c1a0
 ```
 
+### Linux
+```
+./build.sh                      -> bin/newen (+ base/ copied next to it); build folder build-linux/
+bin/newen +map c1a0
+```
+`build.sh` passes `-m32`; extra arguments go to CMake's first configure (`-DSDL2_LIBRARY=<any 32-bit
+libSDL2-2.0.so.0>` works without `lib32-sdl2-compat`, e.g. the one in Steam's `ubuntu12_32/steam-runtime`; set
+`CMAKE=` to use a cmake that isn't on PATH). Testing works the same way as on Windows (paths with `/`). What differs:
+- Libraries: `liblist.gam`'s `gamedll_linux` (`dlls/hl.so`), `cl_dlls/client.so`, `vgui.so` from the Half-Life
+  folder, through `Sys_LoadLibrary` (dlopen, **`RTLD_LOCAL`**, like Windows DLLs). Never make them global:
+  client.so has empty stubs of 53 game functions (`cl_dll/hl/hl_baseentity.cpp`, e.g.
+  `CBaseMonster::MonsterInitThink`), and a global client.so made hl.so's own calls bind to them, so monsters
+  animated but never thought or moved (found 2026-10-30). hl.so uses the C++ runtime without listing it as a
+  dependency (Valve's engine links it), so the first load opens `libstdc++.so.6` globally. `client.so` lists `vgui.so` as a dependency by bare
+  name, and vgui.so has no SONAME, so the loader won't match the copy the engine loaded. `FS_Init` calls
+  `Sys_AddLibraryPath`, which restarts the process once (before the window opens) with the Half-Life folder
+  appended to `LD_LIBRARY_PATH`, as Steam's `hl.sh` does. `NEWEN_RESTARTED` stops a loop.
+- `GiveFnptrsToDll` is cdecl (`GIVEFNPTRS_CALL` in `game_api.h`).
+- VGUI: `vgui.so`'s vtables have the same slots as `vgui.dll`'s (checked slot by slot: App 55, SurfaceBase 35; no
+  virtual destructors or overloaded virtuals). `vgui_bridge.c` only swaps the mangled names (`SYM()`) and the
+  calling convention (`THISCALL`/`VTHIS`: GCC passes `this` as the first stack argument). The vtable copies include
+  the two words before slot 0 (offset-to-top, type info) in case vgui uses RTTI on them.
+- Client crash guard: `CLIENT_CALL` uses `sigsetjmp`; `sys_linux.c`'s signal handler jumps back to the innermost
+  guard (`sys_crash_guard`). Tested with a deliberate NULL into `client.so`: logged, client off, engine kept going.
+- Crash reports: signal handler, `backtrace()`, names from `dladdr` (`-rdynamic` exports the engine's non-static
+  functions; static ones show as `newen+0x...`, use `addr2line -e bin/newen`). stderr isn't redirected to a file.
+- Files: `FS_FullPath` turns backslashes into slashes, and if no search path has the exact name, `Sys_FixCase`
+  looks for one that differs only in case (Half-Life's files were made on Windows).
+- Fonts: `font_stb.c` asks fontconfig (`fc-match`) for the Windows face name and rasterizes with stb_truetype;
+  Consolas becomes Noto Sans Mono / DejaVu Sans Mono, Trebuchet MS becomes Noto Sans.
+- Save files store the game's mangled function names, so Windows and Linux saves don't load on the other system.
+
 Command line: `-basedir <hl folder>`, `-game <mod>`, `-hd`, `-dev`, and `+command args` (executed after startup,
 like GoldSrc; negative numbers count as arguments).
 
 ### How testing has been done (automated, no human needed)
+
+Menu tests (GameUI): `gameui_press <panel name>` clicks a control (`gameui_panels` lists the visible ones with
+their names; main menu items are `#GameUI_GameMenu_NewGame` and so on, dialog buttons have their `.res` names such
+as `PlayGame`, `Load`, `Save`, `OKButton`), `gameui_key <key>` presses a key, `gameui_click x y` clicks a point. The
+menu lays itself out over its first frames, so wait ~150 frames after opening it. **Commands GameUI sends
+(`map`, `save`, `load`...) are appended to the command buffer, after anything still queued** (`wait`, `screenshot`,
+`quit`), so take screenshots after them with a real-time Lua hook instead, e.g. a script in
+`bin/userdata/valve/lua/` run with `+lua_openscript`. `lua_run` code on the command line must not contain spaces
+inside one argument (the argument gets quoted and becomes a string) nor a lone `-` or `+` (they start a new
+option/command); zsh doesn't split unquoted variables, so drive it from bash.
+
 Run the exe with a command script, let it quit itself, then read the log and look at screenshots. If it crashes,
 the log ends with the call stack, and a failed assert's text is in `bin/userdata/stderr.log`:
 
@@ -152,6 +207,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `common.h` | 300 | Every shared declaration: memory, strings, cvar_t (GoldSrc layout), commands, console, keys (GoldSrc key numbers), filesystem, video, draw, Lua, host, renderer entry points |
 | `common.c` | 181 | `Mem_*` (zeroed alloc, never NULL), `va()`, wildcard match, growable `strbuf_t`, `COM_Parse` tokenizer, command-line `COM_CheckParm` |
 | `sys_win.c` | 216 | `main` (via SDL2main), timers (QPC), `Sys_Error` (message box + log), dirs/files, Steam path from the registry, dir listing. Crash reports: an unhandled exception, `abort()` or a pure virtual call writes the call stack (names from `newen.pdb`, module+offset for the game DLLs) to the console log; `Sys_LogException` does the same for crashes caught inside the client. The C runtime's messages (a failed `assert` in a game DLL) go to `bin/userdata/stderr.log` |
+| `sys_linux.c` | 321 | The Linux `sys_win.c`: `main`, `clock_gettime` timers, `Sys_Error` (SDL message box + log), dirs/files, Steam folder (native, `~/.steam`, Flatpak), `Sys_FixCase`, dlopen wrappers, `Sys_AddLibraryPath` (restart with `LD_LIBRARY_PATH`), `Sys_ExportName` (dladdr), signal handler for crash reports and the client crash guard |
 | `host.c` | 213 | `Host_Init` order, the frame loop (fps cap, events, command buffer, camera, Lua, render, 2D), config writing (`newen_config.cfg`), `+commands` |
 | `cmd.c` | 406 | Command buffer (`;`/newline split, `wait`), tokenizer (`//` comments), commands (sorted list, `CMD_LUA` flag), aliases, `exec`, `find`, `cmdlist`. `cmd_defer_cvars`: while the saved config runs, unknown `name value` lines become pending cvar values |
 | `cvar.c` | 334 | Cvars in a hash plus the GoldSrc-style linked list; side table for default/description; pending values applied when a cvar is created later (so Lua cvars persist); `cvarlist`, `toggle`, `reset` |
@@ -159,7 +215,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `keys.c` | 221 | Bindings (`bind`, `unbind`, `bindlist`); routing: `` ` `` -> console, console open -> console, then Lua `KeyEvent` hook, then bindings. `+cmd` bindings get the key number appended like GoldSrc |
 | `filesystem.c` | 324 | Search paths (see the comment at the top), finding Half-Life, `FS_LoadFile`, `FS_ListFiles` (merged, sorted), `FS_OpenWrite` (write dir only), `path`, `dir` |
 | `vid_sdl.c` | 351 | SDL window and GL 2.1 compatibility context, key/mouse mapping to GoldSrc key numbers, relative mouse for mouse look (or a hidden, confined cursor for `m_rawinput 0`), window focus, vsync, `vid_restart`, `screenshot` (TGA) |
-| `draw.c` / `font_win.c` | 106 / 155 | 2D: filled rects and console text. Fonts are rasterized from Windows fonts with GDI into alpha atlases (ASCII 32-126): monospace for the console, proportional for titles |
+| `draw.c` / `font_win.c` / `font_stb.c` | 106 / 155 / 150 | 2D: filled rects and console text. Fonts are rasterized into alpha atlases (ASCII 32-126): monospace for the console, proportional for titles. Windows: GDI. Linux: fontconfig picks the file, stb_truetype draws it |
 | `lua_host.c` | 950 | The Lua VM (see section 7) |
 | `mathlib.h` | 61 | vec3 macros, `AngleVectors` (Quake conventions) |
 | `gl_local.h` | 87 | Renderer-internal: GL extension pointers (`qglActiveTexture`, buffers), texture API, WAD API, `refdef_t` |
@@ -169,6 +225,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `r_world.c` | 716 | Drawing: light style animation and lightmap re-upload of visible changed faces, PVS leaf marking, recursive node walk with frustum culling, surfaces sorted into (texture, lightmap page) batches drawn with `glDrawElements` from the VBO, two texture units (diffuse x lightmap), water (immediate mode, warped UVs, unlit), skybox (Quake 2 face orientation) plus sky faces written to depth only, brush entities from the entity lump with render modes and transparent sorting |
 | `model.h` | 317 | Studio (`studiohdr_t` and friends) and sprite file structures written from the documented formats; `model_t` (cache entry; brush models keep the entity text at GoldSrc's offset 384, because the client's spectator code reads it there), `rentity_t` (what the renderer draws, with GoldSrc's render modes), and the model/studio/sprite/light/entity entry points |
 | `model.c` | 615 | Model cache (`Mod_ForName`; failures stay cached as `mod_bad` so they warn once; `Mod_ClearAll` on map change frees everything and its `TF_MODEL` textures). Studio loader: keeps the file in memory, range-checks every table, bone parents and vertex bones, loads `<name>T.mdl` textures and `<name>NN.mdl` sequence groups, decodes strips/fans into one triangle list per mesh, HD texture overrides. Sprite loader: palette per `texFormat`, single frames and groups. `mdlinfo`, `modellist` |
+| `src_local.h`, `src_fs.c`, `src_material.c`, `src_studio.c`, `src_anim.c` | 3330 | Source content (see "Source models" in section 9): Half-Life 2's VPK archives behind the `hl2:` prefix, VMT/VTF materials, MDL 44-48 + VVD + VTX loading with a stand-in GoldSrc header for the DLLs, Source animation decoding |
 | `r_studio.c` | 641 | Bone setup (RLE anim values, quaternion slerp between frames, 2-way sequence blending, bone controllers and mouth, motion bone zeroed, pitch flipped like GoldSrc), CPU skinning, GoldSrc-style lighting (ambient + shade from `R_LightPoint`, light from above, lambert 1.5 wrap; flatshade, fullbright), chrome UVs from the view axes, masked and additive meshes, entity render modes |
 | `r_sprite.c` | 165 | Sprite frames (groups by interval), the 5 orientation types, render modes, glows (constant screen size, hidden by `R_LineBlocked` with GoldSrc's 8-unit tolerance, no depth test) |
 | `r_light.c` | 253 | `R_LightPoint` (trace down 2048 units through the BSP, read the lightmap sample with light styles, same gamma table as the lightmaps), `R_LineBlocked` (segment vs solid leaves), and dynamic lights (up to 32 a frame, one bit each in a surface's `dlightbits`): `R_PushDlights` marks world faces, `R_DlightSpace` moves them into a brush entity's space, `R_DlightPoint` adds them to model light |
@@ -186,7 +243,11 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_game.c` | 1284 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
 | `client_api.h` | 710 | Clean-room client interface: `cl_enginefunc_t` (the SDK order, plus the later Steam/HL25 additions and 32 reserved slots), `cl_entity_t` (3000 bytes), `entity_state_t` (340), `ref_params_t`, `client_data_t`, `SCREENINFO`, `client_sprite_t`, the client export table. The tri/efx/event/demo/net/voice API tables are padded arrays of stubs for now |
 | `cl_main.c` | 1342 | Loads client.dll (after vgui.dll), every `cl_enginefunc_t` function (HUD sprites with `hud.txt` parsing and normal/holes/additive drawing, FillRGBA (additive, like GoldSrc), text, cvars/commands, user message hooks, player info, entities for the client, `V_CalcRefdef` with `ref_params_t`, the view model, crosshair, center print), the user-message queue (game DLL messages are buffered in `sv_engfuncs.c` and dispatched at the start of the client frame; `svc_weaponanim` sets the view model animation, `svc_temp_entity` goes to `cl_tent.c`, unhooked ScreenFade/ScreenShake to `cl_view.c`), the API tables from the files below, `CL_CrashFilter` (with `CLIENT_CALL` in `cl_local.h`: a crash in the client logs its stack and turns the client off instead of killing the engine), `HUD_PlayerMoveInit` at the first map (the client's pm_shared needs its texture types before any event) |
-| `vgui_bridge.c` | 441 | Hosts vgui.dll: constructs `App(true)`, a full-screen root `Panel` and a `SurfaceBase` with our own 35-slot vtable (thiscall via `__fastcall` + dummy EDX), OpenGL drawing for rects, textures and text (glyphs from vgui's own `Font::getCharRGBA`), paint/clip stack from `getAbsExtents/getClipRect/getInset`. App's `main` and `platTick` are stubbed in a copied vtable. VGUI1 alpha is transparency (0 = opaque). Mouse input: the client shows the cursor through `setCursor` (anything but `dc_none`) when a menu wants it; then `VGUI_WantsMouse` turns off mouse look and `vid_sdl.c` sends motion, buttons and the wheel to App's `internal*` methods instead of key bindings. vgui reads the cursor back through `GetMousePos`, so that returns the position last passed in |
+| `vgui_bridge.c` | 480 | Hosts vgui.dll (vgui.so on Linux, see section 5): constructs `App(true)`, a full-screen root `Panel` and a `SurfaceBase` with our own 35-slot vtable (thiscall via `__fastcall` + dummy EDX), OpenGL drawing for rects, textures and text (glyphs from vgui's own `Font::getCharRGBA`), paint/clip stack from `getAbsExtents/getClipRect/getInset`. App's `main` and `platTick` are stubbed in a copied vtable. VGUI1 alpha is transparency (0 = opaque). Mouse input: the client shows the cursor through `setCursor` (anything but `dc_none`) when a menu wants it; then `VGUI_WantsMouse` turns off mouse look and `vid_sdl.c` sends motion, buttons and the wheel to App's `internal*` methods instead of key bindings. vgui reads the cursor back through `GetMousePos`, so that returns the position last passed in |
+| `vgui2_local.h` | 115 | What the VGUI2 files share: the C++ ABI macros (`THISCALL`/`VTHIS` as in `vgui_bridge.c`, `VT_PREFIX`, `VT_DTORS`: GCC has two destructor slots and two words before slot 0, MSVC one destructor slot), `VG_METHOD`, the IPanel method numbers and `VP_*` wrappers |
+| `gameui.c` | 849 | Hosts GameUI: checks Steam is running (GameUI ends the process otherwise) and sets `SteamAppId=70`, loads `vgui2` from the Half-Life folder and `cl_dlls/gameui`, registers the KeyValues size (24) with vgui2, starts vgui2 with the factory list GoldSrc uses (engine, vgui2, file system, HTML slot, GameUI, client), makes the three engine panels (root, client, GameUI) as vgui2 panels whose `IClientPanel` side is ours, loads `trackerscheme.res` and `valve_%language%.txt`, then `IGameUI::Initialize/Start` with the client's `cl_enginefunc_t`. The engine's interfaces: `IEngineVGui` (the panels), `IGameUIFuncs` (keys, video modes), `IBaseUI` (GameUI calls back to hide/show). Menu state (`active`), pause (`GameUI_Paused`: the menu or `setpause`), input to vgui2's `IInputInternal` (engine key numbers to vgui2 `KeyCode`s, UTF-8 text, mouse), the loading dialog (`StartProgressBar` plus two painted frames, since maps load in one go). Test commands: `gameui_press <panel>`, `gameui_click`, `gameui_key`, `gameui_panels` |
+| `vgui2_surface.c` | 1162 | `ISurface` ("VGUI_Surface026", 105 methods): drawing in 2D GL, the paint/clip stack from IPanel, textures (`DrawSetTextureFile` loads `<name>.tga`), fonts glyph by glyph (`Font_Open`/`Font_Glyph`; drop shadow, blur, scanlines, additive), popups back to front: the root's tree is painted first, then each popup that `ShouldPaintChildPanel` marked (that's how a popup is hidden with its parent), `RestrictPaintToSinglePanel` (the Quit and Loading dialogs paint alone on black), `CalculateMouseVisible` every frame (who gets the mouse and keyboard), SDL system cursors for vgui's cursor shapes. Also the `VP_*` IPanel wrappers |
+| `vgui2_fs.c` | 593 | `IFileSystem` ("VFileSystem009"): reads through the engine's search paths plus GameUI's own `AddSearchPath` folders; writes only under userdata: relative names in the game's write folder, absolute paths inside the Half-Life folder mirrored under `userdata/` (`<hl>/platform/config/x.vdf` becomes `userdata/platform/config/x.vdf`, read back from there) |
 | `cl_local.h` | 173 | What the client-side files share: client exports and time, `CLIENT_CALL`, TE_ numbers, the effect entry points |
 | `cl_event.c` | 235 | Events: `PlaybackEvent` (game, pm_shared or client) builds `event_args_t` (players shoot along `v_angle`), queued with delay and `FEV_UPDATE`, fired by name to the client's hooks in `CL_Frame`. The event API: traces through `sv_pmove.c`'s client view (every solid entity), `EV_KillEvents` marks instead of removing (it's called from inside hooks). FEV_NOTHOST events are played too (no client-side prediction) |
 | `cl_tent.c` | 1661 | Dynamic lights (the client's 32-slot dlight/elight pool, entity effect lights, the flashlight), handed to `r_light.c` each frame. Temp entities in fixed blocks (the client keeps pointers) on free/active lists; `HUD_TempEntUpdate` moves them and hands back visible ones. The whole efx API (models, sprites, muzzle flashes, sparks, blood, gibs, bubbles, projectiles, player attachments), `svc_temp_entity` parsing (all TE_ types), client events in model animations (5000+, fired by frame range with the last frame kept in `latched`), view model attachments every frame, `CL_GetEntityPoint` ("entity:attachment" packing) |
@@ -210,14 +271,15 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 utilities). `base/lua/autorun/newen_welcome.lua` is the demo (watermark plus `newen_hello`).
 
 ### Frame order (`Host_Frame`)
-fps cap, then `Vid_PumpEvents`, `Cbuf_Execute`, `R_UpdateCamera`, `Lua_Frame` (Think), `Vid_BeginFrame` (clear),
-`R_RenderView` (3D: world, brush entities, then `R_DrawEntities` for models and sprites), `Draw_Begin2D`, `Lua_DrawOverlay`, `Con_Draw`, FPS counter, `Vid_EndFrame` (screenshot,
-swap).
+fps cap, then `Vid_PumpEvents`, `Cbuf_Execute`, `R_UpdateCamera`, `GameUI_Frame` (GameUI's and vgui2's RunFrame),
+`CL_Frame` and `SV_Frame` (skipped while `GameUI_Paused`), `Lua_Frame` (Think), `Vid_BeginFrame` (clear),
+`R_RenderView` (3D: world, brush entities, then `R_DrawEntities` for models and sprites), `Draw_Begin2D`, the HUD,
+captions, `Lua_DrawOverlay`, `GameUI_Paint`, `Con_Draw`, FPS counter, `Vid_EndFrame` (screenshot, swap).
 
 ### Startup order (`Host_Init`)
 Cmd, Cvar, Con, Keys, FS (finds HL, opens the log), default binds, the saved config (with cvar deferral), then
-`newen_autoexec.cfg`, Vid, Draw, R (GL extensions, images, world cvars), Lua, then `+commands`, and the console
-opens.
+`newen_autoexec.cfg`, Vid, Draw, R (GL extensions, images, world cvars), Lua, client, server, GameUI, then
+`+commands`, and the main menu shows (the console opens instead when GameUI didn't load).
 
 ## 7. Engine Lua (lua_host.c)
 
@@ -257,9 +319,19 @@ opens.
   light (`R_DlightPoint`). The flashlight is `EF_DIMLIGHT` on the local player: a light where the view hits something,
   dimmer with distance. On surfaces that are already bright it is subtle, as in GoldSrc (lightmaps clamp).
 - **Owner-reported bugs.** All fixed, the flashlight by the dynamic lights above. Earlier fixes:
-  - Monsters walked jerkily: they only move when they think (about 10 times a second). `SV_SetupRenderEntities` now
-    slides `MOVETYPE_STEP` entities from where they were drawn to the new place over the time between steps, turning
-    them too (`StepLerp`; `r_steplerp 0` turns it off; jumps over 128 units and `EF_NOINTERP` aren't slid).
+  - Monsters walked jerkily: they only move when they think (about 10 times a second). `SV_SetupRenderEntities`
+    draws `MOVETYPE_STEP` entities `r_steplerp_delay` (0.1 s, GoldSrc's cl_interp) in the past, between the two
+    recorded steps around that moment, turning them too (`StepLerp`; `r_steplerp 0` turns it off; jumps over 128
+    units and `EF_NOINTERP` aren't slid). A step never slides over more than the delay, so a walk after a pause
+    starts where the monster is drawn. (2026-11-01: the first version slid from the drawn place over the last gap
+    between steps; a step after a pause or a turn in place then jumped halfway and the monster lagged and caught
+    up, "sometimes lag and glitch". Measured on c2a5's grunts: drawn speed now stays within ~5% of the walk.)
+  - A loud continuous noise while the tram moves, and c1a0's big doors sounding several times: `snd_main.c` had
+    `SND_CHANGE_VOL`/`SND_CHANGE_PITCH` as 1 and 2 (the network message's bits) instead of GoldSrc's 64 and 128, so
+    every pitch or volume change started the sound again (about 3800 tram loops at once in 20 s of c0a0).
+  - Space didn't jump: GameUI's keyboard options run `exec userconfig.cfg`, and the owner's Steam Half-Life has a
+    bunny-hop script there (`bind space +bhop` plus aliases). The bind was kept in newen's config but the aliases
+    aren't, and newen never ran `userconfig.cfg` at startup. It does now, after the config, as GoldSrc does.
   - Monsters looked too bright: model light is now GoldSrc's split, a tenth from every side and the rest from above
     (`r_studio_ambient 0.1`, `r_studio_shade 0.9`), and the share goes through the light curve (`r_lightgamma`) before
     it multiplies the floor's brightness, so sides and undersides are darker.
@@ -277,8 +349,36 @@ opens.
 - Water is unlit, not subdivided (the warp is coarse on big polygons) and drawn in immediate mode. `r_wateralpha` defaults to 1.
 - `kRenderTransColor` brush entities still draw textured (should be flat color).
 - The sky depth pass loops over all surfaces every frame. Fine for now, but it could use the visible list.
-- The console font is ASCII-only and Windows-only (GDI). It needs a cross-platform path and UTF-8 later (VGUI2 fonts will need real font rendering anyway).
-- **Escape toggles the console** because there's no menu yet.
+- The console font is ASCII-only (GDI on Windows, stb_truetype on Linux). It needs UTF-8 later (VGUI2 fonts will need real font rendering anyway).
+- **Linux VGUI1 text from named fonts is blank**: Linux `vgui.so`'s `FontPlat::getCharRGBA` is empty (Valve's Linux engine draws that text itself). Half-Life's menus use the bitmap fonts in `gfx/vgui/fonts/*.tga`, which do work; a mod whose VGUI1 scheme names a TrueType font would need `font_stb.c` behind `GetGlyph`. Not seen yet: single player shows no VGUI1 panels.
+- **The Windows build wasn't rebuilt after the Linux port** (done on Linux): `sv_main.c`, `cl_main.c`, `vgui_bridge.c`, `sys_win.c` and `CMakeLists.txt` changed for both. Run `build.bat` once.
+- **GameUI (main menu)**:
+  - Escape shows the menu; in a map it hides it again (dialogs go with it, as in GoldSrc); without a map it goes to
+    vgui2 (closes dialogs). `` ` `` keeps opening newen's own console on top; GameUI's console window isn't used.
+    `gameui 0` (from the next start) or `-nogameui` turns the menu off and brings back the console at startup.
+  - **Windows is written but not built or run.** The vtables assume MSVC's layout: one destructor slot, and
+    overloaded virtuals reversed (`DrawSetColor`/`DrawSetTextColor` in ISurface, `Size` in IFileSystem). That rule is
+    from experience with Source's ISurface on Windows, not checked against Windows' `GameUI.dll`. If the Windows
+    menu crashes or draws wrong colours, look there first. `SetDllDirectory` (in `Sys_AddLibraryPath`) is what lets
+    `vgui2.dll`/`GameUI.dll` find `tier0.dll`, `vstdlib.dll` and `steam_api.dll`.
+  - Needs Steam running (GameUI starts the Steam API and ends the process if it can't). Without Steam the engine
+    says so and uses the console.
+  - Saves: GameUI's Load/Save dialogs read GoldSrc's "JSAV" header. Saves made since 2026-11-01 start with one
+    (map name, and the comment: worldspawn's message or the map, then mm:ss of `sv.time`) before newen's own data;
+    older saves still load with `load` but don't show in the dialogs. GameUI passes names with `.sav`; `save`/`load`
+    strip it.
+  - The Options pages read and set cvars and keys through the engine; settings newen doesn't have (renderer
+    switching, some video and audio options) do nothing yet. Find servers lists real servers through Steam, but
+    newen can't connect (no network protocol). Change game shows nothing. No startup music (`media/gamestartup.mp3`
+    isn't in `valve`).
+  - Linux fonts: a scheme face the system doesn't have (Tahoma, Verdana, Trebuchet MS, Courier) uses the fonts
+    Half-Life ships in `platform/resource/linux_fonts` (DejaVu Sans, Liberation Mono); Marlett (arrows, check
+    marks) comes from `valve/resource/marlett.ttf`. The real Linux Half-Life's substitutions weren't checked, so
+    text widths may differ a little from Steam's Linux build. On a narrow window the 800-pixel logo is cut off at
+    the right, as it is in GoldSrc.
+  - Fixed on the way: `cl_enginefunc_t` was missing `pfnPlaySoundVoiceByName`, `pfnPrimeMusicStream` and
+    `pfnPlaySoundByNameAtPitch` (HL25 layout), so the last entries were shifted; GameUI's `pfnGetAppID` landed on
+    `ClientCmd`. A static assert now checks the layout.
 - `+command` arguments are only quoted when they contain spaces.
 - The FPS counter reads 0 for the first half second.
 - **Untested**: Blue Shift lump detection, the HD override seen on screen (the loader path *is* confirmed by the log: "1 HD texture replacement"), and `-game` mods.
@@ -652,6 +752,209 @@ project (`%USERPROFILE%\Documents\Codex\2026-10-18\let\outputs\NewenSource`, rea
 Source maps load beside GoldSrc ones without the HL DLLs, Jolt for their physics. Its section 11 lists the owner's
 decisions. The owner chose to do the rest of Phase 2 first (2026-10-22).
 
+**Source models (`docs/SOURCE_MDL_PLAN.md`, owner's "start building" 2026-11-12): steps 1-9 of 10 are done on Linux, plus eyes; the Windows build is still to do.**
+Goal: Source MDL 44-48 usable anywhere a GoldSrc model is (NPCs, view model, map models, Lua) through a stand-in
+GoldSrc header for the DLLs. Written fresh (NewenSource couldn't be found on the Linux machine).
+- Built and tested on Linux only (Windows not built yet; the code is plain C11 with no platform calls):
+  `src_fs.c` (finds Half-Life 2 through Steam or `-hl2dir`, caches it in `bin/basedir_hl2.txt`, reads
+  `hl2/gameinfo.txt`'s search paths, VPK v1/v2 directories in a hash table, archives before loose files because
+  Steam leaves 0-byte placeholder files beside them; `srcfs_find`), `src_material.c` (VMT with `include`/patch
+  blocks, VTF 7.0-7.5 decoded on the CPU: DXT1/3/5 and the plain formats; material cache freed with the model
+  cache; `srcmat_dump`), `src_studio.c` (MDL header, VVD with fixups, VTX strip groups to triangle lists, skins,
+  body parts, materials through the model's folder list, a minimal stand-in header: one root bone, one
+  one-frame sequence, the body parts), and a Source branch in `r_studio.c` (`SrcDrawModel`, `SrcCasterGeometry`:
+  rest pose, classic model lighting, alpha-tested / translucent / additive materials, shadows through the usual
+  caster hook). `Mod_ForName` loads through `SrcFS_LoadFile` and sends studio versions other than 10 to
+  `SrcStudio_Load`; `FS_FindSteamGame` in `filesystem.c` is the generalised Steam library search.
+- The `hl2:` prefix is how Half-Life 2's files are named (`hl2:models/barney.mdl`); `SafePath` rejects `:` so
+  Half-Life's own lookups can never reach them. Plan decisions M4 (prefix) and M5 (view model FOV 54) were
+  recommended and not objected to; M4 is built this way.
+- Checked: all 2209 models in `hl2_misc_dir.vpk` through `mdlinfo`: 2155 load; 38 are animation-only files with no
+  `.vvd` (they're `$includemodel` targets, step 4); 16 have names over 63 characters with the prefix (`model_t`'s
+  name is 64 bytes and client.dll reads that layout). No file was reported damaged. Missing-material warnings left
+  are files Half-Life 2 itself doesn't ship (`Perftest\...`, `Grass_tuft_*`). Screenshots on c1a0d and c1a0:
+  `hl2:models/barney.mdl`, `props_c17/oildrum001.mdl` (skin 3), `weapons/w_smg1.mdl`, `props_combine/breenglobe.mdl`.
+- Step 3 (animation, 2026-11-12): `src_anim.c` decodes bones, animation descriptions and sequences into
+  `srcbone_t`/`srcanim_t`/`srcseq_t` at load (`SrcAnim_Load`) and poses a sequence at a cycle
+  (`SrcAnim_CalcPose`): per-bone records with 48/64-bit quaternions, half-float positions, run-length angle and
+  position lists, delta animations (shown added to the rest pose), per-sequence bone weights (0 = bone left
+  alone), sections, and animation blocks from the `.ani` file. `r_studio.c`'s `SrcSetupBones` chains the bones
+  like the GoldSrc path and `SrcTransformVerts` skins with up to three bones (`bone x posetobone`). The stand-in
+  header now carries every bone (name, parent, rest values) and every sequence (label, fps, frames, loop flag,
+  box), so `e->sequence`, `R_StudioFrame`, `R_StudioLookupSequence` and `mdlview <model> <sequence>` work
+  unchanged. Blend grids play their middle animation until step 4.
+- Checked: the 2155 models still load with the bone/animation checks on; `mdlview` screenshots of
+  `zombie/classic.mdl` (Idle01, attackA, walk4), `headcrabclassic.mdl` Run1, `antlion.mdl`, and `barney.mdl` /
+  `alyx.mdl` (facing forward now; T-pose because their only own sequence is `ragdoll`, the rest are in
+  `$includemodel` files). One shipped model (`props_animated_breakable/smokestack.mdl`) names an animation it
+  doesn't hold; such a sequence is the rest pose instead of refusing the model.
+- Step 4 (include files and blending, 2026-11-12), all in `src_anim.c`: `SrcAnim_Link` loads a model's
+  `$includemodel` files (and theirs, 4 deep) as animation-only `srcmodel_t`s kept in a shared cache
+  (`LoadInclude`; freed by `SrcAnim_FreeIncludes` from `Mod_ClearAll`, after the models), maps their bones and
+  pose parameters to the model's by name (`srcinclude_t`), and builds the model's full sequence list
+  (`srcvseq_t`: own sequences first; a same-named later one is skipped unless the earlier is an override
+  placeholder, flag 0x1000). `SrcAnim_Seq(s, i)` is how everything reads sequence `i`. An included animation is
+  decoded against its own file's bones (scales and base values) and written to the model's bones.
+  Pose parameters (`srcposeparam_t`, resting value = 0 units when the range holds it): `GridPosition` places a
+  parameter along one side of a sequence's animation grid (listed pose keys, or evenly between the sequence's
+  start and end), and `SrcAnim_CalcPose` blends up to four animations. Entities have no pose values yet (step
+  6); until then every parameter rests, and `src_posetest "<name> <value>"` forces one for testing.
+  A sequence with an empty grid (layer-only) or naming a missing animation is the rest pose.
+  `src_material.c` now reads `>=dxNN` blocks in a VMT (the Combine soldier keeps `$basetexture` there).
+- Checked: `barney.mdl` has 784 sequences from 4 include files, `alyx.mdl` 1011; screenshots of Barney
+  `idle01` / `walk_all` / `run_all`, `run_all` at `move_yaw` 90, 45 and -135 (blends), `combine_soldier.mdl`
+  `CombatIdle1_SMG1`, `humans/group01/male_07.mdl` `walk_all`, `vortigaunt.mdl`, and `monk.mdl`
+  `Gesture_How_Came` at four times (306 frames, in `.ani` blocks, cut into sections). All 2209 again: the same
+  2155 load, no include file refused.
+- Not built: layered sequences (autolayers; the Combine soldier's aim is one, so `aim_pitch` does nothing on his
+  idle), IK. Sequence 0 of HL2's humans is `ragdoll` (a T-pose), so `mdlview <human>` without a sequence name
+  shows that.
+- Step 5 (the stand-in for the game DLL, 2026-11-12), `BuildStandIn` in `src_studio.c`: every sequence now
+  carries its **activity** (Source names them; `hl_activities[]` is Half-Life's numbering, same name = same
+  number, unknown = 0) and weight, its numbered **events** (frame from the cycle; named `AE_` events are left
+  out), and its **travel** (`linearmovement` from the last movement record of its timing animation, read in
+  `SrcAnim_Load`), which is what hl.dll turns into ground speed. Also copied: `eyeposition`, attachments (bone
+  and position), and the first hitbox set with hit groups.
+  **Borrowed activities:** hl.dll plays sequence 0 for an activity the model lacks, and for Half-Life 2's
+  characters that's a T-pose. So for each Half-Life activity without a sequence, `activity_fallbacks[]` is
+  followed (run scared > run > walk, turns > idle...) and the stand-in gets an extra sequence entry past the
+  model's own list (`srcmodel_t::aliasseqs`; `SrcSetupBones` maps such a number back). Deaths have no fallback:
+  Source characters ragdoll and hold no death animation, so a dying Source-model NPC shows sequence 0.
+- `mdl_replace <model> <other model>` (`model.c`, `Replacement`): the other file is loaded wherever the first
+  is asked for, under the first one's name, from the next map on. It's how a Source model becomes an NPC's
+  model without touching hl.dll: `mdl_replace models/zombie.mdl hl2:models/zombie/classic.mdl`. Not saved to
+  the config; put it in a cfg or Lua.
+- Eyes (owner's request, 2026-11-12): eyeball meshes (mesh material type 1) get their iris. `src_studio.c`
+  reads each submodel's eyeballs (`srceyeball_t`), `src_material.c` loads an eye material's `$iris` next to
+  its `$basetexture` (`srcmaterial_t::iris`, clamped), and `SrcDrawIris` in `r_studio.c` draws it over the
+  white of the eye, laid flat across the ball and centred on the eye's forward line (plus its `zoffset`).
+  Eyes look straight ahead; they don't track anything, and there's no glint. MDL 44 stores the eye's forward
+  pointing into the head; the loader flips it when it points back at the bone.
+- Checked (game unpaused, see the test note below): a Lua-spawned `monster_zombie` with
+  `hl2:models/zombie/classic.mdl` dropped to the floor, walked 120 units to the player and attacked
+  (sequences 53 and 67 are borrowed-activity entries: run > walk, and the attack); `monster_scientist` as
+  `hl2:models/kleiner.mdl` on c1a0d and c1a1 idles, talks and accepts "follow". Eyes on Barney (v44), Alyx,
+  Kleiner, male_07, G-Man, Eli, Mossman. All 2209 again: the same 2155 load.
+- **Headless test note:** on Linux the main menu counts as open after `+map`, and that pauses the game
+  (`GameUI_Paused`): server time stays at 1.2 and nothing thinks. Tests of anything that moves need
+  `+map x +wait 300 +gameui_hide +unpause` first (`status` shows the time). Earlier screenshots in this
+  section that weren't `mdlview` were taken paused.
+- Known gaps for NPC use: Half-Life code that asks for sequences by name (`monster_sitting_scientist`,
+  scripted sequences) finds none in a Source model; events with monster-specific numbers mean what the Source
+  model's author meant, not what hl.dll expects; no death animations; aiming, head turning and the mouth are
+  step 6. These are what the plan's sidecar file is for.
+- Step 6 (2026-11-12):
+  - **Layered sequences** (`AddLayers` in `src_anim.c`): a sequence's autolayers are other sequences of the
+    same file, faded over the cycle (or a pose parameter) and laid on top: delta layers are added by their
+    weight, others blended in, both per bone by the layer's weight list. `CalcAnimation` now returns a delta
+    animation as its changes alone; `SrcAnim_CalcPose` adds the rest pose for a delta sequence shown on its own.
+    One level only (a layer's own layers are ignored). This is how Source aims: the Combine soldier's
+    `CombatIdle1_SMG1` carries an aim layer, a grid of deltas picked by `aim_pitch`/`aim_yaw`.
+  - **The game's controls** (`SrcSetupBones` in `r_studio.c`): an entity's controller and blending bytes are
+    read as 0..1 of a pose parameter (`srcmodel_t::ctrlpose`, `blendpose`, with reverse flags). The stand-in
+    carries a bone controller / blend range per mapping, so hl.dll's own degree-to-byte maths gives the right
+    byte. **Head turning** is a bone turn instead, because HL2's humans have no sequence that uses `head_yaw`:
+    controller 0 turns the bone named like a head (`...Head1`, `head`) about the model's up axis by up to
+    `SRC_HEAD_TURN` (60) degrees either way; positive is to the model's left, as in GoldSrc. Only without such
+    a bone does controller 0 drive `head_yaw`. Aim blends are mapped only by a settings file: most monsters
+    never set their blend bytes, and a 0 byte would read as "aim fully up".
+  - **Mouth** (`LoadJawMorphs` in `src_studio.c`, applied in `SrcTransformVerts`): the entity's mouth value
+    (saturating at 64, as GoldSrc) moves the vertices of the jaw-drop flex: named `jaw_drop`, or facial action
+    26 (`AU26`/`AU26R`) with lip-part 25 at half in older models. Half-float deltas before version 48, fixed
+    point from 48. No other flexes are used. A settings file can name a jaw bone instead.
+  - **Settings file** (`LoadSettings` in `src_studio.c`): `modelcfg/<model path>.newen` through Half-Life's
+    search paths (`hl2:models/x.mdl` > `modelcfg/hl2/models/x.newen`), one setting a line: `controller`,
+    `blend`, `activity`, `sequence`, `event`, `mouth`, `head` (the file's comment lists them). `activity` and
+    `sequence` add stand-in entries (`srcalias_t`, replacing the borrowed-activity list from step 5, which now
+    only fills what the file leaves open). `base/modelcfg/hl2/models/combine_soldier.newen` ships as the worked
+    example: the soldier as Half-Life's grunt.
+  - `mdlinfo` on a Source model now also lists each sequence's events (`number@frame`, or the name of a named
+    one), the stand-in's extra sequences, the head bone and the mouth source. `src_headtest <degrees>` and
+    `src_mouthtest <0..1>` force those on every Source model.
+  - Checked: `src_posetest "aim_pitch -50"` / `40` / `"aim_yaw 40"` on the soldier's combat idle (aims up,
+    down, left); Barney's and Alyx's mouths at `src_mouthtest` 0.5 and 1; `src_headtest` 45 and -45 (eyes go
+    with the head); `monster_human_grunt` with the soldier and its settings file ran at the player and
+    rifle-butted him (the soldier's events are the grunt's own numbers: 2 reload, 3 kick, 4 burst, 7 grenade);
+    Kleiner-as-scientist heads sit straight; all 2209 again, the same 2155 load.
+  - Not checked in a running game: a scientist's head following the player, a mouth moving to a sentence,
+    the grunt's aim pitch with `blend 0 aim_pitch reverse` (the direction is a guess from the pose test: Source's
+    `aim_pitch` is negative upwards).
+  - `base/` reaches `bin/base/` only when the build links; after adding a file under `base/`, build or copy it.
+- Step 7 (view models, 2026-11-12):
+  - client.dll plays a weapon's animations **by number** (the MP5's shoot is sequence 5), so the settings
+    file's `order <sequence> ...` puts sequences first in the stand-in. The stand-in's list is now: ordered
+    ones, the model's own list, then aliases; `SrcStudio_StandInSeq` (`src_studio.c`) is the one place that
+    maps a stand-in number back, used by `BuildStandIn`, `SrcSetupBones` and `mdlinfo`.
+  - **Field of view**: `R_StudioViewModelFov` gives a Source view model's own FOV (settings
+    `viewmodel_fov`, else cvar `r_viewmodel_fov_source`, 54, archived; 0 = the world's).
+    `CL_DrawViewModel` swaps the projection for it (`R_BeginViewModelFov`/`R_EndViewModelFov` in
+    `r_main.c`), and `ComputeAttachments` (`cl_tent.c`) moves the view model's attachments sideways by
+    `R_ViewModelFovScale` so the muzzle flash, drawn with the world's projection, sits on the barrel.
+  - **Events**: `EventNumber` maps Source's named `AE_MUZZLEFLASH` to Half-Life's 5001 with options "11";
+    the settings file's `event` line now also takes a name (`event AE_SOMETHING 5004`), and number 0 drops
+    an event. Other named events are still left out.
+  - Shipped in `base/modelcfg/hl2/models/weapons/`: `v_smg1` (for the MP5), `v_pistol` (9mm handgun),
+    `v_crowbar`, `v_shotgun`, each with the `mdl_replace` line in its comment.
+  - Checked on c1a0d, unpaused, weapons from Lua `Give`: all four draw at the right place and size with
+    their hands; the SMG fires with the shoot animation, shells and the flash on the barrel; the shotgun
+    fires; face culling (`GL_FRONT`, as for GoldSrc view models) is right for Source meshes. The stock MP5
+    is unchanged. All 2209 again: the same 2155 load.
+  - Not checked: reload and deploy timing against the client's (animation lengths differ from Half-Life's,
+    and the client times its weapon logic itself), the crowbar's swings, the pistol firing. Source's shell
+    event (6001) is ignored; Half-Life's client throws its own shells.
+  - In the headless tests `+attack` on the command line loses its `+`; put it in a cfg and `+exec` that.
+- Step 8 (modern renderer, 2026-11-12):
+  - `SrcDrawLightPasses` (`r_studio.c`) gives Source models the per-pixel dynamic light passes GoldSrc models
+    get (`R_ModernBeginLights` / `SetLight` / `EndLights`), on solid meshes; see-through, additive and unlit
+    ones get none, as on the GoldSrc path. The classic point-light fallback from step 2 is gone.
+  - `SrcMat_LoadBump` (`src_material.c`) loads a material's `$bumpmap` the first time a light pass needs it,
+    with the green channel turned over (Source's normal maps have +Y down the image, newen's up), and a
+    shine map: the bump map's alpha for `$phong` / `$normalmapalphaenvmapmask`, or the base texture's alpha
+    for `$basealphaenvmapmask` / `$basemapalphaphongmask`. `r_source_bumpmaps 0` (archived) turns both off.
+  - Tangents: the `.vvd`'s per-vertex tangents are loaded with the vertices (same fixups) and turned by each
+    vertex's first bone; which way the bump map's "up" runs is worked out per triangle from the texture
+    coordinates, as the GoldSrc path does, so the sign never depends on the file.
+  - **Base texture alpha**: a Source texture's alpha is transparency only for `$alphatest` / `$translucent`
+    (and additive) materials; otherwise it's a shine mask or unused, and the texture is now uploaded solid.
+    The light shader cuts pixels with low alpha, which left such models (the oil drum) dark.
+  - Checked with `r_testlight` on c1a0d: Barney lit from one side, the Combine soldier and the oil drum with
+    bump maps on and off (relief and highlights with, flatter without), a Source model's shadow on the wall.
+    Classic unchanged. All 2209 again: the same 2155 load.
+  - Not checked: a Source view model under its own muzzle flash or the flashlight cone; whether the shine
+    strength matches Half-Life 2's look (`r_gloss` and `r_specscale` are shared with every other surface).
+  - Not built from Source's shaders: environment-map reflections, self-illumination masks, rim light,
+    detail textures, eye glints.
+- Step 9 (regression, 2026-11-12, Linux):
+  - Half-Life's own content: all 226 models in `valve/models` (texture and sequence-group files left out)
+    and all 170 sprites through `mdlinfo`: 225 + 170 load, the one refusal is `doctor.mdl` (studio version 9,
+    as before this work).
+  - Pictures: the plan's step 0 (reference shots before starting) was never taken, so "pixel-identical to
+    before" could only be checked against one older reference that happened to match a test view:
+    `bin/userdata/valve/renderer_ref/lab_a.png` (Windows, 2026-10-30, `-nogamedll +map c1a0d +setpos -2250
+    1136 -220 8 180 0`). Today's Linux shot of the same view has no differing pixels in the world; what
+    differs is the console text at the top and the two scientists' idle animation phase. c1a0, c2a5 and
+    c1a0d taken twice in a row differ only in a small text and (c1a0d) the animated scientists.
+  - Play: stock game on c2a5's firefight spot (god mode, firing), `save`, `load`, then `map c1a0`; the same
+    with nine `mdl_replace` lines (Kleiner, Barney, zombie, headcrab, Combine soldier, four view models)
+    across c2a5 with save and load, c1a1a and c1a0d. No errors, no crash.
+  - Memory: a 32-bit AddressSanitizer build (below) ran all 2209 Half-Life 2 models through `mdlinfo` and a
+    session with replaced NPCs fighting, the SMG view model firing, blended and layered `mdlview` sequences,
+    the mouth and head tests, modern lights with bump maps, and three map changes: no reports from newen's
+    code (Valve's own `tier0` trips one in its profiler at exit; `alloc_dealloc_mismatch=0` hides it).
+    Recipe: `cmake -S . -B build-asan -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    "-DCMAKE_C_FLAGS=-m32 -fsanitize=address -fno-omit-frame-pointer" "-DCMAKE_EXE_LINKER_FLAGS=-m32
+    -fsanitize=address" -DCMAKE_LIBRARY_ARCHITECTURE=i386-linux-gnu -DSDL2_LIBRARY=<the 32-bit libSDL2>
+    -DSDL2_INCLUDE_DIR=/usr/include/SDL2`, build it (it overwrites `bin/newen`; rebuild the normal one
+    after), run with `ASAN_OPTIONS=detect_leaks=0:halt_on_error=0:alloc_dealloc_mismatch=0:log_path=<file>`.
+  - **Windows: not built.** The four new files compile clean under `gcc -std=c11 -pedantic -Wall -Wextra
+    -Wconversion` and use nothing outside C11 and the engine's own helpers (no POSIX calls), but MSVC hasn't
+    seen them. First thing on the Windows machine: `build.bat`, then the `mdlview hl2:...` and `mdl_replace`
+    checks from README. `bin\basedir_hl2.txt` caches where Half-Life 2 was found.
+- Not built: IK, layers of layers.
+- Next: the Windows build, step 10 (docs review by the owner), and a commit (nothing from this work is
+  committed). Still open from the HL2 map plan: its static props should use this loader. After that the owner
+  wants physics and ragdolls, Lua SWEPs and a much bigger Lua API, each planned first.
+
 **Closed captions, done (owner's pick and recommendations, 2026-10-22).** See `cl_caption.c` in the code map and
 README's "Closed captions". The owner chose automatic captions from word sentences plus a caption file that
 overrides them. `base/captions/english.txt` ships the automatic setup (VOX, HEV, soldiers), word fixes, a few
@@ -671,4 +974,4 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 `cc_subtitles 1` hiding effects, fading out) and c0a0/c1a0 (no stray captions; that opening's speech is all single
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
-Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit, Linux.
+Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.

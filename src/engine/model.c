@@ -4,6 +4,7 @@
 // Everything that is decoded (textures, triangle lists) is sized from the file, with no fixed limits.
 #include "model.h"
 #include "bsp.h"
+#include "src_local.h"
 
 static model_t **models;
 static int models_count, models_cap;
@@ -184,6 +185,7 @@ static void *LoadSeqGroup(const model_t *mod, const mstudioseqgroup_t *g, int in
 static void FreeStudio(model_t *m)
 {
 	studiomodel_t *s = &m->studio;
+	SrcStudio_Free(m);
 	if (s->meshes) {
 		int sub = 0;
 		studiohdr_t *h = s->hdr;
@@ -463,11 +465,73 @@ static void FreeModel(model_t *m)
 	Mem_Free(m);
 }
 
+// mdl_replace: models loaded from another file. Looked up when a model is first loaded, so a change shows
+// at the next map (the cache is cleared then).
+typedef struct { char name[64], with[64]; } replacement_t;
+static replacement_t *replacements;
+static int replacements_count, replacements_cap;
+
+static const char *Replacement(const char *name)
+{
+	for (int i = 0; i < replacements_count; i++)
+		if (!stricmp(replacements[i].name, name))
+			return replacements[i].with;
+	return name;
+}
+
+static void MdlReplace_f(void)
+{
+	if (Cmd_Argc() < 2) {
+		Con_Printf("mdl_replace <model> <other model>: loads the other file wherever the first is asked for\n"
+			"mdl_replace <model> \"\": back to the original. Takes effect at the next map.\n");
+		for (int i = 0; i < replacements_count; i++)
+			Con_Printf("  %s -> %s\n", replacements[i].name, replacements[i].with);
+		return;
+	}
+	char name[64], with[64];
+	const char *a = Cmd_Argv(1), *b = Cmd_Argc() > 2 ? Cmd_Argv(2) : "";
+	if (strlen(a) >= sizeof(name) || strlen(b) >= sizeof(with)) {
+		Con_Printf("Model names are at most 63 characters\n");
+		return;
+	}
+	Q_strncpy(name, a, sizeof(name));
+	Q_strncpy(with, b, sizeof(with));
+	for (char *c = name; *c; c++)
+		if (*c == '\\')
+			*c = '/';
+	for (char *c = with; *c; c++)
+		if (*c == '\\')
+			*c = '/';
+	int i;
+	for (i = 0; i < replacements_count; i++)
+		if (!stricmp(replacements[i].name, name))
+			break;
+	if (!*with) {
+		if (i < replacements_count)
+			replacements[i] = replacements[--replacements_count];
+		return;
+	}
+	if (i == replacements_count) {
+		if (replacements_count == replacements_cap) {
+			replacements_cap = replacements_cap ? replacements_cap * 2 : 16;
+			replacements = Mem_Realloc(replacements, sizeof(*replacements) * replacements_cap);
+		}
+		replacements_count++;
+	}
+	Q_strncpy(replacements[i].name, name, sizeof(replacements[i].name));
+	Q_strncpy(replacements[i].with, with, sizeof(replacements[i].with));
+}
+
 model_t *Mod_ForName(const char *name, qboolean crash)
 {
 	if (!name || !*name)
 		return NULL;
 	char fixed[64];
+	if (strlen(name) >= sizeof(fixed)) {
+		// GoldSrc's model_t keeps 64 characters, and the client DLL reads that layout
+		Con_Warnf("Model name %s is longer than 63 characters\n", name);
+		return NULL;
+	}
 	Q_strncpy(fixed, name, sizeof(fixed));
 	for (char *s = fixed; *s; s++)
 		if (*s == '\\')
@@ -507,7 +571,14 @@ model_t *Mod_ForName(const char *name, qboolean crash)
 	}
 
 	size_t size;
-	unsigned char *data = FS_LoadFile(fixed, &size);
+	// mdl_replace: another file stands in for this model, under this model's name
+	const char *file = Replacement(fixed);
+	unsigned char *data = SrcFS_LoadFile(file, &size);   // Half-Life's files, or Half-Life 2's with hl2:
+	if (!data && file != fixed) {
+		Con_Warnf("Replacement %s for %s not found, using the original\n", file, fixed);
+		file = fixed;
+		data = SrcFS_LoadFile(file, &size);
+	}
 	if (!data) {
 		if (crash)
 			Sys_Error("Model %s not found", fixed);
@@ -517,7 +588,14 @@ model_t *Mod_ForName(const char *name, qboolean crash)
 	qboolean ok = false;
 	if (size >= 4 && *(int *)data == IDSTUDIOHEADER) {
 		m->type = mod_studio;
-		ok = LoadStudio(m, data, size);   // keeps data
+		// both engines' models start with "IDST"; the version tells them apart
+		// the loaders find a model's other files (textures, sequence groups, .vvd) by its name
+		Q_strncpy(m->name, file, sizeof(m->name));
+		if (size >= 8 && ((studiohdr_t *)data)->version != STUDIO_VERSION && ((studiohdr_t *)data)->version >= 37)
+			ok = SrcStudio_Load(m, file, data, size);   // keeps data
+		else
+			ok = LoadStudio(m, data, size);   // keeps data
+		Q_strncpy(m->name, fixed, sizeof(m->name));
 	} else if (size >= 4 && *(int *)data == IDSPRITEHEADER) {
 		m->type = mod_sprite;
 		ok = LoadSprite(m, data, size);
@@ -550,6 +628,8 @@ void Mod_ClearAll(void)
 	for (int i = 0; i < models_count; i++)
 		FreeModel(models[i]);
 	models_count = 0;
+	SrcAnim_FreeIncludes();
+	SrcMat_Free(TF_MODEL);   // before the textures they point at go
 	GL_FreeTextures(TF_MODEL);
 }
 
@@ -568,6 +648,10 @@ void Mod_PrintInfo(const model_t *m)
 	}
 	if (m->type != mod_studio) {
 		Con_Printf("%s: brush model *%d\n", m->name, m->submodel);
+		return;
+	}
+	if (m->studio.source) {
+		SrcStudio_PrintInfo(m);
 		return;
 	}
 	const studiohdr_t *h = m->studio.hdr;
@@ -616,6 +700,9 @@ static void MdlInfo_f(void)
 
 void Mod_Init(void)
 {
+	SrcFS_Init();
+	SrcMat_Init();
+	Cmd_AddCommand("mdl_replace", MdlReplace_f, "mdl_replace <model> <other model> - loads another model file in its place (from the next map)");
 	Cmd_AddCommand("modellist", ModelList_f, "lists loaded models and sprites");
 	Cmd_AddCommand("mdlinfo", MdlInfo_f, "mdlinfo <model> - lists a model's sequences, body parts and textures");
 }

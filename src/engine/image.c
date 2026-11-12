@@ -9,9 +9,13 @@
 #define STBI_MALLOC(sz)        Mem_Alloc(sz)
 #define STBI_REALLOC(p, sz)    Mem_Realloc(p, sz)
 #define STBI_FREE(p)           Mem_Free(p)
+#ifdef _MSC_VER
 #pragma warning(push, 0)
+#endif
 #include "stb_image.h"
+#ifdef _MSC_VER
 #pragma warning(pop)
+#endif
 
 qglActiveTexture_t qglActiveTexture;
 qglActiveTexture_t qglClientActiveTexture;

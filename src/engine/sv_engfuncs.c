@@ -4,6 +4,9 @@
 // with the client in later steps; until then they are accepted and do nothing.
 #include "server.h"
 #include <sys/stat.h>
+#ifndef _WIN32
+#define _stat stat   // struct _stat and _stat() are the Windows names
+#endif
 
 // ---------------------------------------------------------------- helpers
 

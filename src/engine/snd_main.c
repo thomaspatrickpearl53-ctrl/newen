@@ -34,9 +34,10 @@
 #define CHAN_VOICE  2
 #define CHAN_STATIC 6
 
-#define SND_CHANGE_VOL   (1<<0)
-#define SND_CHANGE_PITCH (1<<1)
+// GoldSrc's values (const.h); 1 and 2 are only the network message's "has volume/pitch" bits
 #define SND_STOP         (1<<5)
+#define SND_CHANGE_VOL   (1<<6)
+#define SND_CHANGE_PITCH (1<<7)
 
 #define NOMINAL_CLIP_DIST 1000.0f
 

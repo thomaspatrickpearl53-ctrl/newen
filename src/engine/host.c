@@ -91,6 +91,10 @@ void Host_Init(int argc, char **argv)
 	Cmd_ExecFile(CONFIG_NAME, true);
 	Cbuf_Execute();
 	cmd_defer_cvars = false;
+	// the player's own aliases and binds, run at every start as GoldSrc does (they aren't kept in the config;
+	// GameUI's keyboard options run it too)
+	Cmd_ExecFile("userconfig.cfg", true);
+	Cbuf_Execute();
 	Cmd_ExecFile("newen_autoexec.cfg", true);
 	Cbuf_Execute();
 
@@ -102,6 +106,7 @@ void Host_Init(int argc, char **argv)
 	Lua_Init();
 	CL_Init();
 	SV_Init();
+	GameUI_Init();
 	// Half-Life's default config turns on mouse look; without it the mouse's up/down walks you
 	if (CL_HasClient())
 		Cbuf_AddText("+mlook\n+jlook\n");
@@ -128,7 +133,8 @@ void Host_Init(int argc, char **argv)
 		SB_Free(&sb);
 	}
 
-	Con_ToggleConsole();   // start with the console open; there's no world or menu yet
+	if (!GameUI_Loaded())
+		Con_ToggleConsole();   // start with the console open: there's no world or menu yet
 	host_initialized = true;
 	last_time = Sys_FloatTime();
 	Con_Printf("Ready. Type \"cmdlist\" or \"cvarlist\" to look around, \"lua_run <code>\" to run Lua.\n");
@@ -173,8 +179,12 @@ void Host_Frame(void)
 	Vid_PumpEvents();
 	Cbuf_Execute();
 	R_UpdateCamera();
-	CL_Frame(host_frametime);
-	SV_Frame(host_frametime);
+	GameUI_Frame();
+	// single player pauses while the menu is up, as in GoldSrc
+	if (!GameUI_Paused()) {
+		CL_Frame(host_frametime);
+		SV_Frame(host_frametime);
+	}
 	Lua_Frame();
 	double t1 = Sys_FloatTime();
 
@@ -186,6 +196,7 @@ void Host_Frame(void)
 	CL_DrawHUD();
 	CC_Draw();
 	Lua_DrawOverlay();
+	GameUI_Paint();
 	Con_Draw();
 	DrawFPS();
 	Vid_EndFrame();
@@ -204,6 +215,7 @@ void Host_Shutdown(void)
 	done = true;
 	if (host_initialized)
 		WriteConfig();
+	GameUI_Shutdown();
 	Lua_Shutdown();
 	CC_Shutdown();
 	CL_Shutdown();
@@ -212,6 +224,7 @@ void Host_Shutdown(void)
 	R_Shutdown();
 	Draw_Shutdown();
 	Vid_Shutdown();
+	SrcFS_Shutdown();
 	FS_Shutdown();
 	Con_Shutdown();
 }

@@ -70,13 +70,13 @@ static qboolean IsHalfLifeDir(const char *dir)
 	return Sys_FileExists(va("%s/valve/liblist.gam", dir));
 }
 
-// Steam keeps extra library folders in libraryfolders.vdf: "path" "D:\\SteamLibrary"
-static qboolean FindInSteamLibraries(const char *steam, char *out, size_t outsize)
+// Looks for steamapps/common/<folder> holding <marker> in Steam's own library and in the extra ones
+// (libraryfolders.vdf: "path" "D:\\SteamLibrary")
+static qboolean FindInSteamLibraries(const char *steam, const char *folder, const char *marker, char *out, size_t outsize)
 {
-	if (IsHalfLifeDir(va("%s/steamapps/common/Half-Life", steam))) {
-		snprintf(out, outsize, "%s/steamapps/common/Half-Life", steam);
+	snprintf(out, outsize, "%s/steamapps/common/%s", steam, folder);
+	if (Sys_FileExists(va("%s/%s", out, marker)))
 		return true;
-	}
 	char vdf[MAX_OSPATH];
 	snprintf(vdf, sizeof(vdf), "%s/steamapps/libraryfolders.vdf", steam);
 	FILE *f = fopen(vdf, "rb");
@@ -99,13 +99,19 @@ static qboolean FindInSteamLibraries(const char *steam, char *out, size_t outsiz
 			lib[n++] = *s == '\\' ? '/' : *s;
 		}
 		lib[n] = 0;
-		if (IsHalfLifeDir(va("%s/steamapps/common/Half-Life", lib))) {
-			snprintf(out, outsize, "%s/steamapps/common/Half-Life", lib);
+		snprintf(out, outsize, "%s/steamapps/common/%s", lib, folder);
+		if (Sys_FileExists(va("%s/%s", out, marker)))
 			found = true;
-		}
 	}
 	fclose(f);
 	return found;
+}
+
+// another Steam game's folder (Half-Life 2 for Source content); false if it isn't installed
+qboolean FS_FindSteamGame(const char *folder, const char *marker, char *out, size_t outsize)
+{
+	const char *steam = Sys_SteamPath();
+	return steam && FindInSteamLibraries(steam, folder, marker, out, outsize);
 }
 
 static qboolean FindBaseDir(void)
@@ -137,7 +143,7 @@ static qboolean FindBaseDir(void)
 		fclose(f);
 	}
 	const char *steam = Sys_SteamPath();
-	if (steam && FindInSteamLibraries(steam, fs_basedir, sizeof(fs_basedir)))
+	if (steam && FindInSteamLibraries(steam, "Half-Life", "valve/liblist.gam", fs_basedir, sizeof(fs_basedir)))
 		return true;
 	return false;
 }
@@ -175,8 +181,9 @@ void FS_Init(void)
 {
 	if (!FindBaseDir())
 		Sys_Error("Couldn't find Half-Life.\n\nInstall it through Steam, or start " ENGINE_NAME
-			" with -basedir \"C:\\path\\to\\Half-Life\".");
+			" with -basedir <path to the Half-Life folder>.");
 	FixSlashes(fs_basedir);
+	Sys_AddLibraryPath(fs_basedir);   // where client.so finds vgui.so, vgui2 finds tier0...
 
 	// remember it so the next start is instant
 	FILE *f = fopen(va("%s/basedir.txt", Sys_ExeDir()), "wb");
@@ -220,11 +227,26 @@ qboolean FS_FullPath(const char *path, char *out, size_t outsize)
 {
 	if (!SafePath(path))
 		return false;
+	// game code may write sound\x.wav; only Windows takes backslashes
+	char fixed[MAX_OSPATH];
+	if (strchr(path, '\\')) {
+		Q_strncpy(fixed, path, sizeof(fixed));
+		FixSlashes(fixed);
+		path = fixed;
+	}
 	for (searchpath_t *sp = search_paths; sp; sp = sp->next) {
 		snprintf(out, outsize, "%s/%s", sp->dir, path);
 		if (Sys_FileExists(out))
 			return true;
 	}
+#ifndef _WIN32
+	// only after every exact name missed: the case-insensitive search reads directories
+	for (searchpath_t *sp = search_paths; sp; sp = sp->next) {
+		snprintf(out, outsize, "%s/%s", sp->dir, path);
+		if (Sys_FixCase(out, strlen(sp->dir)))
+			return true;
+	}
+#endif
 	return false;
 }
 
@@ -314,6 +336,17 @@ int FS_ListFiles(const char *dir, const char *pattern, char ***out)
 		qsort(ctx.list, ctx.count, sizeof(char *), CompareStrings);
 	*out = ctx.list;
 	return ctx.count;
+}
+
+// the i-th search path (first match wins), or false past the end
+qboolean FS_SearchPath(int i, char *out, size_t size)
+{
+	for (searchpath_t *sp = search_paths; sp; sp = sp->next)
+		if (!i--) {
+			Q_strncpy(out, sp->dir, size);
+			return true;
+		}
+	return false;
 }
 
 void FS_FreeList(char **list, int count)

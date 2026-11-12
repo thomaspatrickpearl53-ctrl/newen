@@ -107,6 +107,57 @@ void Sys_ListDir(const char *dir, sys_listfn_t fn, void *ctx)
 	FindClose(h);
 }
 
+// ---------------------------------------------------------------- loadable libraries
+
+// vgui2.dll and GameUI.dll need tier0.dll, vstdlib.dll and steam_api.dll from the Half-Life folder
+void Sys_AddLibraryPath(const char *dir)
+{
+	if (!SetDllDirectoryA(dir))
+		Con_Warnf("Couldn't add %s to the DLL search path\n", dir);
+}
+
+void *Sys_LoadLibrary(const char *path)
+{
+	return (void *)LoadLibraryA(path);
+}
+
+void *Sys_GetProcAddress(void *lib, const char *name)
+{
+	return lib ? (void *)GetProcAddress((HMODULE)lib, name) : NULL;
+}
+
+void Sys_FreeLibrary(void *lib)
+{
+	if (lib)
+		FreeLibrary((HMODULE)lib);
+}
+
+const char *Sys_LibraryError(void)
+{
+	return va("error %lu", GetLastError());
+}
+
+// the exported (decorated) name at an address, from the DLL's export table
+const char *Sys_ExportName(void *lib, void *addr)
+{
+	if (!lib)
+		return NULL;
+	unsigned char *base = (unsigned char *)lib;
+	IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER *)base;
+	IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+	IMAGE_DATA_DIRECTORY *dir = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+	if (!dir->VirtualAddress)
+		return NULL;
+	IMAGE_EXPORT_DIRECTORY *exp = (IMAGE_EXPORT_DIRECTORY *)(base + dir->VirtualAddress);
+	DWORD *names = (DWORD *)(base + exp->AddressOfNames);
+	WORD *ordinals = (WORD *)(base + exp->AddressOfNameOrdinals);
+	DWORD *funcs = (DWORD *)(base + exp->AddressOfFunctions);
+	for (DWORD i = 0; i < exp->NumberOfNames; i++)
+		if (base + funcs[ordinals[i]] == (unsigned char *)addr)
+			return (const char *)(base + names[i]);
+	return NULL;
+}
+
 // ---------------------------------------------------------------- crash reports
 
 // A crash or abort writes the call stack to the console log before the process ends: function

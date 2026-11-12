@@ -120,6 +120,11 @@ static void Bindlist_f(void)
 			Con_Printf("%-12s \"%s\"\n", Key_KeynumToString(i), bindings[i]);
 }
 
+const char *Key_GetBinding(int key)
+{
+	return key >= 0 && key < K_COUNT ? bindings[key] : NULL;
+}
+
 // the first key bound to a command, for the client DLL's "press [key]" hints
 const char *Key_KeynameForBinding(const char *binding)
 {
@@ -186,11 +191,24 @@ void Key_Event(int key, qboolean down)
 		return;
 	}
 
+	// Escape shows the main menu, and in a map hides it again (without one, it closes dialogs)
+	if (key == K_ESCAPE && down && !repeat && GameUI_Loaded() && (!GameUI_IsActive() || R_CurrentMap()[0])) {
+		if (GameUI_IsActive())
+			GameUI_Hide();
+		else
+			GameUI_Activate();
+		return;
+	}
+	if (GameUI_IsActive()) {
+		GameUI_KeyEvent(key, down);
+		return;
+	}
+
 	if (Lua_KeyEvent(key, down))
 		return;
 
 	if (key == K_ESCAPE && down && !bindings[key]) {
-		Con_ToggleConsole();   // until there's a menu
+		Con_ToggleConsole();   // no menu (GameUI didn't load)
 		return;
 	}
 

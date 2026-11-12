@@ -10,7 +10,9 @@
 // R_StudioSetupBones and R_StudioDrawModel are the pieces it will call.
 #include "model.h"
 #include "bsp.h"
+#include "src_local.h"
 
+static cvar_t *src_posetest, *src_mouthtest, *src_headtest, *r_viewmodel_fov_source, *r_source_bumpmaps;
 static cvar_t *r_studio_lambert, *r_studio_ambient, *r_studio_shade, *r_fullbright_ref, *r_modern_viewmodel;
 
 // per-frame scratch, grown to the biggest model seen
@@ -19,11 +21,16 @@ static float (*q1)[4], (*q2)[4];
 static vec3_t *pos1, *pos2;
 static int bones_cap;
 static vec3_t *xverts, *xnorms;
+static vec3_t *xtans;   // Source models: the direction along the texture at each vertex, for normal maps
 static float (*chromeuv)[2];
 static int verts_cap, norms_cap;
 static float *arr_xyz, *arr_st, *arr_rgba;
 static float *arr_norm, *arr_tan;   // modern light passes: per-corner normal and tangent
 static int arr_cap;
+
+static qboolean src_tangents;   // xtans holds this model's
+static float (*srcskin)[3][4];   // Source models: rest-pose vertex to world, per bone
+static int srcskin_cap;
 
 qboolean r_studio_viewmodel;
 
@@ -291,6 +298,115 @@ float R_StudioFrame(const rentity_t *e)
 	return f;
 }
 
+// how open the mouth is, 0..1: the game's mouth value saturates at 64, as for GoldSrc models
+static float SrcMouth(const rentity_t *e)
+{
+	float v = src_mouthtest->value > 0 ? src_mouthtest->value : e->mouth / 64.0f;
+	return v > 1 ? 1 : v;
+}
+
+// A Source model's bones: the pose comes from its own animation data, the chain is built the same way.
+// The stand-in header carries the same sequences, so the frame is worked out as for any model.
+static int SrcSetupBones(const rentity_t *e)
+{
+	const srcmodel_t *s = e->model->studio.source;
+	const studiohdr_t *h = e->model->studio.hdr;
+	float cycle = 0;
+	if (e->sequence >= 0 && e->sequence < h->numseq) {
+		int frames = STUDIO_PTR(h, h->seqindex, mstudioseqdesc_t)[e->sequence].numframes;
+		if (frames > 1)
+			cycle = R_StudioFrame(e) / (float)(frames - 1);
+	}
+	// the pose parameters: each at rest, then what the game's controllers and aim blends drive (their
+	// 0-255 settings are 0..1 of the parameter), then src_posetest "<name> <value>" for trying things by hand
+	static float *pose;
+	static int pose_cap;
+	if (s->numpose > pose_cap) {
+		pose_cap = s->numpose;
+		pose = Mem_Realloc(pose, sizeof(float) * pose_cap);
+	}
+	for (int i = 0; i < s->numpose; i++)
+		pose[i] = s->pose[i].value;
+	for (int i = 0; i < 4; i++)
+		if (s->ctrlpose[i] >= 0) {
+			const srcposeparam_t *pp = &s->pose[s->ctrlpose[i]];
+			float v = e->controller[i] / 255.0f;
+			pose[s->ctrlpose[i]] = (pp->start > pp->end) != (s->ctrlrev[i] != 0) ? 1.0f - v : v;
+		}
+	for (int i = 0; i < 2; i++)
+		if (s->blendpose[i] >= 0) {
+			const srcposeparam_t *pp = &s->pose[s->blendpose[i]];
+			float v = e->blending[i] / 255.0f;
+			pose[s->blendpose[i]] = (pp->start > pp->end) != (s->blendrev[i] != 0) ? 1.0f - v : v;
+		}
+	if (src_posetest->string[0] && s->numpose) {
+		char name[64] = "";
+		float value = 0;
+		if (sscanf(src_posetest->string, "%63s %f", name, &value) == 2)
+			for (int i = 0; i < s->numpose; i++) {
+				const srcposeparam_t *pp = &s->pose[i];
+				if (!stricmp(pp->name, name) && pp->end != pp->start) {
+					float v = (value - pp->start) / (pp->end - pp->start);
+					pose[i] = v < 0 ? 0 : v > 1 ? 1 : v;
+				}
+			}
+	}
+	// the stand-in's sequence numbers aren't the model's: reordered ones first, extra ones last
+	int vseq = SrcStudio_StandInSeq(s, e->sequence, NULL);
+	SrcAnim_CalcPose(s, vseq, cycle, s->numpose ? pose : NULL, q1, pos1);
+	// talking, for a model whose settings give it a jaw bone
+	float mouth = SrcMouth(e);
+	if (s->jawbone >= 0 && mouth > 0) {
+		float a[3] = { 0, 0, 0 }, turn[4], out[4];
+		a[s->jawaxis] = s->jawdegrees * mouth * (M_PI_F / 180.0f);
+		AngleQuaternion(a, turn);
+		// q1 x turn: the turn happens in the bone's own space
+		const float *p = q1[s->jawbone];
+		out[0] = p[3] * turn[0] + p[0] * turn[3] + p[1] * turn[2] - p[2] * turn[1];
+		out[1] = p[3] * turn[1] - p[0] * turn[2] + p[1] * turn[3] + p[2] * turn[0];
+		out[2] = p[3] * turn[2] + p[0] * turn[1] - p[1] * turn[0] + p[2] * turn[3];
+		out[3] = p[3] * turn[3] - p[0] * turn[0] - p[1] * turn[1] - p[2] * turn[2];
+		memcpy(q1[s->jawbone], out, sizeof(out));
+	}
+
+	// controller 0 on a head bone: its setting runs from one side to the other
+	float head_yaw = 0;
+	if (s->headbone >= 0) {
+		float v = e->controller[0] / 255.0f;
+		if (s->headrev)
+			v = 1.0f - v;
+		head_yaw = (v * 2.0f - 1.0f) * SRC_HEAD_TURN * (M_PI_F / 180.0f);
+		if (src_headtest->value)
+			head_yaw = src_headtest->value * (M_PI_F / 180.0f);
+	}
+	float toworld[3][4];
+	vec3_t angles = { -e->angles[0], e->angles[1], e->angles[2] };   // pitch flipped, as for GoldSrc models
+	AngleMatrix(angles, toworld);
+	for (int i = 0; i < 3; i++)
+		toworld[i][3] = e->origin[i];
+	for (int i = 0; i < s->numbones; i++) {
+		float local[3][4];
+		QuaternionMatrix(q1[i], local);
+		for (int j = 0; j < 3; j++)
+			local[j][3] = pos1[i][j];
+		int parent = s->bones[i].parent;
+		ConcatTransforms(parent < 0 ? toworld : bonetransform[parent], local, bonetransform[i]);
+		if (i == s->headbone && head_yaw != 0) {
+			// turn the head about the model's up axis, where it is: bones after it follow
+			float c = cosf(head_yaw), sn = sinf(head_yaw);
+			vec3_t up = { toworld[0][2], toworld[1][2], toworld[2][2] };
+			for (int col = 0; col < 3; col++) {
+				vec3_t v = { bonetransform[i][0][col], bonetransform[i][1][col], bonetransform[i][2][col] }, cr;
+				CrossProduct(up, v, cr);
+				float d = DotProduct(up, v);
+				for (int j = 0; j < 3; j++)
+					bonetransform[i][j][col] = v[j] * c + cr[j] * sn + up[j] * d * (1.0f - c);
+			}
+		}
+	}
+	return s->numbones;
+}
+
 int R_StudioSetupBones(const rentity_t *e, float (**bones)[3][4])
 {
 	const model_t *m = e->model;
@@ -299,6 +415,8 @@ int R_StudioSetupBones(const rentity_t *e, float (**bones)[3][4])
 	*bones = bonetransform;
 	if (!h->numbones)
 		return 0;
+	if (m->studio.source)
+		return SrcSetupBones(e);
 
 	float adjbuf[8], *adj = adjbuf;
 	float *adjheap = NULL;
@@ -420,6 +538,7 @@ static void EnsureArrays(int nverts, int nnorms, int ntris)
 	if (nverts > verts_cap) {
 		verts_cap = nverts;
 		xverts = Mem_Realloc(xverts, sizeof(*xverts) * nverts);
+		xtans = Mem_Realloc(xtans, sizeof(*xtans) * nverts);
 	}
 	if (nnorms > norms_cap) {
 		norms_cap = nnorms;
@@ -669,11 +788,332 @@ static int MaxMeshTris(const mstudiomodel_t *sm, const studiomesh_t *meshes)
 	return ntris;
 }
 
+// ---------------------------------------------------------------- Source models
+
+// Source vertices sit in model space in the rest pose and follow up to three bones each. A bone moves a
+// vertex by first taking it into the bone's own space (posetobone), then out to where the bone is now.
+static void SrcTransformVerts(const srcmodel_t *s, float (*bones)[3][4], float mouth)
+{
+	src_tangents = false;
+	if (s->numbones > srcskin_cap) {
+		srcskin_cap = s->numbones;
+		srcskin = Mem_Realloc(srcskin, sizeof(*srcskin) * srcskin_cap);
+	}
+	for (int i = 0; i < s->numbones; i++)
+		ConcatTransforms(bones[i], s->bones[i].posetobone, srcskin[i]);
+	for (int v = 0; v < s->numverts; v++) {
+		const srcvert_t *sv = &s->verts[v];
+		if (sv->numbones <= 1) {
+			float (*b)[4] = srcskin[sv->numbones ? sv->bone[0] : 0];
+			for (int j = 0; j < 3; j++) {
+				xverts[v][j] = DotProduct(sv->pos, b[j]) + b[j][3];
+				xnorms[v][j] = DotProduct(sv->normal, b[j]);
+			}
+			continue;
+		}
+		VectorClear(xverts[v]);
+		VectorClear(xnorms[v]);
+		for (int k = 0; k < sv->numbones; k++) {
+			float (*b)[4] = srcskin[sv->bone[k]];
+			float w = sv->weight[k];
+			for (int j = 0; j < 3; j++) {
+				xverts[v][j] += w * (DotProduct(sv->pos, b[j]) + b[j][3]);
+				xnorms[v][j] += w * DotProduct(sv->normal, b[j]);
+			}
+		}
+		VectorNormalize(xnorms[v]);
+	}
+	// the texture directions turn with each vertex's first bone (close enough for lighting detail)
+	if (s->tangents && r_modern) {
+		for (int v = 0; v < s->numverts; v++) {
+			const srcvert_t *sv = &s->verts[v];
+			float (*b)[4] = srcskin[sv->numbones ? sv->bone[0] : 0];
+			for (int j = 0; j < 3; j++)
+				xtans[v][j] = DotProduct(s->tangents[v], b[j]);
+		}
+		src_tangents = true;
+	}
+	// talking: the open-jaw vertices move by their share, turned the way their first bone is
+	for (int i = 0; mouth > 0 && s->jawbone < 0 && i < s->nummorphs; i++) {
+		const srcmorph_t *mo = &s->morphs[i];
+		const srcvert_t *sv = &s->verts[mo->vert];
+		float (*b)[4] = srcskin[sv->numbones ? sv->bone[0] : 0];
+		for (int j = 0; j < 3; j++)
+			xverts[mo->vert][j] += mouth * DotProduct(mo->delta, b[j]);
+	}
+}
+
+// the chosen submodel of a body part (e->body picks one per part, as in GoldSrc)
+static const srcsubmodel_t *SrcBodyChoice(const srcmodel_t *s, const rentity_t *e, int part)
+{
+	const srcbodypart_t *bp = &s->bodyparts[part];
+	if (bp->nummodels <= 0)
+		return NULL;
+	int base = bp->base > 0 ? bp->base : 1;
+	int body = e->body >= 0 ? e->body : 0;
+	return &bp->models[(body / base) % bp->nummodels];
+}
+
+static const srcmaterial_t *SrcMeshMaterial(const srcmodel_t *s, const rentity_t *e, const srcmesh_t *mesh)
+{
+	int ref = mesh->skinref;
+	if (ref >= 0 && ref < s->numskinref && s->numskinfamilies > 0) {
+		int skin = (e->skin >= 0 && e->skin < s->numskinfamilies) ? e->skin : 0;
+		ref = s->skins[skin * s->numskinref + ref];
+	}
+	if (ref < 0 || ref >= s->numtextures || (s->materials[ref]->flags & SMAT_NODRAW))
+		return NULL;
+	return s->materials[ref];
+}
+
+// a material only blends if it asks to and its texture really has transparent pixels
+static qboolean SrcSeeThrough(const srcmaterial_t *mat)
+{
+	return (mat->flags & SMAT_ADDITIVE) || ((mat->flags & SMAT_TRANSLUCENT) && (mat->gl->flags & TF_ALPHA));
+}
+
+static int SrcMaxIndices(const srcmodel_t *s)
+{
+	int n = 0;
+	for (int i = 0; i < s->numbodyparts; i++)
+		for (int j = 0; j < s->bodyparts[i].nummodels; j++)
+			for (int k = 0; k < s->bodyparts[i].models[j].nummeshes; k++)
+				if (s->bodyparts[i].models[j].meshes[k].numindices > n)
+					n = s->bodyparts[i].models[j].meshes[k].numindices;
+	return n;
+}
+
+// The iris over an eyeball mesh that was just drawn (its vertices and light are still in the arrays). The
+// iris texture is laid flat across the eye, centred on the line the eye looks along; the white drawn before
+// shows around it.
+static void SrcDrawIris(const srcmodel_t *s, const srceyeball_t *eye, const srcmaterial_t *mat, float (*bones)[3][4], int n)
+{
+	if (eye->bone < 0 || eye->bone >= s->numbones || eye->iris_scale == 0)
+		return;
+	float (*b)[4] = bones[eye->bone];
+	vec3_t org, up, fwd, right;
+	for (int j = 0; j < 3; j++) {
+		org[j] = DotProduct(eye->org, b[j]) + b[j][3];
+		up[j] = DotProduct(eye->up, b[j]);
+		fwd[j] = DotProduct(eye->forward, b[j]);
+	}
+	// straight ahead, turned by the eye's own small offset; then square the axes up around that line
+	CrossProduct(fwd, up, right);
+	VectorNormalize(right);
+	VectorMA(fwd, eye->zoffset, right, fwd);
+	VectorNormalize(fwd);
+	CrossProduct(fwd, up, right);
+	VectorNormalize(right);
+	CrossProduct(right, fwd, up);
+	VectorNormalize(up);
+	float scale = eye->iris_scale;
+	for (int t = 0; t < n; t++) {
+		vec3_t d;
+		VectorSubtract(arr_xyz + t * 3, org, d);
+		arr_st[t * 2 + 0] = 0.5f - scale * DotProduct(d, right);
+		arr_st[t * 2 + 1] = 0.5f - scale * DotProduct(d, up);
+		// nothing on the half of the ball that faces into the head
+		if (DotProduct(d, fwd) < 0)
+			arr_rgba[t * 4 + 3] = 0;
+	}
+	glBindTexture(GL_TEXTURE_2D, mat->iris->id);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDepthMask(GL_FALSE);
+	glDrawArrays(GL_TRIANGLES, 0, n);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+}
+
+// The dynamic lights' own passes over a Source mesh that was just drawn (its corners are in the arrays): as
+// DrawLightPasses does for GoldSrc models, with the material's bump map and shine map
+static void SrcDrawLightPasses(const srcmaterial_t *mat, const srcmesh_t *mesh, const studiolight_t *light)
+{
+	int n = mesh->numindices;
+	qboolean bump = r_source_bumpmaps->value != 0;
+	if (bump)
+		SrcMat_LoadBump((srcmaterial_t *)mat);
+	const gltexture_t *normalmap = bump ? mat->normalmap : NULL, *specmap = bump ? mat->specmap : NULL;
+	for (int t = 0; t < n; t++)
+		VectorCopy(xnorms[mesh->indices[t]], arr_norm + t * 3);
+	if (normalmap) {
+		for (int t = 0; t < n; t += 3) {
+			// which way the texture's "down" runs across this triangle, to tell the bump map's up from down
+			const float *p0 = arr_xyz + t * 3, *p1 = p0 + 3, *p2 = p0 + 6;
+			const float *t0 = arr_st + t * 2, *t1 = t0 + 2, *t2 = t0 + 4;
+			vec3_t e1, e2, tan, bit;
+			VectorSubtract(p1, p0, e1);
+			VectorSubtract(p2, p0, e2);
+			float du1 = t1[0] - t0[0], dv1 = t1[1] - t0[1], du2 = t2[0] - t0[0], dv2 = t2[1] - t0[1];
+			float det = du1 * dv2 - du2 * dv1;
+			if (fabsf(det) < 1e-12f) {
+				VectorCopy(e1, tan);
+				VectorClear(bit);
+			} else {
+				for (int i = 0; i < 3; i++) {
+					tan[i] = (e1[i] * dv2 - e2[i] * dv1) / det;
+					bit[i] = (e2[i] * du1 - e1[i] * du2) / det;
+				}
+			}
+			for (int c = 0; c < 3; c++) {
+				const float *nrm = arr_norm + (t + c) * 3;
+				float *out = arr_tan + (t + c) * 4;
+				// the model's own smooth direction along the texture where it has one, else the triangle's
+				const float *along = src_tangents ? xtans[mesh->indices[t + c]] : tan;
+				VectorMA(along, -DotProduct(along, nrm), nrm, out);
+				if (VectorNormalize(out) < 1e-6f) {
+					vec3_t any = { fabsf(nrm[2]) < 0.9f ? 0.0f : 1.0f, 0, fabsf(nrm[2]) < 0.9f ? 1.0f : 0.0f };
+					CrossProduct(any, nrm, out);
+					VectorNormalize(out);
+				}
+				vec3_t cr;
+				CrossProduct(nrm, out, cr);
+				out[3] = DotProduct(cr, bit) > 0 ? -1.0f : 1.0f;
+			}
+		}
+	}
+	glEnableClientState(GL_NORMAL_ARRAY);
+	glNormalPointer(GL_FLOAT, 0, arr_norm);
+	qglClientActiveTexture(GL_TEXTURE2);
+	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	if (normalmap)
+		glTexCoordPointer(4, GL_FLOAT, 0, arr_tan);
+	else
+		glTexCoordPointer(3, GL_FLOAT, 0, arr_norm);   // unused without a normal map; anything valid
+	qglClientActiveTexture(GL_TEXTURE0);
+	R_ModernBeginLights(mat->gl->id, normalmap, specmap, r_refdef.origin, NULL);
+	for (int i = 0; i < light->numlights; i++) {
+		R_ModernSetLight(light->lights[i]);
+		glDrawArrays(GL_TRIANGLES, 0, n);
+	}
+	R_ModernEndLights();
+}
+
+static void SrcCasterGeometry(rentity_t *e, void (*emit)(const float *xyz, const float *st, int n, const gltexture_t *masked))
+{
+	const srcmodel_t *s = e->model->studio.source;
+	float (*bones)[3][4];
+	R_StudioSetupBones(e, &bones);
+	EnsureArrays(s->numverts, s->numverts, SrcMaxIndices(s) / 3);
+	SrcTransformVerts(s, bones, SrcMouth(e));
+	for (int i = 0; i < s->numbodyparts; i++) {
+		const srcsubmodel_t *sm = SrcBodyChoice(s, e, i);
+		for (int k = 0; sm && k < sm->nummeshes; k++) {
+			const srcmesh_t *mesh = &sm->meshes[k];
+			const srcmaterial_t *mat = SrcMeshMaterial(s, e, mesh);
+			if (!mat || !mesh->numindices || SrcSeeThrough(mat))
+				continue;
+			for (int t = 0; t < mesh->numindices; t++) {
+				unsigned v = mesh->indices[t];
+				VectorCopy(xverts[v], arr_xyz + t * 3);
+				arr_st[t * 2 + 0] = s->verts[v].st[0];
+				arr_st[t * 2 + 1] = s->verts[v].st[1];
+			}
+			qboolean masked = (mat->flags & SMAT_ALPHATEST) && (mat->gl->flags & TF_ALPHA);
+			emit(arr_xyz, arr_st, mesh->numindices, masked ? mat->gl : NULL);
+		}
+	}
+}
+
+static void SrcDrawModel(rentity_t *e)
+{
+	const srcmodel_t *s = e->model->studio.source;
+	float (*bones)[3][4];
+	R_StudioSetupBones(e, &bones);
+
+	studiolight_t light;
+	SetupLighting(e, &light);
+	light.alpha = 1;
+
+	qboolean ent_blend = false, ent_add = false;
+	switch (e->rendermode) {
+	case kRenderTransColor:
+	case kRenderTransTexture:
+		light.alpha = e->renderamt / 255.0f;
+		ent_blend = true;
+		break;
+	case kRenderGlow:
+	case kRenderTransAdd:
+		light.alpha = e->renderamt / 255.0f;
+		ent_blend = ent_add = true;
+		break;
+	}
+
+	EnsureArrays(s->numverts, s->numverts, SrcMaxIndices(s) / 3);
+	SrcTransformVerts(s, bones, SrcMouth(e));
+
+	glEnableClientState(GL_VERTEX_ARRAY);
+	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+	glEnableClientState(GL_COLOR_ARRAY);
+	glEnable(GL_TEXTURE_2D);
+	glVertexPointer(3, GL_FLOAT, 0, arr_xyz);
+	glTexCoordPointer(2, GL_FLOAT, 0, arr_st);
+	glColorPointer(4, GL_FLOAT, 0, arr_rgba);
+
+	// solid meshes first, then the see-through ones over them
+	for (int pass = 0; pass < 2; pass++)
+		for (int i = 0; i < s->numbodyparts; i++) {
+			const srcsubmodel_t *sm = SrcBodyChoice(s, e, i);
+			for (int k = 0; sm && k < sm->nummeshes; k++) {
+				const srcmesh_t *mesh = &sm->meshes[k];
+				const srcmaterial_t *mat = SrcMeshMaterial(s, e, mesh);
+				if (!mat || !mesh->numindices || SrcSeeThrough(mat) != (pass == 1))
+					continue;
+				int texflags = (mat->flags & SMAT_UNLIT) ? STUDIO_NF_FULLBRIGHT : 0;
+				for (int t = 0; t < mesh->numindices; t++) {
+					unsigned v = mesh->indices[t];
+					VectorCopy(xverts[v], arr_xyz + t * 3);
+					arr_st[t * 2 + 0] = s->verts[v].st[0];
+					arr_st[t * 2 + 1] = s->verts[v].st[1];
+					float *c = arr_rgba + t * 4;
+					LightNormal(&light, xnorms[v], texflags, c);
+					c[3] = light.alpha;
+				}
+				glBindTexture(GL_TEXTURE_2D, mat->gl->id);
+				qboolean masked = (mat->flags & SMAT_ALPHATEST) && (mat->gl->flags & TF_ALPHA);
+				qboolean additive = ent_add || (mat->flags & SMAT_ADDITIVE);
+				qboolean blend = ent_blend || pass == 1;
+				if (masked) {
+					glEnable(GL_ALPHA_TEST);
+					glAlphaFunc(GL_GREATER, 0.5f);
+				}
+				if (blend) {
+					glEnable(GL_BLEND);
+					glBlendFunc(GL_SRC_ALPHA, additive ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
+					if (additive || pass == 1)
+						glDepthMask(GL_FALSE);
+				}
+				glDrawArrays(GL_TRIANGLES, 0, mesh->numindices);
+				// modern: each dynamic light adds its own per-pixel pass over the solid meshes
+				if (light.numlights && !blend && !texflags)
+					SrcDrawLightPasses(mat, mesh, &light);
+				if (masked)
+					glDisable(GL_ALPHA_TEST);
+				if (blend) {
+					glDisable(GL_BLEND);
+					glDepthMask(GL_TRUE);
+				}
+				if (mesh->eyeball >= 0 && mat->iris && !blend)
+					SrcDrawIris(s, &sm->eyeballs[mesh->eyeball], mat, bones, mesh->numindices);
+			}
+		}
+
+	glDisableClientState(GL_COLOR_ARRAY);
+	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+	glDisableClientState(GL_VERTEX_ARRAY);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glColor4f(1, 1, 1, 1);
+}
+
 // Shadow pass: the posed model's triangles in world space, mesh by mesh, to emit. Masked meshes come with their
 // texture and coordinates (for the alpha test); additive ones are left out, light goes through them.
 void R_StudioCasterGeometry(rentity_t *e, void (*emit)(const float *xyz, const float *st, int n, const gltexture_t *masked))
 {
 	model_t *m = e->model;
+	if (m->studio.source) {
+		SrcCasterGeometry(e, emit);
+		return;
+	}
 	const studiohdr_t *h = m->studio.hdr;
 	const studiohdr_t *th = m->studio.texhdr;
 	float (*bones)[3][4];
@@ -715,6 +1155,10 @@ void R_StudioCasterGeometry(rentity_t *e, void (*emit)(const float *xyz, const f
 void R_StudioDrawModel(rentity_t *e)
 {
 	model_t *m = e->model;
+	if (m->studio.source) {
+		SrcDrawModel(e);
+		return;
+	}
 	const studiohdr_t *h = m->studio.hdr;
 	float (*bones)[3][4];
 	R_StudioSetupBones(e, &bones);
@@ -781,12 +1225,28 @@ void R_StudioDrawModel(rentity_t *e)
 	glColor4f(1, 1, 1, 1);
 }
 
+// The field of view (horizontal, at 4:3) a model is drawn with as the view model, or 0 for the world's.
+// Source view models are built for a narrower view than Half-Life's 90 and look small and stretched in it.
+float R_StudioViewModelFov(const model_t *m)
+{
+	const srcmodel_t *s = m && m->type == mod_studio ? m->studio.source : NULL;
+	if (!s)
+		return 0;
+	float f = s->viewfov > 0 ? s->viewfov : r_viewmodel_fov_source->value;
+	return f >= 10 && f <= 150 ? f : 0;
+}
+
 void R_StudioInit(void)
 {
+	r_source_bumpmaps = Cvar_Get("r_source_bumpmaps", "1", FCVAR_ARCHIVE, "modern: Source models use their bump and shine maps under dynamic lights");
+	r_viewmodel_fov_source = Cvar_Get("r_viewmodel_fov_source", "54", FCVAR_ARCHIVE, "field of view Source view models are drawn with (Half-Life 2 uses 54); 0 = the world's");
 	r_studio_lambert = Cvar_Get("r_studio_lambert", "1.5", 0, "how far model lighting wraps around the sides (GoldSrc: 1.5)");
 	// GoldSrc's split: a tenth of the light reaches every side, the rest comes from above
 	r_studio_ambient = Cvar_Get("r_studio_ambient", "0.1", 0, "share of the floor light that lights every side of a model");
 	r_studio_shade = Cvar_Get("r_studio_shade", "0.9", 0, "share of the floor light that comes from above");
+	src_headtest = Cvar_Get("src_headtest", "0", 0, "degrees every Source model's head is turned (positive = to its left); 0 = off: the game turns it");
+	src_mouthtest = Cvar_Get("src_mouthtest", "0", 0, "0..1 holds every Source model's mouth open that far (0 = off: the mouth follows speech)");
+	src_posetest = Cvar_Get("src_posetest", "", 0, "\"<pose parameter> <value>\" forces it on every Source model (move_yaw 90, aim_pitch -45); empty = off");
 	r_fullbright_ref = Cvar_Get("r_fullbright", "0", 0, "1 = no lightmaps");
 	r_modern_viewmodel = Cvar_Get("r_modern_viewmodel", "1", FCVAR_ARCHIVE, "modern: the gun in your hands gets per-pixel dynamic light (0 = classic's)");
 }

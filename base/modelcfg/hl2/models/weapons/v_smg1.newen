@@ -1,0 +1,5 @@
+// Half-Life 2's SMG in place of Half-Life's MP5:
+//   mdl_replace models/v_9mmAR.mdl hl2:models/weapons/v_smg1.mdl
+// The client plays a weapon's animations by number, so the first sequences follow the MP5's order:
+// long idle, idle, grenade, reload, deploy, shoot, shoot, shoot
+order idle01 idle01 altfire reload draw fire01 fire02 fire03

@@ -1,0 +1,4 @@
+// Half-Life 2's shotgun in place of Half-Life's:
+//   mdl_replace models/v_shotgun.mdl hl2:models/weapons/v_shotgun.mdl
+// idle, fire, fire both barrels, reload (one shell), pump, start reload, draw, holster, idle 4, deep idle
+order idle01 fire01 altfire reload2 pump reload1 draw holster idle01 idle01

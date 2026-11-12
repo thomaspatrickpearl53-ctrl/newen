@@ -1,10 +1,10 @@
 # newen
 
-A Half-Life (GoldSrc-compatible) engine with Lua built into the engine. Written from scratch in C, 32-bit, for Windows.
+A Half-Life (GoldSrc-compatible) engine with Lua built into the engine. Written from scratch in C, 32-bit, for Windows and Linux.
 "newen" is a placeholder name.
 
 You need your own copy of Half-Life (Steam). newen contains no Valve code or game files: it loads the game's own
-files and DLLs from your install. Building needs Visual Studio (x86 C compiler); a prebuilt Windows build is on the
+files and DLLs from your install. Building needs Visual Studio (x86 C compiler) on Windows, or gcc with 32-bit libraries on Linux; a prebuilt Windows build is on the
 Releases page: unzip it anywhere and run `newen.exe`.
 
 ## Build and run
@@ -13,6 +13,17 @@ Releases page: unzip it anywhere and run `newen.exe`.
 build.bat
 bin\newen.exe
 ```
+
+On Linux (Arch names; Debian/Ubuntu need `gcc-multilib` and `libsdl2-dev:i386`):
+
+```
+sudo pacman -S cmake ninja lib32-gcc-libs lib32-sdl2-compat lib32-mesa   # lib32-nvidia-utils on NVIDIA
+./build.sh
+bin/newen
+```
+
+It runs the Linux Half-Life from Steam (`hl.so`, `client.so`, `vgui.so`). On its first start it starts itself again
+with the Half-Life folder added to `LD_LIBRARY_PATH`, because `client.so` looks for `vgui.so` there.
 
 It finds Half-Life through Steam on its own, or you can start it with `-basedir "C:\path\to\Half-Life"`. Other
 options: `-game <folder>` (default `valve`), `-hd` (use the `_hd` content folders), `-dev` (developer messages), and
@@ -83,6 +94,18 @@ a map's or a model's own textures for trying it out.
   (`r_modern_viewmodel 0` gives the gun classic's). See-through models and brushes (glass) keep classic's dynamic
   light.
 
+## Main menu
+
+newen starts in Half-Life's own main menu: the game's `cl_dlls/gameui.so` (`GameUI.dll` on Windows) running on
+Half-Life's `vgui2`, as in the Steam game, so New game, Load/Save game, Options, the server browser, Create server
+and the Loading dialog are Valve's own. Escape opens it during a game (which pauses) and closes it again; Resume
+game, Leave game and Quit work as in Half-Life. `` ` `` still opens newen's console on top.
+
+It needs Steam running (otherwise newen starts in the console). `gameui 0` (from the next start) or `-nogameui`
+turns the menu off. The Load and Save dialogs show saves made by this version of newen; older ones load with
+`load <name>`. Joining servers doesn't work yet (no network play), and options for things newen doesn't have yet do
+nothing. `togglemenu` / `gameui_activate` / `gameui_hide` show and hide it from the console.
+
 ## Game DLL (server)
 
 newen loads the mod's game DLL (`gamedll` in `liblist.gam`, so `valve/dlls/hl.dll` for Half-Life) through the
@@ -132,6 +155,57 @@ and animate. Until the game DLL runs, maps show what they can on their own: enti
 - Lighting: `r_studio_ambient`, `r_studio_shade`, `r_studio_lambert`. `r_drawentities 0` hides models, sprites and
   brush entities.
 
+### Source models (Half-Life 2's format, in progress)
+newen is learning to use Source `.mdl` files (versions 44-48, with their `.vvd`, `.vtx`, `.vmt` and `.vtf` files)
+wherever a Half-Life model works. So far they **load, draw, animate and work as NPC models**: the game DLL
+gets their activities, events, walking speed, attachments and hitboxes; characters have eyes, turn their
+heads, open their mouths to speech and aim; view models work; in the modern renderer they take per-pixel
+dynamic lights with their own bump and shine maps (`r_source_bumpmaps 0` turns those maps off). Source
+characters have no death animations of their own (they ragdoll in Half-Life 2). The plan and its progress are
+in `docs/SOURCE_MDL_PLAN.md`.
+
+- **Settings file per model**: `modelcfg/<model path>.newen` in any game folder or newen's `base/`
+  (`hl2:models/combine_soldier.mdl` reads `modelcfg/hl2/models/combine_soldier.newen`). One setting a line:
+  `activity <ACT_NAME> <sequence>` (this sequence answers that Half-Life activity),
+  `sequence <name> <sequence>` (it also answers to that name, for game code that asks by name),
+  `event <number> <number>` (renumber an animation event), `blend <0-1> <pose parameter> [reverse]` (what the
+  game's aim blend drives), `controller <0-3> <pose parameter> [reverse]`, `head <bone> [reverse]` (the bone
+  the game's head turn moves), `mouth <bone> <x|y|z> <degrees>` (a jaw bone, for models without the jaw flex).
+  `mdlinfo` shows what a model has to offer (sequences, events, pose parameters). newen ships one as an
+  example: with `mdl_replace models/hgrunt.mdl hl2:models/combine_soldier.mdl`, Half-Life's grunts are Combine
+  soldiers.
+  For view models there's also `order <sequence> <sequence> ...` (the client plays weapon animations by
+  number, so the first sequences must follow the Half-Life weapon's order) and `viewmodel_fov <degrees>`.
+- **Half-Life 2 weapons in your hands**: newen ships the settings for four. Put these in a cfg and load a map:
+  `mdl_replace models/v_9mmAR.mdl hl2:models/weapons/v_smg1.mdl`,
+  `mdl_replace models/v_9mmhandgun.mdl hl2:models/weapons/v_pistol.mdl`,
+  `mdl_replace models/v_crowbar.mdl hl2:models/weapons/v_crowbar.mdl`,
+  `mdl_replace models/v_shotgun.mdl hl2:models/weapons/v_shotgun.mdl`.
+  Source view models are drawn with their own field of view, `r_viewmodel_fov_source` (54, as Half-Life 2;
+  0 = the same as the world).
+- `src_headtest <degrees>` and `src_mouthtest <0..1>` hold every Source model's head turned or mouth open, to
+  look at them.
+
+- `mdl_replace <model> <other model>` loads another model file wherever the first is asked for, from the next
+  map on: `mdl_replace models/zombie.mdl hl2:models/zombie/classic.mdl`, then `map c1a1a`.
+  `mdl_replace <model> ""` undoes it, `mdl_replace` alone lists them. It isn't saved; put it in a cfg.
+
+- `mdlinfo <model>` lists a Source model's animation files, pose parameters and sequences. Half-Life 2's humans
+  have `ragdoll` (a T-pose) as sequence 0, so name a sequence: `mdlview hl2:models/alyx.mdl idle01`.
+- `src_posetest "<pose parameter> <value>"` forces one pose parameter on every Source model, to look at blends
+  (`src_posetest "move_yaw 90"` with `run_all` strafes); `src_posetest ""` turns it off.
+
+- A Source model placed in a game folder's `models/` (materials under `materials/`) loads by its normal name.
+- Half-Life 2's own files are reached with the `hl2:` prefix: `mdlview hl2:models/props_c17/oildrum001.mdl`.
+  Half-Life 2 is found through Steam, or start with `-hl2dir <folder>`. It's only read, never written, and
+  nothing without the prefix ever comes from it (both games have a `models/barney.mdl`).
+- `srcfs_find <path or pattern>` shows where a file comes from (`srcfs_find hl2:models/barney*`);
+  `srcmat_dump <material>` prints a material's settings and writes its texture to
+  `bin/userdata/<game>/srcdump/` as a TGA.
+- Limits now: model names are at most 63 characters including `hl2:` (16 of Half-Life 2's 2209 models are
+  longer); refraction materials (force fields) aren't drawn; no normal maps, no per-pixel dynamic lights on
+  Source models yet.
+
 Settings: `fov` (Hor+ widescreen), `r_texturemode trilinear|bilinear|nearest` and `r_anisotropy` (then
 `r_applyfilters`), `r_texgamma` and `r_lightgamma` (brightness curves, applied on map load), `r_wateralpha`,
 `r_fullbright`, `r_lightmap`, `r_novis`, `r_speeds`.
@@ -144,8 +218,9 @@ same from the console; `levelstates` lists the maps this game remembers. `map` s
 
 ## Saved games
 
-`save [name]` and `load [name]` (F6 and F9 quick save and load, as "quick"); every level change autosaves; dying and
-pressing fire loads the last save. Saves go to `bin/userdata/<game>/save/`; `saves` lists them.
+`save [name]` and `load [name]` (F6 and F9 quick save and load, as "quick"), or the main menu's Save game and Load
+game; every level change autosaves; dying and pressing fire loads the last save. Saves go to
+`bin/userdata/<game>/save/`; `saves` lists them.
 
 ## Sound
 
@@ -191,7 +266,7 @@ for as long as the sound plays. Only sounds loud enough to hear where you stand 
 
 ## Console
 
-`` ` `` opens the console. Tab completes, Up and Down walk through history, PgUp/PgDn and the mouse wheel scroll,
+`` ` `` opens the console (Escape opens the main menu). Tab completes, Up and Down walk through history, PgUp/PgDn and the mouse wheel scroll,
 Ctrl+L clears it. Useful commands: `cmdlist`, `cvarlist`, `find <text>`, `path`, `screenshot`, `condump`,
 `vid_restart`, `cl_showfps 1`, `fps_max`.
 
@@ -256,7 +331,8 @@ Half-Life map to it (and can move it, for testing). The map compiler is a separa
 
 Closed captions are done too (see above).
 
-Then: Jolt physics, lights and shadows, particles, dev tools; Half-Life 2 maps (`docs/SOURCE_PLAN.md`, planned); VGUI2; more games
+Then: Jolt physics, lights and shadows, particles, dev tools; Half-Life 2 maps (`docs/SOURCE_PLAN.md`, planned); the rest of
+VGUI2 (the main menu already runs on it); more games
 (Opposing Force, Blue Shift, CS 1.6, Cry of Fear); co-op, terrain, 64-bit, Linux.
 
 ## Licence

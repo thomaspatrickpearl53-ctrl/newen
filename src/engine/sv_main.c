@@ -8,9 +8,6 @@
 //
 // Each frame the local player's input runs through the game's player movement (sv_pmove.c), then
 // every other entity moves and thinks (sv_phys.c).
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
 #include "server.h"
 
 server_t          sv;
@@ -240,7 +237,7 @@ void SV_SetMinMaxSize(edict_t *e, const vec3_t mins, const vec3_t maxs)
 
 void *SV_GetProcAddress(const char *name)
 {
-	return sv_game_dll ? (void *)GetProcAddress((HMODULE)sv_game_dll, name) : NULL;
+	return Sys_GetProcAddress(sv_game_dll, name);
 }
 
 ENTITYINIT SV_GetEntityInit(const char *classname)
@@ -253,20 +250,7 @@ const char *SV_NameForFunction(unsigned function)
 {
 	if (!sv_game_dll)
 		return NULL;
-	unsigned char *base = (unsigned char *)sv_game_dll;
-	IMAGE_DOS_HEADER *dos = (IMAGE_DOS_HEADER *)base;
-	IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
-	IMAGE_DATA_DIRECTORY *dir = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
-	if (!dir->VirtualAddress)
-		return NULL;
-	IMAGE_EXPORT_DIRECTORY *exp = (IMAGE_EXPORT_DIRECTORY *)(base + dir->VirtualAddress);
-	DWORD *names = (DWORD *)(base + exp->AddressOfNames);
-	WORD *ordinals = (WORD *)(base + exp->AddressOfNameOrdinals);
-	DWORD *funcs = (DWORD *)(base + exp->AddressOfFunctions);
-	for (DWORD i = 0; i < exp->NumberOfNames; i++)
-		if ((unsigned)(uintptr_t)(base + funcs[ordinals[i]]) == function)
-			return (const char *)(base + names[i]);
-	return NULL;
+	return Sys_ExportName(sv_game_dll, (void *)(uintptr_t)function);
 }
 
 static char *LiblistValue(const char *key)
@@ -295,9 +279,15 @@ static char *LiblistValue(const char *key)
 
 static qboolean LoadGameDLL(void)
 {
+#ifdef _WIN32
 	const char *rel = LiblistValue("gamedll");
 	if (!rel)
 		rel = "dlls/hl.dll";
+#else
+	const char *rel = LiblistValue("gamedll_linux");
+	if (!rel)
+		rel = "dlls/hl.so";
+#endif
 	char fixed[MAX_OSPATH];
 	Q_strncpy(fixed, rel, sizeof(fixed));
 	for (char *s = fixed; *s; s++)
@@ -307,19 +297,19 @@ static qboolean LoadGameDLL(void)
 		Con_Warnf("Game DLL %s not found; maps load without game logic\n", fixed);
 		return false;
 	}
-	HMODULE dll = LoadLibraryA(game_dll_path);
+	void *dll = Sys_LoadLibrary(game_dll_path);
 	if (!dll) {
-		Con_Errorf("Couldn't load %s (error %lu)\n", game_dll_path, GetLastError());
+		Con_Errorf("Couldn't load %s (%s)\n", game_dll_path, Sys_LibraryError());
 		return false;
 	}
 	sv_game_dll = dll;
 
-	GIVEFNPTRSTODLL give = (GIVEFNPTRSTODLL)GetProcAddress(dll, "GiveFnptrsToDll");
+	GIVEFNPTRSTODLL give = (GIVEFNPTRSTODLL)Sys_GetProcAddress(dll, "GiveFnptrsToDll");
 	if (!give)
-		give = (GIVEFNPTRSTODLL)GetProcAddress(dll, "_GiveFnptrsToDll@8");
+		give = (GIVEFNPTRSTODLL)Sys_GetProcAddress(dll, "_GiveFnptrsToDll@8");
 	if (!give) {
 		Con_Errorf("%s isn't a GoldSrc game DLL (no GiveFnptrsToDll)\n", game_dll_path);
-		FreeLibrary(dll);
+		Sys_FreeLibrary(dll);
 		sv_game_dll = NULL;
 		return false;
 	}
@@ -329,8 +319,8 @@ static qboolean LoadGameDLL(void)
 
 	memset(&gEntityInterface, 0, sizeof(gEntityInterface));
 	int version = INTERFACE_VERSION;
-	APIFUNCTION2 api2 = (APIFUNCTION2)GetProcAddress(dll, "GetEntityAPI2");
-	APIFUNCTION api = (APIFUNCTION)GetProcAddress(dll, "GetEntityAPI");
+	APIFUNCTION2 api2 = (APIFUNCTION2)Sys_GetProcAddress(dll, "GetEntityAPI2");
+	APIFUNCTION api = (APIFUNCTION)Sys_GetProcAddress(dll, "GetEntityAPI");
 	qboolean ok = false;
 	if (api2)
 		ok = api2(&gEntityInterface, &version);
@@ -338,12 +328,12 @@ static qboolean LoadGameDLL(void)
 		ok = api(&gEntityInterface, INTERFACE_VERSION);
 	if (!ok) {
 		Con_Errorf("%s: GetEntityAPI failed (interface version %d)\n", game_dll_path, version);
-		FreeLibrary(dll);
+		Sys_FreeLibrary(dll);
 		sv_game_dll = NULL;
 		return false;
 	}
 	memset(&gNewDLLFunctions, 0, sizeof(gNewDLLFunctions));
-	NEW_DLL_FUNCTIONS_FN newapi = (NEW_DLL_FUNCTIONS_FN)GetProcAddress(dll, "GetNewDLLFunctions");
+	NEW_DLL_FUNCTIONS_FN newapi = (NEW_DLL_FUNCTIONS_FN)Sys_GetProcAddress(dll, "GetNewDLLFunctions");
 	if (newapi) {
 		int nv = NEW_DLL_FUNCTIONS_VERSION;
 		if (!newapi(&gNewDLLFunctions, &nv))
@@ -606,19 +596,26 @@ void SV_Frame(double frametime)
 
 // ---------------------------------------------------------------- rendering bridge
 
-// Walking monsters move in steps, when they think (about 10 times a second). Like GoldSrc's client,
-// the renderer slides them from where they were drawn to the new place over the time between steps,
-// and turns them the same way. A big jump (a teleport, a respawn) isn't slid.
+// Walking monsters move in steps, when they think (about 10 times a second). As GoldSrc's client does
+// (cl_interp), they're drawn r_steplerp_delay seconds in the past, between the two steps around that moment,
+// so they move at an even speed. A step after a pause takes one normal step's time; a big jump (a teleport,
+// a respawn) isn't slid.
+#define STEP_HISTORY 4
+
+typedef struct {
+	double time;
+	vec3_t org, ang;
+} stepsample_t;
+
 typedef struct {
 	int    serial;
-	vec3_t from, to, afrom, ato;
-	double start, dur, changed;
-	qboolean valid;
+	int    count;                     // newest last
+	stepsample_t s[STEP_HISTORY];
 } steplerp_t;
 
 static steplerp_t *steplerps;
 static int steplerps_cap;
-static cvar_t *r_steplerp;
+static cvar_t *r_steplerp, *r_steplerp_delay;
 
 static float AngleDelta(float a, float b)
 {
@@ -628,15 +625,13 @@ static float AngleDelta(float a, float b)
 	return d;
 }
 
-static void StepLerpAt(const steplerp_t *l, double now, vec3_t org, vec3_t ang)
+static void StepReset(steplerp_t *l, const edict_t *e, double now)
 {
-	float f = l->dur > 0 ? (float)((now - l->start) / l->dur) : 1;
-	if (f > 1) f = 1;
-	if (f < 0) f = 0;
-	for (int k = 0; k < 3; k++) {
-		org[k] = l->from[k] + (l->to[k] - l->from[k]) * f;
-		ang[k] = l->afrom[k] + AngleDelta(l->afrom[k], l->ato[k]) * f;
-	}
+	l->serial = e->serialnumber;
+	l->count = 1;
+	l->s[0].time = now;
+	VectorCopy(e->v.origin, l->s[0].org);
+	VectorCopy(e->v.angles, l->s[0].ang);
 }
 
 static void StepLerp(int i, const edict_t *e, vec3_t org, vec3_t ang)
@@ -648,34 +643,44 @@ static void StepLerp(int i, const edict_t *e, vec3_t org, vec3_t ang)
 	}
 	steplerp_t *l = &steplerps[i];
 	double now = sv.time;
-	if (!l->valid || l->serial != e->serialnumber || now < l->changed) {
-		l->valid = true;
-		l->serial = e->serialnumber;
-		VectorCopy(e->v.origin, l->from);
-		VectorCopy(e->v.origin, l->to);
-		VectorCopy(e->v.angles, l->afrom);
-		VectorCopy(e->v.angles, l->ato);
-		l->start = l->changed = now;
-		l->dur = 0;
-	}
-	if (e->v.origin[0] != l->to[0] || e->v.origin[1] != l->to[1] || e->v.origin[2] != l->to[2] ||
-		e->v.angles[0] != l->ato[0] || e->v.angles[1] != l->ato[1] || e->v.angles[2] != l->ato[2]) {
-		vec3_t cur, curang, d;
-		StepLerpAt(l, now, cur, curang);
-		VectorSubtract(e->v.origin, cur, d);
+	stepsample_t *last = l->count ? &l->s[l->count - 1] : NULL;
+	if (!last || l->serial != e->serialnumber || now < last->time) {
+		StepReset(l, e, now);
+	} else if (!VectorCompare(e->v.origin, last->org) || !VectorCompare(e->v.angles, last->ang)) {
+		vec3_t d;
+		VectorSubtract(e->v.origin, last->org, d);
 		if (DotProduct(d, d) > 128 * 128 || (e->v.effects & EF_NOINTERP)) {
-			VectorCopy(e->v.origin, cur);
-			VectorCopy(e->v.angles, curang);
+			StepReset(l, e, now);
+		} else {
+			if (l->count == STEP_HISTORY) {
+				memmove(&l->s[0], &l->s[1], sizeof(stepsample_t) * (STEP_HISTORY - 1));
+				l->count--;
+			}
+			stepsample_t *n = &l->s[l->count++];
+			n->time = now;
+			VectorCopy(e->v.origin, n->org);
+			VectorCopy(e->v.angles, n->ang);
 		}
-		VectorCopy(cur, l->from);
-		VectorCopy(curang, l->afrom);
-		VectorCopy(e->v.origin, l->to);
-		VectorCopy(e->v.angles, l->ato);
-		double gap = now - l->changed;
-		l->dur = gap < 0.05 ? 0.05 : gap > 0.25 ? 0.25 : gap;
-		l->start = l->changed = now;
 	}
-	StepLerpAt(l, now, org, ang);
+
+	// the two samples around the time drawn; before the oldest, the oldest; after the newest, the newest
+	double t = now - r_steplerp_delay->value;
+	int k = l->count - 1;
+	while (k > 0 && l->s[k].time > t)
+		k--;
+	const stepsample_t *from = &l->s[k], *to = k + 1 < l->count ? &l->s[k + 1] : from;
+	// a step slides over at most the delay (a monster thinks every 0.1 s): after a pause it then starts where
+	// it is drawn instead of halfway along
+	double start = from->time;
+	if (to->time - start > r_steplerp_delay->value)
+		start = to->time - r_steplerp_delay->value;
+	float f = to->time > start ? (float)((t - start) / (to->time - start)) : 1;
+	if (f < 0) f = 0;
+	if (f > 1) f = 1;
+	for (int j = 0; j < 3; j++) {
+		org[j] = from->org[j] + (to->org[j] - from->org[j]) * f;
+		ang[j] = from->ang[j] + AngleDelta(from->ang[j], to->ang[j]) * f;
+	}
 }
 
 void R_ClearBrushEntities(void);
@@ -896,6 +901,7 @@ void SV_Init(void)
 	sv_bounce = Cvar_Get("sv_bounce", "1", FCVAR_SERVER, "bounce factor for MOVETYPE_BOUNCE");
 	sv_maxedicts = Cvar_Get("sv_maxedicts", "2048", FCVAR_ARCHIVE, "edicts per map (GoldSrc: 900); applies on map load");
 	r_steplerp = Cvar_Get("r_steplerp", "1", FCVAR_ARCHIVE, "slides walking monsters between their steps (0 = draw them where the game has them)");
+	r_steplerp_delay = Cvar_Get("r_steplerp_delay", "0.1", FCVAR_ARCHIVE, "how far in the past walking monsters are drawn, in seconds (GoldSrc's cl_interp, 0.1)");
 	deathmatch = Cvar_Get("deathmatch", "0", FCVAR_SERVER, "deathmatch game");
 	coop = Cvar_Get("coop", "0", FCVAR_SERVER, "cooperative game");
 	teamplay = Cvar_Get("teamplay", "0", FCVAR_SERVER, "team deathmatch");
