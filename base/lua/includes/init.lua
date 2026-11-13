@@ -144,9 +144,11 @@ draw = {}
 TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER, TEXT_ALIGN_RIGHT = 0, 1, 2
 TEXT_ALIGN_TOP, TEXT_ALIGN_BOTTOM = 3, 4
 
--- draw.SimpleText(text, font, x, y, color, xalign, yalign); font is ignored for now
+-- draw.SimpleText(text, font, x, y, color, xalign, yalign); font: a name from surface.CreateFont, or the
+-- engine's own text for any other
 function draw.SimpleText(text, font, x, y, color, xalign, yalign)
 	text = tostring(text)
+	surface.SetFont(font or "")
 	local w, h = surface.GetTextSize(text)
 	if xalign == TEXT_ALIGN_CENTER then x = x - w / 2 elseif xalign == TEXT_ALIGN_RIGHT then x = x - w end
 	if yalign == TEXT_ALIGN_CENTER then y = y - h / 2 elseif yalign == TEXT_ALIGN_BOTTOM then y = y - h end
@@ -154,6 +156,16 @@ function draw.SimpleText(text, font, x, y, color, xalign, yalign)
 	surface.SetTextPos(x, y)
 	surface.DrawText(text)
 	return w, h
+end
+
+-- draw.DrawText(text, font, x, y, color, xalign): like SimpleText, over several lines ("\n")
+function draw.DrawText(text, font, x, y, color, xalign)
+	local lh = 0
+	for line in (tostring(text) .. "\n"):gmatch("(.-)\n") do
+		local _, h = draw.SimpleText(line, font, x, y + lh, color, xalign)
+		lh = lh + h
+	end
+	return lh
 end
 
 -- Rounding is not drawn yet; the box is square.
@@ -236,3 +248,29 @@ function isnumber(v) return type(v) == "number" end
 function istable(v) return type(v) == "table" end
 function isfunction(v) return type(v) == "function" end
 function isbool(v) return type(v) == "boolean" end
+
+---------------------------------------------------------------- cvars
+
+cvars = cvars or {}
+local cvar_callbacks = {}   -- [name][id] = fn
+
+-- cvars.AddChangeCallback(name, fn(name, old, new), [id]): runs whenever the cvar's value changes
+function cvars.AddChangeCallback(name, fn, id)
+	name = name:lower()
+	cvar_callbacks[name] = cvar_callbacks[name] or {}
+	cvar_callbacks[name][id or fn] = fn
+end
+
+function cvars.RemoveChangeCallback(name, id)
+	name = name:lower()
+	if cvar_callbacks[name] then cvar_callbacks[name][id] = nil end
+end
+
+function cvars._Changed(name, old, new)
+	local list = cvar_callbacks[name:lower()]
+	if not list then return end
+	for _, fn in pairs(list) do
+		local ok, err = pcall(fn, name, old, new)
+		if not ok then print("cvar callback for " .. name .. ": " .. tostring(err)) end
+	end
+end

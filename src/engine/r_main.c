@@ -49,9 +49,11 @@ static void SetupFrustum(void)
 // ---------------------------------------------------------------- view
 
 // GoldSrc's fov is horizontal for 4:3. Keep the 4:3 vertical angle and widen for wider screens (Hor+).
+static float view_fov;   // this frame's: the fov cvar, or what Lua's CalcView chose
+
 static void ComputeFov(void)
 {
-	float fx = fov->value;
+	float fx = view_fov > 0 ? view_fov : fov->value;
 	if (fx < 10) fx = 10;
 	if (fx > 170) fx = 170;
 	float aspect = vid_height ? (float)vid_width / vid_height : 4.0f / 3.0f;
@@ -140,6 +142,8 @@ void R_RenderView(void)
 	} else {
 		VectorCopy(cl_viewangles, r_refdef.angles);
 	}
+	// Lua's CalcView may move the camera and change the field of view for this frame
+	view_fov = LuaX_CalcView(r_refdef.origin, r_refdef.angles, fov->value);
 	AngleVectors(r_refdef.angles, r_refdef.forward, r_refdef.right, r_refdef.up);
 	ComputeFov();
 	SetupFrustum();
@@ -239,6 +243,7 @@ void R_LoadMap(const char *mapname, const char *oldmap, const char *landmark, qb
 
 	Lua_RunHookString("WorldUnloaded", current_map);
 	LuaR_ClearModels();
+	LuaX_MapChange();
 	GameUI_LoadingStarted(name);
 	// models belong to the map they were loaded for (as in GoldSrc)
 	CL_MapEnded();
@@ -296,6 +301,7 @@ static void Disconnect_f(void)
 		return;
 	Lua_RunHookString("WorldUnloaded", current_map);
 	LuaR_ClearModels();
+	LuaX_MapChange();
 	CL_MapEnded();
 	SV_Deactivate();
 	R_ClearEntities();

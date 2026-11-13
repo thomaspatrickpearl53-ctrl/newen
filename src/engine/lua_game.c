@@ -1028,6 +1028,7 @@ struct edict_s *LuaG_ToEdict(lua_State *L, int idx) { return ToEdict(L, idx); }
 struct edict_s *LuaG_CheckEdict(lua_State *L, int idx) { return CheckEdict(L, idx); }
 float *LuaG_CheckVec(lua_State *L, int idx) { return CheckVec(L, idx); }
 void LuaG_PushVector(lua_State *L, const float *v) { PushVector(L, v); }
+void LuaG_PushAngle(lua_State *L, const float *v) { PushAngle(L, v); }
 
 // adds methods to the Entity type
 void LuaG_AddEntityMethods(lua_State *L, const luaL_Reg *regs)
@@ -1191,6 +1192,7 @@ void LuaG_Open(lua_State *L)
 	SetIntGlobal(L, "IN_SPEED", IN_RUN);
 	LuaFX_Open(L);   // last: it adds to util and surface
 	LuaR_Open(L);
+	LuaX_Open(L);
 }
 
 // ---------------------------------------------------------------- hooks fired by the server
@@ -1353,6 +1355,7 @@ void LuaG_Tick(void)
 	int top = lua_gettop(L);
 	Lua_Hook("Tick", 0, 0);
 	lua_settop(L, top);
+	LuaX_Frame();
 }
 
 // PlayerCommand(ply, name, args): return true to keep the game from seeing it

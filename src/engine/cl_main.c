@@ -434,7 +434,11 @@ static int VGUI2DrawCharacterAdditive(int x, int y, int ch, int r, int g, int b,
 
 static void ConsolePrint(const char *s) { if (s) Con_Printf("%s", s); }
 
-static void CenterPrint(const char *s)
+void CL_CenterPrint(const char *s);
+static void CenterPrint(const char *s) { CL_CenterPrint(s); }
+
+// text in the middle of the screen for a few seconds (the client's CenterPrint, Lua's PrintMessage)
+void CL_CenterPrint(const char *s)
 {
 	Q_strncpy(center_text, s ? s : "", sizeof(center_text));
 	center_time = host_realtime;

@@ -104,6 +104,9 @@ int         SV_PrecacheSound(const char *name);
 int         SV_PrecacheGeneric(const char *name);
 unsigned short SV_PrecacheEvent(int type, const char *name);
 model_t    *SV_ModelForIndex(int index);
+int         SV_UserMsgIndex(const char *name);   // sv_engfuncs.c: 0 if the game has none by that name
+void        CL_QueueMessage(int type, const unsigned char *data, int len);   // cl_main.c: a message to client.dll
+void        CL_CenterPrint(const char *s);
 void        SV_SetMinMaxSize(edict_t *e, const vec3_t mins, const vec3_t maxs);
 void        SV_SetupRenderEntities(void);          // fills the renderer's lists from the edicts
 ENTITYINIT  SV_GetEntityInit(const char *classname);

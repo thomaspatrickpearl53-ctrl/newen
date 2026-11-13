@@ -915,6 +915,15 @@ const char *SV_UserMsgName(int type)
 	return (i >= 0 && i < usermsg_count) ? usermsg_names[i] : NULL;
 }
 
+// a user message's number by its name (the game registered it), or 0
+int SV_UserMsgIndex(const char *name)
+{
+	for (int i = 0; i < usermsg_count; i++)
+		if (!strcmp(usermsg_names[i], name))
+			return 64 + i;
+	return 0;
+}
+
 static int PF_RegUserMsg(const char *name, int size)
 {
 	for (int i = 0; i < usermsg_count; i++)

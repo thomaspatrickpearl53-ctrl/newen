@@ -531,16 +531,57 @@ static int l_DrawText(lua_State *Ls)
 {
 	CheckDrawing(Ls);
 	const char *s = luaL_checkstring(Ls, 1);
-	text_x += Draw_String(text_x, text_y, s, text_r, text_g, text_b, text_a);
+	// the font surface.SetFont chose, else the engine's own text
+	int w = LuaUI_DrawText(text_x, text_y, s, text_r, text_g, text_b, text_a);
+	text_x += w >= 0 ? w : Draw_String(text_x, text_y, s, text_r, text_g, text_b, text_a);
 	return 0;
 }
 
 static int l_GetTextSize(lua_State *Ls)
 {
 	const char *s = luaL_checkstring(Ls, 1);
-	lua_pushinteger(Ls, Draw_StringWidth(s));
-	lua_pushinteger(Ls, Draw_LineHeight());
+	int w, h;
+	if (!LuaUI_TextSize(s, &w, &h)) {
+		w = Draw_StringWidth(s);
+		h = Draw_LineHeight();
+	}
+	lua_pushinteger(Ls, w);
+	lua_pushinteger(Ls, h);
 	return 2;
+}
+
+// surface.SetMaterial(Material(...)) and surface.DrawTexturedRect(x, y, w, h) / DrawTexturedRectUV(x, y, w, h,
+// u0, v0, u1, v1): a picture, tinted by the draw colour
+static int surface_material = LUA_NOREF;
+
+static int l_SetMaterial(lua_State *Ls)
+{
+	luaL_checkudata(Ls, 1, "IMaterial");
+	luaL_unref(Ls, LUA_REGISTRYINDEX, surface_material);
+	lua_pushvalue(Ls, 1);
+	surface_material = luaL_ref(Ls, LUA_REGISTRYINDEX);
+	return 0;
+}
+
+static int TexturedRect(lua_State *Ls, float u0, float v0, float u1, float v1)
+{
+	CheckDrawing(Ls);
+	if (surface_material == LUA_NOREF)
+		return luaL_error(Ls, "surface.SetMaterial first");
+	float x = (float)luaL_checknumber(Ls, 1), y = (float)luaL_checknumber(Ls, 2);
+	float w = (float)luaL_checknumber(Ls, 3), h = (float)luaL_checknumber(Ls, 4);
+	lua_rawgeti(Ls, LUA_REGISTRYINDEX, surface_material);
+	unsigned int tex = LuaR_MaterialTexture(Ls, lua_gettop(Ls));
+	lua_pop(Ls, 1);
+	LuaUI_TexturedRect(tex, x, y, w, h, u0, v0, u1, v1, draw_r, draw_g, draw_b, draw_a);
+	return 0;
+}
+
+static int l_DrawTexturedRect(lua_State *Ls) { return TexturedRect(Ls, 0, 0, 1, 1); }
+static int l_DrawTexturedRectUV(lua_State *Ls)
+{
+	return TexturedRect(Ls, (float)luaL_checknumber(Ls, 5), (float)luaL_checknumber(Ls, 6),
+		(float)luaL_checknumber(Ls, 7), (float)luaL_checknumber(Ls, 8));
 }
 
 // ---------------------------------------------------------------- input
@@ -587,6 +628,44 @@ static int l_file_Read(lua_State *Ls)
 	lua_pushlstring(Ls, data, len);
 	Mem_Free(data);
 	return 1;
+}
+
+// file.Delete(path), file.CreateDir(path): in the write folder's data/, as file.Write
+static int l_file_Delete(lua_State *Ls)
+{
+	const char *path = luaL_checkstring(Ls, 1);
+	if (strstr(path, "..") || strchr(path, ':') || path[0] == '/' || path[0] == '\\')
+		return luaL_error(Ls, "file.Delete: bad path \"%s\"", path);
+	lua_pushboolean(Ls, remove(va("%s/data/%s", FS_WriteDir(), path)) == 0);
+	return 1;
+}
+
+static int l_file_CreateDir(lua_State *Ls)
+{
+	const char *path = luaL_checkstring(Ls, 1);
+	if (strstr(path, "..") || strchr(path, ':') || path[0] == '/' || path[0] == '\\')
+		return luaL_error(Ls, "file.CreateDir: bad path \"%s\"", path);
+	Sys_MakeDirs(va("%s/data/%s/", FS_WriteDir(), path));
+	return 0;
+}
+
+// a cvar's value changed: Lua's cvars.AddChangeCallback functions run (cvars._Changed in includes/init.lua)
+void Lua_CvarChanged(const char *name, const char *oldv, const char *newv)
+{
+	if (!L)
+		return;
+	int top = lua_gettop(L);
+	lua_getglobal(L, "cvars");
+	if (lua_istable(L, -1)) {
+		lua_getfield(L, -1, "_Changed");
+		if (lua_isfunction(L, -1)) {
+			lua_pushstring(L, name);
+			lua_pushstring(L, oldv);
+			lua_pushstring(L, newv);
+			Lua_Call(3, 0, "cvar change callback");
+		}
+	}
+	lua_settop(L, top);
 }
 
 static int l_file_Exists(lua_State *Ls)
@@ -727,9 +806,12 @@ static void OpenLibs(void)
 		{ "SetDrawColor", l_SetDrawColor }, { "SetTextColor", l_SetTextColor },
 		{ "SetTextPos", l_SetTextPos }, { "DrawRect", l_DrawRect },
 		{ "DrawOutlinedRect", l_DrawOutlinedRect }, { "DrawText", l_DrawText },
-		{ "GetTextSize", l_GetTextSize }, { NULL, NULL }
+		{ "GetTextSize", l_GetTextSize }, { "SetMaterial", l_SetMaterial },
+		{ "DrawTexturedRect", l_DrawTexturedRect }, { "DrawTexturedRectUV", l_DrawTexturedRectUV }, { NULL, NULL }
 	};
 	Register("surface", surface);
+	surface_material = LUA_NOREF;
+	LuaUI_Open(L);
 
 	static const luaL_Reg input[] = {
 		{ "IsKeyDown", l_IsKeyDown }, { "GetKeyName", l_GetKeyName }, { "GetKeyCode", l_GetKeyCode },
@@ -739,7 +821,7 @@ static void OpenLibs(void)
 
 	static const luaL_Reg file[] = {
 		{ "Read", l_file_Read }, { "Exists", l_file_Exists }, { "Write", l_file_Write },
-		{ "Find", l_file_Find }, { NULL, NULL }
+		{ "Find", l_file_Find }, { "Delete", l_file_Delete }, { "CreateDir", l_file_CreateDir }, { NULL, NULL }
 	};
 	Register("file", file);
 
@@ -941,6 +1023,8 @@ void Lua_DrawOverlay(void)
 		return;
 	in_draw = true;
 	RunHook("DrawOverlay", 0, 0);
+	lua_settop(L, 0);
+	RunHook("HUDPaint", 0, 0);   // Garry's Mod's name for the same thing
 	in_draw = false;
 	lua_settop(L, 0);
 }

@@ -178,7 +178,10 @@ void Cvar_DirectSet(cvar_t *var, const char *value)
 	}
 	if (!strcmp(var->string, value))
 		return;
+	char old[256];
+	Q_strncpy(old, var->string, sizeof(old));
 	SetString(var, value);
+	Lua_CvarChanged(var->name, old, var->string);
 }
 
 void Cvar_Set(const char *name, const char *value)

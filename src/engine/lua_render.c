@@ -153,7 +153,7 @@ static int cs_Remove(lua_State *L)   { csmodel_t *c = ToCS(L, 1, false); if (c) 
 static int cs_SetPos(lua_State *L)   { VectorCopy(LuaG_CheckVec(L, 2), ToCS(L, 1, true)->r.origin); return 0; }
 static int cs_GetPos(lua_State *L)   { LuaG_PushVector(L, ToCS(L, 1, true)->r.origin); return 1; }
 static int cs_SetAngles(lua_State *L) { VectorCopy(LuaG_CheckVec(L, 2), ToCS(L, 1, true)->r.angles); return 0; }
-static int cs_GetAngles(lua_State *L) { LuaG_PushVector(L, ToCS(L, 1, true)->r.angles); return 1; }
+static int cs_GetAngles(lua_State *L) { LuaG_PushAngle(L, ToCS(L, 1, true)->r.angles); return 1; }
 static int cs_SetBody(lua_State *L)  { ToCS(L, 1, true)->r.body = (int)luaL_checkinteger(L, 2); return 0; }
 static int cs_SetSkin(lua_State *L)  { ToCS(L, 1, true)->r.skin = (int)luaL_checkinteger(L, 2); return 0; }
 static int cs_SetNoDraw(lua_State *L) { ToCS(L, 1, true)->nodraw = lua_toboolean(L, 2); return 0; }
@@ -471,7 +471,7 @@ static int r_DrawSprite(lua_State *L)
 
 // render.GetViewPos(), render.GetViewAngles(): the camera of the frame being drawn
 static int r_GetViewPos(lua_State *L)    { LuaG_PushVector(L, r_refdef.origin); return 1; }
-static int r_GetViewAngles(lua_State *L) { LuaG_PushVector(L, r_refdef.angles); return 1; }
+static int r_GetViewAngles(lua_State *L) { LuaG_PushAngle(L, r_refdef.angles); return 1; }
 
 // Vector:ToScreen(): { x, y, visible } where the point is on screen, from the last frame's camera
 static int v_ToScreen(lua_State *L)

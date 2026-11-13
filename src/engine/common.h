@@ -342,6 +342,10 @@ void     Lua_Init(void);
 void     Lua_Shutdown(void);
 void     Lua_Frame(void);
 void     Lua_DrawOverlay(void);
+void     Lua_CvarChanged(const char *name, const char *oldv, const char *newv);   // cvars.AddChangeCallback
+void     LuaX_Frame(void);                  // lua_ext.c: KeyPress/KeyRelease, OnNPCKilled; each server frame
+void     LuaX_MapChange(void);
+float    LuaX_CalcView(float *origin, float *angles, float fov);   // CalcView hook; returns the fov to use
 void     LuaR_AddModels(void);              // lua_render.c: Lua's clientside models into this frame
 void     LuaR_ClearModels(void);            // map change
 void     LuaR_DrawHook(const char *name);   // PostDrawOpaque / PostDrawTranslucent, with render.* allowed

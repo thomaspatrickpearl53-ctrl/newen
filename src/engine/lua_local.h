@@ -19,11 +19,21 @@ struct edict_s *LuaG_ToEdict(lua_State *L, int idx);      // NULL if not a valid
 struct edict_s *LuaG_CheckEdict(lua_State *L, int idx);   // a Lua error if not
 float          *LuaG_CheckVec(lua_State *L, int idx);
 void            LuaG_PushVector(lua_State *L, const float *v);
+void            LuaG_PushAngle(lua_State *L, const float *v);
 void            LuaG_AddEntityMethods(lua_State *L, const luaL_Reg *regs);
 
 // lua_render.c: render.*, ClientsideModel, Material, Vector:ToScreen; opened by LuaG_Open
 void            LuaR_Open(lua_State *L);
 unsigned int    LuaR_MaterialTexture(lua_State *L, int idx);   // a Material's GL texture
+
+// lua_ext.c: the smaller entity/player calls and the KeyPress, OnNPCKilled, CalcView hooks; opened by LuaG_Open
+void            LuaX_Open(lua_State *L);
+// lua_ui.c: fonts and textured rectangles for surface.*; opened by the host after its surface table
+void            LuaUI_Open(lua_State *L);
+int             LuaUI_DrawText(float x, float y, const char *s, int r, int g, int b, int a);   // -1 = no font set
+qboolean        LuaUI_TextSize(const char *s, int *w, int *h);                                  // false = no font set
+void            LuaUI_TexturedRect(unsigned int tex, float x, float y, float w, float h, float u0, float v0, float u1,
+	float v1, int r, int g, int b, int a);
 
 // lua_fx.c: sound and effects; opened by LuaG_Open
 void            LuaFX_Open(lua_State *L);
