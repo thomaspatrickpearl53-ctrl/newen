@@ -956,6 +956,8 @@ GoldSrc header for the DLLs. Written fresh (NewenSource couldn't be found on the
     -Wconversion` and use nothing outside C11 and the engine's own helpers (no POSIX calls), but MSVC hasn't
     seen them. First thing on the Windows machine: `build.bat`, then the `mdlview hl2:...` and `mdl_replace`
     checks from README. `bin\basedir_hl2.txt` caches where Half-Life 2 was found.
+- **Release 0.3.0 (2026-11-13):** the finished Lua API plan (steps 1-7), built with `tools/make_release.sh` as
+  0.2.0 was (MinGW Windows build, not run on real Windows). Linux build checked on c1a0 before publishing.
 - **Release 0.2.0 and the MinGW Windows build (2026-11-12):** `tools/make_release.sh` builds both archives
   on Linux into `dist/` (ignored by git): `newen-<version>-linux-x86.tar.gz` from `build.sh`, and
   `newen-<version>-win32.zip` cross-built with `i686-w64-mingw32-gcc` into `build-mingw/`. The version is
