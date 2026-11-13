@@ -243,6 +243,9 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `cl_input.c` | 139 | **Temporary** (client.dll's job in GoldSrc): `+forward/+back/+moveleft/+moveright/+moveup/+movedown/+jump/+duck/+attack/+attack2/+use/+reload/+speed/+alt1/+showscores` and `impulse`, the `cl_*speed` cvars, `CL_CreateCmd` builds a `usercmd_t` each frame. `cl_viewangles` is the look direction (mouse) |
 | `lua_local.h` | 17 | What `lua_host.c` shares with `lua_game.c`: `Lua_GetState`, `Lua_Call`, `Lua_Hook`, `LuaG_PushEntity` |
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
+| `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
+| `lua_ext.c` | 407 | Lua's smaller entity/player calls, `ents.FindInCone/FindAlongRay/FireTargets`, hooks `KeyPress`/`KeyRelease`, `OnNPCKilled`, `CalcView` |
+| `lua_ui.c` | 164 | Lua fonts (`surface.CreateFont/SetFont`) and textured rectangles |
 | `lua_game.c` | 1284 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
 | `client_api.h` | 710 | Clean-room client interface: `cl_enginefunc_t` (the SDK order, plus the later Steam/HL25 additions and 32 reserved slots), `cl_entity_t` (3000 bytes), `entity_state_t` (340), `ref_params_t`, `client_data_t`, `SCREENINFO`, `client_sprite_t`, the client export table. The tri/efx/event/demo/net/voice API tables are padded arrays of stubs for now |
 | `cl_main.c` | 1342 | Loads client.dll (after vgui.dll), every `cl_enginefunc_t` function (HUD sprites with `hud.txt` parsing and normal/holes/additive drawing, FillRGBA (additive, like GoldSrc), text, cvars/commands, user message hooks, player info, entities for the client, `V_CalcRefdef` with `ref_params_t`, the view model, crosshair, center print), the user-message queue (game DLL messages are buffered in `sv_engfuncs.c` and dispatched at the start of the client frame; `svc_weaponanim` sets the view model animation, `svc_temp_entity` goes to `cl_tent.c`, unhooked ScreenFade/ScreenShake to `cl_view.c`), the API tables from the files below, `CL_CrashFilter` (with `CLIENT_CALL` in `cl_local.h`: a crash in the client logs its stack and turns the client off instead of killing the engine), `HUD_PlayerMoveInit` at the first map (the client's pm_shared needs its texture types before any event) |
@@ -1000,6 +1003,38 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### Lua API plan: steps 5-7 built (2026-11-13, branches `luaapi-5` to `luaapi-7`); the plan is done
+
+- Step 5, `lua_render.c`: `render.*` only inside the new hooks `PostDrawOpaque` (after `R_DrawEntities`) and
+  `PostDrawTranslucent` (after `CL_DrawEffects`), run by `LuaR_DrawHook` with the world's matrices and the GL
+  state saved around it (shader off, culling and alpha test off for shapes). `ClientsideModel` keeps a
+  growable list of `rentity_t` with the model name (looked up each frame, since the model cache is cleared
+  at map change); `LuaR_AddModels` puts them in the frame list after `CL_AddEntities`; `LuaR_ClearModels` at
+  `WorldUnloaded`. Without a server, `R_RenderView` now clears the frame list itself (nothing else did).
+  `Material` caches pictures (kept until quit) and sprites (first frame, looked up each use).
+  `Vector:ToScreen` projects with the last frame's `r_refdef`.
+- Step 6, `lua_ext.c` (bones, attachments, body groups, playback, no-draw, freeze, max speed,
+  `player_weaponstrip`, `PrintMessage` through `CL_CenterPrint` and the game's `SayText` message,
+  `ents.FindInCone/FindAlongRay/FireTargets`, the `IN_*` and `HUD_PRINT*` names; hooks `KeyPress`/`KeyRelease`
+  and `OnNPCKilled` from `LuaX_Frame` after `Tick`, `CalcView` from `R_RenderView` with its fov used by
+  `ComputeFov`), `lua_ui.c` (fonts from `Font_RasterizeProportional` like the captions' font, textured
+  rectangles), `lua_host.c` (`surface.SetMaterial/DrawTexturedRect(UV)`, `file.Delete/CreateDir`, `HUDPaint`,
+  `Lua_CvarChanged` called from `Cvar_DirectSet` into `cvars._Changed` in `init.lua`), `init.lua`
+  (`draw.DrawText`, fonts in `draw.SimpleText`, `cvars.*`). `SV_UserMsgIndex` (`sv_engfuncs.c`) and
+  `CL_CenterPrint` (`cl_main.c`) are new shared helpers.
+- Not built from the plan's table, and why: `GetAmmo`/`GiveAmmo` and `GetActiveWeapon` (the counts and the
+  active weapon live in `hl.dll`'s player object, with no probeable method; a later plan can add checked
+  fields), `ply:SetFOV` (`CalcView`'s `fov` does it), `GetKeyValue` (map keys aren't kept per entity; fields
+  read directly as `ent.target` etc.), `PlayerUse` and `PlayerFootstep` hooks (inside `hl.dll`; footstep
+  sounds can be caught with `EntityEmitSound`), `EntityTakeDamage` (deferred, section 10 of the plan).
+- Checked: screenshots of `render_demo.lua` in classic and modern, `api_demo.lua`'s log (every call) and
+  screenshots (font, picture, key log, centre and chat text, third person); `OnNPCKilled` fires for a normal
+  death (a gibbed monster is removed before the next frame's check, so it doesn't); the cvar callback; the
+  Windows build compiles; a 32-bit AddressSanitizer session running both examples, effects, sounds, bullets,
+  blast damage, `StripWeapons`, `lua_reload` and a map change: no reports.
+- Test traps: `RunConsoleCommand` appends to the command buffer, so in a test cfg it runs after that cfg's
+  own `quit`; zsh doesn't split an unquoted `$VAR` into several `+command` arguments (use a cfg file).
 
 ### Lua API plan: step 4 built (2026-11-13, branch `luaapi-4`)
 

@@ -289,8 +289,10 @@ Ctrl+L clears it. Useful commands: `cmdlist`, `cvarlist`, `find <text>`, `path`,
 API so far: `hook.Add/Remove/Run` (events: `Initialize`, `Think`, `DrawOverlay`, `KeyEvent`, `ShutDown`),
 `timer.Simple/Create/Remove/...`, `concommand.Add/Remove`, `CreateConVar/GetConVar`, `RunConsoleCommand`,
 `surface.SetDrawColor/DrawRect/DrawOutlinedRect/SetTextColor/SetTextPos/DrawText/GetTextSize`,
-`draw.SimpleText/RoundedBox`, `Color`, `captions.Add(text, [seconds], [color])/Clear` (hook
-`CaptionShow(key, text, isSfx)`: return a string to change a caption, false to hide it), `input.IsKeyDown/GetKeyName/GetKeyCode`, `file.Read/Write/Exists/Find`,
+`surface.CreateFont(name, { font, size, weight })/SetFont`, `surface.SetMaterial(Material(...))/DrawTexturedRect/
+DrawTexturedRectUV`, `draw.SimpleText/DrawText/RoundedBox` (with a font name from `CreateFont`), hook `HUDPaint`
+(the same as `DrawOverlay`), `cvars.AddChangeCallback(name, fn(name, old, new), [id])/RemoveChangeCallback`, `Color`, `captions.Add(text, [seconds], [color])/Clear` (hook
+`CaptionShow(key, text, isSfx)`: return a string to change a caption, false to hide it), `input.IsKeyDown/GetKeyName/GetKeyCode`, `file.Read/Write/Exists/Find/Delete/CreateDir`,
 `engine.GetGameDir/Version/GetMap` (hooks `WorldLoaded`, `WorldUnloaded` get the map name), `CurTime/RealTime/FrameTime/SysTime/ScrW/ScrH`, `print/Msg/MsgN/include/PrintTable`.
 The names follow Garry's Mod and Half-Life: Lua so addons can move over.
 
@@ -342,6 +344,27 @@ Game API (works while a map runs):
   source; `attackerGuess` is its owner when present, otherwise the inflictor, and is only a best guess.
   Removed entities become `NULL`. The amount retains the field's value without byte wrapping;
   `damageBits` contains only the HUD-visible flags sent by the game. Return values do not alter damage.
+- More entity calls: `GetAttachment(n)` (`.Pos`), `LookupBone(name)`, `LookupAttachment(name)`,
+  `GetBonePosition(bone or name)`, `SetBodygroup(group, value)/GetBodygroup/GetBodygroupCount/GetNumBodyGroups`,
+  `SetPlaybackRate/GetPlaybackRate`, `SetNoDraw/GetNoDraw`. Players: `Freeze(bool)/IsFrozen`,
+  `SetMaxSpeed/GetMaxSpeed`, `StripWeapons()`, `GetViewModel()`, `PrintMessage(HUD_PRINTCENTER / HUD_PRINTTALK /
+  HUD_PRINTCONSOLE, text)`. `ents.FindInCone(origin, dir, range, cosine)`, `ents.FindAlongRay(start, endpos,
+  [mins], [maxs])`, `ents.FireTargets(targetname, [activator])` (uses every entity with that name, as a map trigger).
+- More hooks: `KeyPress(ply, IN_*)`/`KeyRelease(ply, IN_*)`, `OnNPCKilled(npc, attackerGuess)`,
+  `CalcView(ply, origin, angles, fov)` (return `{ origin, angles, fov }` to move the camera).
+- Drawing in the world, inside hooks `PostDrawOpaque` (after solid things) and `PostDrawTranslucent` (after
+  effects): `render.DrawLine(a, b, color, [depth])`, `render.DrawWireframeBox(pos, angles, mins, maxs, color,
+  [depth])`, `render.DrawBox(...)`, `render.DrawSphere/DrawWireframeSphere(pos, radius, [segments], color)`,
+  `render.SetMaterial(Material(...))` + `render.DrawSprite(pos, width, height, color)`,
+  `render.GetViewPos/GetViewAngles`. `depth` false draws through walls. `vector:ToScreen()` gives `{ x, y,
+  visible }` for name tags in `HUDPaint`.
+- `ClientsideModel(model)`: a model only Lua knows (Half-Life or `hl2:`), drawn until `:Remove()` or the map
+  changes: `SetPos/GetPos`, `SetAngles/GetAngles`, `SetModel`, `SetSequence(number or name)`,
+  `SetPlaybackRate`, `SetCycle(0..1)`, `SetBody`, `SetSkin`, `SetColor(Color with alpha)`, `SetNoDraw`,
+  `DrawModel()` (inside a draw hook), `IsValid`. `Material("sprites/x.spr" or "path.png")` for pictures.
+- Examples: `base/lua/examples/render_demo.lua` (boxes and name tags on monsters, a spinning model) and
+  `api_demo.lua` (fonts, a HUD picture, key log, third-person `CalcView`); run them with
+  `lua_openscript examples/<name>.lua`.
 - `newen_spawn <classname>` (from the example script) spawns an entity where you're looking.
 
 ## Roadmap
