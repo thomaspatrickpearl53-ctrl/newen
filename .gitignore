@@ -4,3 +4,4 @@ build-linux/
 dist/
 build-mingw/
 build-asan/
+!third_party/JoltPhysics/Build/

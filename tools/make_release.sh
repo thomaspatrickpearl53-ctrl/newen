@@ -26,7 +26,8 @@ tar -C dist -czf "$L.tar.gz" "newen-$VER-linux-x86"
 # Windows
 if [ ! -f build-mingw/CMakeCache.txt ]; then
 	cmake -S . -B build-mingw -G "Unix Makefiles" -DCMAKE_SYSTEM_NAME=Windows \
-		-DCMAKE_C_COMPILER=i686-w64-mingw32-gcc -DCMAKE_RC_COMPILER=i686-w64-mingw32-windres \
+		-DCMAKE_C_COMPILER=i686-w64-mingw32-gcc -DCMAKE_CXX_COMPILER=i686-w64-mingw32-g++ \
+		-DCMAKE_RC_COMPILER=i686-w64-mingw32-windres \
 		-DCMAKE_BUILD_TYPE=RelWithDebInfo "-DOUT_DIR=$PWD/build-mingw/out"
 fi
 cmake --build build-mingw --parallel

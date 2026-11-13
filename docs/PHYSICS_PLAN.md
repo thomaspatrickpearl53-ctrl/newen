@@ -1,7 +1,7 @@
 # Physics and ragdolls on Half-Life maps: plan
 
-Design only, written 2026-11-12 from newen at commit c9a8232. Nothing here is built. Implementation starts
-only when the owner says "go", and needs the owner's decision P1 (Jolt) first. Third of the three plans the
+Design written 2026-11-12 from newen at commit c9a8232. **Step 1 is built (2026-11-13, branch `phys-1`); the
+owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
 owner asked for together; its Lua calls build on `docs/LUA_API_PLAN.md`, and its props become scripted
 entities from `docs/SWEP_PLAN.md`.
 
@@ -135,3 +135,9 @@ Host frame ──> SV_Frame (hl.dll thinks, moves the player and monsters)
 | P3 | Props solid to `hl.dll` as upright boxes | Yes: otherwise the player walks through crates |
 | P4 | Ragdolls for Half-Life's own models, built from hitboxes | Yes, but behind a cvar and off by default: guessed joints may look wrong; Half-Life's death animations stay the default |
 | P5 | Order of the three plans | Lua API first (damage is needed by both others); then scripted entities (`docs/SWEP_PLAN.md` section 4, which props are built on); then physics (ragdolls fix the Source NPCs' T-pose deaths) and Lua weapons, in whichever order matters more to you. Physics steps 1-4 (Jolt, world, `.phy`, ragdolls) don't need scripted entities, so ragdolls can come early if you want them first |
+
+## Built
+
+- **Step 1 (2026-11-13, `phys-1`)**: Jolt 5.6.0, `phys.h`, `phys_jolt.cpp`, `phys_world.c` (`phys_test`).
+  Different from the plan: Jolt is single-threaded for now; only SSE2 is assumed; the C++ runtime is linked
+  into the exe on both platforms; Jolt allocates with its own allocator. Details in HANDOFF section 9.

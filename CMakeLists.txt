@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
-project(newen C)
+# C++ is for Jolt and phys_jolt.cpp only; a 32-bit gcc build passes -m32 for C, and C++ needs it too
+if(CMAKE_C_FLAGS MATCHES "-m32" AND NOT CMAKE_CXX_FLAGS MATCHES "-m32")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32" CACHE STRING "" FORCE)
+endif()
+project(newen C CXX)
 
 # Half-Life's game DLLs are 32-bit, so the engine must be too.
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -27,6 +31,27 @@ target_compile_definitions(lua54 PRIVATE _CRT_SECURE_NO_WARNINGS)
 if(UNIX)
 	target_compile_definitions(lua54 PRIVATE LUA_USE_POSIX)   # mkstemp instead of tmpnam
 endif()
+
+# ---------------------------------------------------------------- Jolt (physics), a static library
+# Only SSE2 is assumed (any CPU that runs 32-bit Half-Life well); no threads, no GPU compute, no debug
+# renderer, no warnings-as-errors (a newer compiler mustn't break the build), the same C runtime as newen.
+set(JOLT_OFF USE_SSE4_1 USE_SSE4_2 USE_AVX USE_AVX2 USE_AVX512 USE_LZCNT USE_TZCNT USE_F16C USE_FMADD
+	INTERPROCEDURAL_OPTIMIZATION ENABLE_ALL_WARNINGS DEBUG_RENDERER_IN_DEBUG_AND_RELEASE
+	PROFILER_IN_DEBUG_AND_RELEASE ENABLE_OBJECT_STREAM ENABLE_INSTALL USE_STATIC_MSVC_RUNTIME_LIBRARY
+	JPH_USE_DX12 JPH_USE_VK JPH_USE_MTL JPH_USE_CPU_COMPUTE FLOATING_POINT_EXCEPTIONS_ENABLED
+	JPH_BUILD_SHARED_LIBS GENERATE_DEBUG_SYMBOLS)
+foreach(opt ${JOLT_OFF})
+	set(${opt} OFF CACHE BOOL "" FORCE)
+endforeach()
+# gcc for 32-bit x86 (MinGW's by default) may not assume SSE2, which Jolt needs. 32-bit Windows code only
+# keeps the stack 4-byte aligned, so MinGW realigns it where SSE values live on it.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+	string(APPEND CMAKE_CXX_FLAGS " -msse2 -mfpmath=sse")
+	if(MINGW)
+		string(APPEND CMAKE_CXX_FLAGS " -mstackrealign")
+	endif()
+endif()
+add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/JoltPhysics/Build ${CMAKE_BINARY_DIR}/jolt EXCLUDE_FROM_ALL)
 
 # ---------------------------------------------------------------- SDL2
 if(WIN32)
@@ -68,6 +93,8 @@ add_executable(newen WIN32
 	src/engine/lua_render.c
 	src/engine/lua_ext.c
 	src/engine/lua_ents.c
+	src/engine/phys_jolt.cpp
+	src/engine/phys_world.c
 	src/engine/lua_ui.c
 	src/engine/image.c
 	src/engine/wad.c
@@ -119,6 +146,8 @@ else()
 	target_sources(newen PRIVATE src/engine/sys_linux.c src/engine/font_stb.c)
 endif()
 target_include_directories(newen PRIVATE src/engine third_party/stb third_party/dr_libs)
+target_link_libraries(newen PRIVATE Jolt)
+set_target_properties(newen PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_compile_definitions(newen PRIVATE _CRT_SECURE_NO_WARNINGS)
 if(MSVC)
 	# the vendored decoders aren't ours: no warnings from them
@@ -137,16 +166,20 @@ if(WIN32)
 		# MinGW (cross-builds from Linux): SDL2main.lib is Visual C++'s, so main() is the engine's own
 		target_compile_definitions(newen PRIVATE SDL_MAIN_HANDLED)
 		target_link_libraries(newen PRIVATE lua54 SDL2 opengl32 winmm gdi32 advapi32 dbghelp)
-		target_link_options(newen PRIVATE -static-libgcc)
+		# -static: the C++ runtime and its threads library go into the exe (no MinGW DLLs to ship)
+		target_link_options(newen PRIVATE -static)
 	endif()
 	# copy SDL2.dll and newen's own content next to the exe
 	add_custom_command(TARGET newen POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SDL2_DIR}/lib/x86/SDL2.dll ${OUT_DIR}/SDL2.dll
 		COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/base ${OUT_DIR}/base)
 else()
-	# -rdynamic: crash reports can name the engine's functions
+	# -rdynamic: crash reports can name the engine's functions. The C++ runtime (for Jolt) is linked in,
+	# so a system with an older one still runs newen; --exclude-libs keeps it out of the exported symbols,
+	# where it would take the place of the one Valve's game libraries load.
 	target_link_libraries(newen PRIVATE lua54 SDL2 GL dl m pthread)
-	target_link_options(newen PRIVATE -rdynamic)
+	target_link_options(newen PRIVATE -rdynamic -static-libstdc++ -static-libgcc
+		-Wl,--exclude-libs,libstdc++.a:libgcc.a:libgcc_eh.a:libsupc++.a:libJolt.a)
 	add_custom_command(TARGET newen POST_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/base ${OUT_DIR}/base)
 endif()

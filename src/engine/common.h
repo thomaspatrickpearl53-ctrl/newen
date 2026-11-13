@@ -359,5 +359,6 @@ extern qboolean host_initialized;
 void Host_Init(int argc, char **argv);
 void Host_Frame(void);
 void Host_Shutdown(void);
+void Phys_InitCommands(void);   // phys_world.c (Phys_Shutdown is in phys.h)
 NORETURN void Host_Quit(void);
 extern cvar_t *developer;

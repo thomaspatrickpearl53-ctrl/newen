@@ -111,6 +111,7 @@ a `vcvars32` shell. Use `build.bat`.
 | stb_vorbis | 1.22 | raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/stb_vorbis.c (sha256 4c7cb2ff...5e65636) | public domain / MIT |
 | dr_mp3 | 0.7.4 | raw.githubusercontent.com/mackron/dr_libs/dfe8377631000664666519fdb83da193fd8037f4/dr_mp3.h (sha256 997b7ee1...e0a2f) | public domain / MIT-0 |
 | stb_truetype | 1.26 | raw.githubusercontent.com/nothings/stb/003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5/stb_truetype.h (sha256 ecd30b05...6b5090aab), downloaded 2026-10-30 for the Linux fonts | public domain / MIT |
+| Jolt Physics | 5.6.0 | github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.6.0.tar.gz (sha256 6e069ee0172478cc78182047aac87e5310ba14a67a53348ae14cc37801fd3f8e), downloaded 2026-11-13; only `Jolt/`, `Build/`, `LICENSE`, `README.md` kept, in `third_party/JoltPhysics` | MIT |
 | dr_flac | (same commit) | .../dr_libs/dfe8377631000664666519fdb83da193fd8037f4/dr_flac.h (sha256 111144e7...cff945c) | public domain / MIT-0 |
 
 The decoders are downloaded with the owner's OK (2026-10-17) into `third_party/stb` and `third_party/dr_libs`, and
@@ -245,6 +246,9 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
 | `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
+| `phys.h` | 46 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
+| `phys_jolt.cpp` | 337 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in fixed 1/120 s substeps (single-threaded job system, 8 MB temp allocator), boxes, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
+| `phys_world.c` | 108 | `phys_test` (no map: angle round trip, impulse units, a tumbling box lands flat, rests, sleeps); later the map's world mesh and edict sync |
 | `lua_ext.c` | 407 | Lua's smaller entity/player calls, `ents.FindInCone/FindAlongRay/FireTargets`, hooks `KeyPress`/`KeyRelease`, `OnNPCKilled`, `CalcView` |
 | `lua_ui.c` | 164 | Lua fonts (`surface.CreateFont/SetFont`) and textured rectangles |
 | `lua_game.c` | 1284 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
@@ -1006,6 +1010,32 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### Physics plan: step 1, Jolt in the build, built (2026-11-13, branch `phys-1`, on `swep-5`)
+
+The owner said "start physics" after SWEP step 5, which also confirms decision P1 (Jolt).
+
+- Jolt 5.6.0 (third-party table above) is built through its own `Build/CMakeLists.txt` as a static library
+  (`add_subdirectory`, `EXCLUDE_FROM_ALL`) with options forced off in `CMakeLists.txt`: every CPU extension
+  past SSE2 (so it runs on old 32-bit machines), LTO, warnings-as-errors, debug renderer, profiler, object
+  streams, GPU compute, install, the static MSVC runtime (newen uses the DLL one). `project(newen C CXX)`;
+  `-m32` is copied from the C flags to the C++ flags, so `build.sh` and old build folders keep working.
+  gcc gets `-msse2 -mfpmath=sse` for C++ (MinGW i686 doesn't assume SSE2; the Jolt build failed without
+  it), MinGW also `-mstackrealign` (32-bit Windows callers only keep 4-byte stack alignment).
+- Linking: Linux links the C++ runtime statically (`-static-libstdc++ -static-libgcc`) because the build's
+  RUNPATH reaches Steam's old runtime, whose libstdc++ is too old, and because users' systems may be old too;
+  `--exclude-libs` keeps libstdc++, libgcc and Jolt out of the symbols `-rdynamic` exports, so they can't
+  stand in for the libstdc++ Valve's game libraries load. MinGW links `-static` (no libwinpthread DLL); the
+  exe still imports only Windows DLLs and SDL2.dll. `tools/make_release.sh` passes the MinGW C++ compiler.
+- Jolt uses its default allocator (malloc), not `Mem_*`: its allocator hooks need aligned allocation and
+  reallocation with the old size, which `Mem_*` doesn't have. Jolt starts on first use (`Phys_Init`), so
+  nothing changes for a game that doesn't use physics; `Phys_Shutdown` at exit.
+- Checked: `phys_test` prints PASS on Linux and from the MinGW exe under Wine, with identical numbers (box
+  at z 8.00, lowest 7.72 on impact, flat, still, asleep; angle round trip exact; 2000 kg*in/s on 20 kg makes
+  100 in/s; 241 frames in 1-2 ms). c1a0 loads with the same 207 entities on both; a c1a0 screenshot against
+  the 0.3.0 release exe: 16 pixels differ by 1 in one colour channel (rounding), nothing visible.
+- Not checked: Visual C++ (`build.bat`; Jolt's own scripts include a 32-bit VS build, so x86 MSVC is a
+  supported setup), real Windows, AddressSanitizer (this step reads no files and doesn't call `hl.dll`).
 
 ### SWEP plan: step 5, scripted entities, built (2026-11-13, branch `swep-5`)
 

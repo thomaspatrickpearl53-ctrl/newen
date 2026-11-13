@@ -1,5 +1,6 @@
 // newen - startup, main loop, shutdown
 #include "gl_local.h"   // the view (r_refdef) for sound
+#include "phys.h"
 
 double   host_realtime;
 double   host_frametime;
@@ -106,6 +107,7 @@ void Host_Init(int argc, char **argv)
 	Lua_Init();
 	CL_Init();
 	SV_Init();
+	Phys_InitCommands();
 	GameUI_Init();
 	// Half-Life's default config turns on mouse look; without it the mouse's up/down walks you
 	if (CL_HasClient())
@@ -220,6 +222,7 @@ void Host_Shutdown(void)
 	CC_Shutdown();
 	CL_Shutdown();
 	SV_Shutdown();
+	Phys_Shutdown();
 	S_Shutdown();
 	R_Shutdown();
 	Draw_Shutdown();
