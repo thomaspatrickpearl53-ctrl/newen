@@ -464,12 +464,20 @@ static void R_Sprite_WallPuff(TEMPENTITY *t, float scale)
 	t->die = (float)cl_time + 0.01f;
 }
 
+static dlight_t *Light(int key, const float *origin, float radius, int r, int g, int b, float life);
+
+// The game sends only the explosion message: its flash of light and its bang are the engine's (a grenade adds
+// just its debris sounds), unless the message's flags turn them off
 static void R_Explosion(float *pos, int model, float scale, float framerate, int flags)
 {
 	TEMPENTITY *t = R_DefaultSprite(pos, model, framerate);
 	R_Sprite_Explode(t, scale, flags);
 	if (!(flags & TE_EXPLFLAG_NOPARTICLES))
 		R_FlickerParticles(pos);
+	if (!(flags & TE_EXPLFLAG_NODLIGHTS))
+		Light(0, pos, 200, 250, 250, 150, 0.1f)->decay = 800;
+	if (!(flags & TE_EXPLFLAG_NOSOUND))
+		S_StartSound(0, 0, va("weapons/explode%d.wav", CL_RandomInt(3, 5)), pos, 1, 0.8f, 0, 100);
 }
 
 static void R_MuzzleFlash(float *pos, int type)

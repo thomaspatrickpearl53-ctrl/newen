@@ -242,7 +242,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `sv_save.c` | 687 | Level states: the game saves its entities into a `SAVERESTOREDATA` (data buffer that grows if the game fills it, token table, one `ENTITYTABLE` entry per edict); `pfnParmsChangeLevel` lists this map's connections and marks the entities in each transition. A level change keeps every visited map's state in memory; the next map restores its own state if it has one (without the player), then the old map's marked entities and the player, moved by the landmark offset. Globals (env_global, the tram) restore with `globalEntity` into the new map's copy. Saved games: `save/<name>.sav` in the game's userdata folder holds every level state (field-name tokens as strings), the game's global state (`pfnSaveGlobalState`) and the skill; loading replaces the remembered levels, runs `ResetGlobalState` + `RestoreGlobalState` and restores the current level with the player (`fUseLandmark` with no offset, so the player isn't sent to a spawn point). `save`, `load`, `autosave`, `saves`, `levelstates` |
 | `cl_input.c` | 139 | **Temporary** (client.dll's job in GoldSrc): `+forward/+back/+moveleft/+moveright/+moveup/+movedown/+jump/+duck/+attack/+attack2/+use/+reload/+speed/+alt1/+showscores` and `impulse`, the `cl_*speed` cvars, `CL_CreateCmd` builds a `usercmd_t` each frame. `cl_viewangles` is the look direction (mouse) |
 | `lua_local.h` | 17 | What `lua_host.c` shares with `lua_game.c`: `Lua_GetState`, `Lua_Call`, `Lua_Hook`, `LuaG_PushEntity` |
-| `lua_fx.c` | 165 | Lua sound: `ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes (`LuaFX_GameSound`); effects come in Lua API step 4 |
+| `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_game.c` | 1284 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
 | `client_api.h` | 710 | Clean-room client interface: `cl_enginefunc_t` (the SDK order, plus the later Steam/HL25 additions and 32 reserved slots), `cl_entity_t` (3000 bytes), `entity_state_t` (340), `ref_params_t`, `client_data_t`, `SCREENINFO`, `client_sprite_t`, the client export table. The tri/efx/event/demo/net/voice API tables are padded arrays of stubs for now |
 | `cl_main.c` | 1342 | Loads client.dll (after vgui.dll), every `cl_enginefunc_t` function (HUD sprites with `hud.txt` parsing and normal/holes/additive drawing, FillRGBA (additive, like GoldSrc), text, cvars/commands, user message hooks, player info, entities for the client, `V_CalcRefdef` with `ref_params_t`, the view model, crosshair, center print), the user-message queue (game DLL messages are buffered in `sv_engfuncs.c` and dispatched at the start of the client frame; `svc_weaponanim` sets the view model animation, `svc_temp_entity` goes to `cl_tent.c`, unhooked ScreenFade/ScreenShake to `cl_view.c`), the API tables from the files below, `CL_CrashFilter` (with `CLIENT_CALL` in `cl_local.h`: a crash in the client logs its stack and turns the client off instead of killing the engine), `HUD_PlayerMoveInit` at the first map (the client's pm_shared needs its texture types before any event) |
@@ -1000,6 +1000,26 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### Lua API plan: step 4 built (2026-11-13, branch `luaapi-4`)
+
+- `lua_fx.c`: `effects.*` (Explosion, Smoke, Sparks, Ricochet, Teleport, Tracer, Blood, Light, Beam, Sprite) are
+  built as temp-entity messages and handed to `CL_ParseTempEntity`, the same reader `hl.dll`'s messages use,
+  so they look and behave as the game's (sprites precached late through `SV_PrecacheModel` when needed).
+  `util.Decal` (trace + `R_DecalShoot`), `util.ScreenShake` (falloff by radius, then the `ScreenShake` engine
+  message), `ply:ScreenFade` (`ScreenFade` engine message), `SCREENFADE` table. `LuaFX_Open` now runs last in
+  `LuaG_Open`, because it adds to `util` and `surface`.
+- **Fixed, affects stock play:** `R_Explosion` (`cl_tent.c`) made only the fireball sprite. In GoldSrc the
+  engine also adds the flash of light and plays `weapons/explode3-5.wav` (unless the message's flags say not
+  to); `hl.dll`'s grenades, rockets and `env_explosion` send only the message (plus debris sounds), so newen's
+  explosions had been silent and dark. Now: a dynamic light (radius 200, warm white, decaying) and the sound.
+- Effects need client.dll: with `-noclientdll` temp entities aren't updated or drawn.
+- Test trap: the first effect fired right after `gameui_hide`/`unpause` can be created while the client's
+  clock still reads 0 and expire at once; wait ~100 frames after unpausing before testing effects.
+- Checked: screenshots of every effect on c1a0d (client.dll on), explosion sound in the `s_show` log, the
+  game's `env_explosion` breaking the corkboard, scorch and bullet decals via `util.Decal`, red screen fade;
+  Windows build compiles. Not checked: screen shake (moves the view; not visible in one screenshot), effects
+  under Wine.
 
 ### Lua API plan: step 3 built (2026-11-13, branch `luaapi-3`)
 

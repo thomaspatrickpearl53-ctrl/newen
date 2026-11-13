@@ -324,6 +324,14 @@ Game API (works while a map runs):
   placed in the world). Hook `EntityEmitSound(data)` sees every sound the game, client.dll (gunfire, swings) or
   Lua starts: `data.SoundName`, `Entity`, `Channel`, `Volume`, `SoundLevel`, `Pitch`, `Flags`, `Pos`; return
   false to silence it, or change fields and return true.
+- Effects, the same ones the game makes: `effects.Explosion(pos, [scale], [nosound], [nolight])`,
+  `effects.Smoke(pos, [scale])`, `effects.Sparks(pos)`, `effects.Ricochet(pos)`, `effects.Teleport(pos)`,
+  `effects.Tracer(from, to)`, `effects.Blood(pos, dir, [color 247 red / 195 yellow], [amount])`,
+  `effects.Light{ pos, radius, color = Color(r, g, b), time, decay }`, `effects.Beam{ start, endpos, sprite,
+  width, noise, life, color, brightness, speed }`, `effects.Sprite(pos, sprite, [scale], [brightness])`;
+  `util.Decal(name, start, endpos, [filter])` (where the line hits the world or a brush entity);
+  `util.ScreenShake(pos, amplitude, frequency, duration, [radius])`; `ply:ScreenFade(SCREENFADE.IN or .OUT,
+  Color(r, g, b, a), fadetime, [holdtime])`. Effects show when client.dll is running.
 - Traces also return `HitGroup` (0 body, 1 head, 2 chest, 3 stomach, 4/5 arms, 6/7 legs). Lines that hit a
   monster or player are checked against its hitboxes, as in GoldSrc, so head shots count for the game's
   weapons too; `sv_hitboxes 0` goes back to whole-box hits.

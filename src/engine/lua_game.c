@@ -1120,7 +1120,6 @@ void LuaG_Open(lua_State *L)
 		lua_pushinteger(L, dmg[i].value);
 		lua_setglobal(L, dmg[i].name);
 	}
-	LuaFX_Open(L);
 
 	static const luaL_Reg player[] = {
 		{ "GetAll", l_player_GetAll }, { "GetByID", l_Entity }, { NULL, NULL }
@@ -1190,6 +1189,7 @@ void LuaG_Open(lua_State *L)
 	SetIntGlobal(L, "IN_ATTACK2", IN_ATTACK2);
 	SetIntGlobal(L, "IN_RELOAD", IN_RELOAD);
 	SetIntGlobal(L, "IN_SPEED", IN_RUN);
+	LuaFX_Open(L);   // last: it adds to util and surface
 }
 
 // ---------------------------------------------------------------- hooks fired by the server

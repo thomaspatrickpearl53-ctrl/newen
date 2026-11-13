@@ -1,8 +1,8 @@
 # Bigger Lua API: plan
 
-Written 2026-11-12 from newen at commit c9a8232 (release 0.2.0). **Steps 1-3 are built and checked**:
+Written 2026-11-12 from newen at commit c9a8232 (release 0.2.0). **Steps 1-4 are built and checked**:
 step 1 by ChatGPT/Codex (`codex/luaapi-1`), step 2 with the scope the owner chose on 2026-11-13 (section 10)
-and step 3 on later branches; steps 1-2 are on master. Step 4 is next. It is the first of three plans the owner asked for
+and steps 3-4 on later branches; steps 1-3 are on master. Step 5 is next. It is the first of three plans the owner asked for
 together; `docs/SWEP_PLAN.md` builds on this one, and `docs/PHYSICS_PLAN.md` adds physics calls to it.
 
 ## 1. In plain terms
@@ -98,7 +98,7 @@ that damage transaction needs the additional bridge described in section 10.
 | 1 — built, 2026-11-12 | `sv_gameobj.c`: the probe only, reported by a `gameobj_info` command | Passed on Linux `hl.so` and Windows `hl.dll` (Wine); deliberately wrong slot refused on both. Model, scene and memory checks recorded in HANDOFF |
 | 2 — built, 2026-11-13 | Damage, revised scope (section 10): hitbox traces in the engine, `ent:TakeDamage`, `ent:FireBullets`, `util.BlastDamage`, `DMG_*` names, the `env_explosion` fallback. No `EntityTakeDamage` hook (deferred) | Head shot from a script kills a scientist (×3 from the game's own skill cvar, blood on the wall behind, death fall); HL2 Kleiner gets a chest hit; probe forced off: `TakeDamage` refuses, `BlastDamage` kills through `env_explosion`; Windows build gives identical results under Wine; probe passes on all 125 maps |
 | 3 — built, 2026-11-13 | Sound: `ent:EmitSound`, `ent:StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, hook `EntityEmitSound` over the game's sounds **and client.dll's** (gunfire, swings) | Sentence `!SC_HELLO0` on a scientist, thunder at a position, a sound blocked by the hook, the weapon pickup sound swapped (name, pitch, level), the MP5's gunshots swapped for the shotgun's (Windows build under Wine, client.dll on) |
-| 4 | Effects | Screenshot of each effect from a script |
+| 4 — built, 2026-11-13 | Effects: `effects.Explosion/Smoke/Sparks/Ricochet/Teleport/Tracer/Blood/Light/Beam/Sprite`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade` + `SCREENFADE`; built as the game's own temp-entity messages read by `CL_ParseTempEntity` | Screenshot of each from a script (client.dll on). Found and fixed on the way: newen's explosions had no bang or flash, also for the game's grenades |
 | 5 | Drawing in the world and clientside models | Screenshot: boxes round every monster, a floating Source model spinning, name tags via `ToScreen`; classic and modern |
 | 6 | Entity and player additions, timers, convars, files, UI textures and fonts | Each call exercised by the example scripts; `lua_reload` mid-map leaves nothing behind |
 | 7 | README and HANDOFF | Owner review |
