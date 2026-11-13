@@ -318,6 +318,12 @@ Game API (works while a map runs):
   Damage types are the `DMG_*` globals (`DMG_BULLET`, `DMG_BLAST`...). If newen's startup check on the game
   DLL fails (`gameobj_info` says why), `TakeDamage` does nothing and returns false, and `BlastDamage` uses
   the game's own `env_explosion` instead.
+- Sound: `ent:EmitSound(name, [level 75], [pitch 100], [volume 1], [CHAN_*])` (level in decibels as in GMod:
+  75 normal, 60 quiet, 90 loud, 0 heard everywhere; `"!NAME"` plays a sentence from `sentences.txt`),
+  `ent:StopSound([name])`, `sound.Play(name, pos, [level], [pitch], [volume])`, `surface.PlaySound(name)` (not
+  placed in the world). Hook `EntityEmitSound(data)` sees every sound the game, client.dll (gunfire, swings) or
+  Lua starts: `data.SoundName`, `Entity`, `Channel`, `Volume`, `SoundLevel`, `Pitch`, `Flags`, `Pos`; return
+  false to silence it, or change fields and return true.
 - Traces also return `HitGroup` (0 body, 1 head, 2 chest, 3 stomach, 4/5 arms, 6/7 legs). Lines that hit a
   monster or player are checked against its hitboxes, as in GoldSrc, so head shots count for the game's
   weapons too; `sv_hitboxes 0` goes back to whole-box hits.

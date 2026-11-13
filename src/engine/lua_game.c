@@ -1023,6 +1023,21 @@ static void SetIntGlobal(lua_State *L, const char *name, int v)
 	lua_setglobal(L, name);
 }
 
+// for the other Lua binding files (lua_fx.c ...)
+struct edict_s *LuaG_ToEdict(lua_State *L, int idx) { return ToEdict(L, idx); }
+struct edict_s *LuaG_CheckEdict(lua_State *L, int idx) { return CheckEdict(L, idx); }
+float *LuaG_CheckVec(lua_State *L, int idx) { return CheckVec(L, idx); }
+void LuaG_PushVector(lua_State *L, const float *v) { PushVector(L, v); }
+
+// adds methods to the Entity type
+void LuaG_AddEntityMethods(lua_State *L, const luaL_Reg *regs)
+{
+	luaL_getmetatable(L, ENTITY_MT);
+	lua_getfield(L, -1, "methods");
+	luaL_setfuncs(L, regs, 0);
+	lua_pop(L, 2);
+}
+
 void LuaG_Open(lua_State *L)
 {
 	static const luaL_Reg vmethods[] = {
@@ -1105,6 +1120,7 @@ void LuaG_Open(lua_State *L)
 		lua_pushinteger(L, dmg[i].value);
 		lua_setglobal(L, dmg[i].name);
 	}
+	LuaFX_Open(L);
 
 	static const luaL_Reg player[] = {
 		{ "GetAll", l_player_GetAll }, { "GetByID", l_Entity }, { NULL, NULL }

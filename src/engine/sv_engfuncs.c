@@ -3,6 +3,7 @@
 // Most functions are complete. Sound, networking (messages, deltas, events) and save/restore arrive
 // with the client in later steps; until then they are accepted and do nothing.
 #include "server.h"
+#include "lua_local.h"
 #include <sys/stat.h>
 #ifndef _WIN32
 #define _stat stat   // struct _stat and _stat() are the Windows names
@@ -508,14 +509,20 @@ static void PF_SetOrigin(edict_t *e, const float *org)
 
 // sound arrives in step 6
 // one process: sounds go straight to the mixer, which follows the entity
+// the game's sounds pass Lua's EntityEmitSound hook first, which may change or silence them
 static void PF_EmitSound(edict_t *entity, int channel, const char *sample, float volume, float attenuation, int fFlags, int pitch)
 {
+	if (!LuaFX_GameSound(entity, &channel, &sample, &volume, &attenuation, fFlags, &pitch, NULL))
+		return;
 	S_StartSound(entity ? NUM_FOR_EDICT(entity) : 0, channel, sample, NULL, volume, attenuation, fFlags, pitch);
 }
 
 static void PF_EmitAmbientSound(edict_t *entity, float *pos, const char *samp, float vol, float attenuation, int fFlags, int pitch)
 {
-	S_StartSound(entity ? NUM_FOR_EDICT(entity) : 0, 6, samp, pos, vol, attenuation, fFlags, pitch);   // CHAN_STATIC
+	int channel = 6;   // CHAN_STATIC
+	if (!LuaFX_GameSound(entity, &channel, &samp, &vol, &attenuation, fFlags, &pitch, pos))
+		return;
+	S_StartSound(entity ? NUM_FOR_EDICT(entity) : 0, channel, samp, pos, vol, attenuation, fFlags, pitch);
 }
 
 // ---------------------------------------------------------------- traces

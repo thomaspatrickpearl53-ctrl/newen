@@ -8,6 +8,7 @@
 // The engine never asks the game to skip the host (CanSkipPlayer is 0, no client-side weapon
 // prediction), so FEV_NOTHOST events are played here too.
 #include "cl_local.h"
+#include "lua_local.h"
 
 typedef struct { char name[64]; pfnEventHook fn; } evhook_t;
 static evhook_t *evhooks;
@@ -136,6 +137,10 @@ void CL_ClearEvents(void)
 static void EV_PlaySound(int ent, float *origin, int channel, const char *sample, float volume, float attenuation,
 	int flags, int pitch)
 {
+	// client.dll's weapon and effect sounds pass Lua's EntityEmitSound hook too (gunfire, crowbar swings)
+	edict_t *e = ent > 0 && ent < sv.num_edicts && sv.edicts ? EDICT_NUM(ent) : NULL;
+	if (!LuaFX_GameSound(e, &channel, &sample, &volume, &attenuation, flags, &pitch, e ? NULL : origin))
+		return;
 	S_StartSound(ent, channel, sample, origin, volume, attenuation, flags, pitch);
 }
 
