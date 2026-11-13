@@ -1014,11 +1014,9 @@ Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later:
 - Checked with `s_show 2` logs: the sentence on a scientist's voice channel, positional thunder (90 dB =
   attenuation 0.5), a blocked sound never started, the pickup sound swapped (name, pitch 140, 60 dB =
   attenuation 2), and with client.dll the MP5's `hks` shots replaced by `sbarrel1` (Windows build, Wine).
-- **The owner's Half-Life install is now Steam's Windows version** (switched 2026-11-12 02:47, likely a
-  compatibility tool turned on): the root `.so` files (`vgui.so`, `hw.so`...) are gone, so the Linux build
-  runs without client.dll ("Couldn't load vgui.so"). The Windows build under Wine has client.dll. To test the
-  Linux build fully again, Steam's Half-Life needs its compatibility tool turned off (it re-downloads the
-  Linux files).
+- On 2026-11-12/13 the owner's Steam Half-Life was briefly the Windows version (a compatibility tool turned
+  on): the Linux `.so` files vanished and the Linux build ran without client.dll ("Couldn't load vgui.so").
+  Switched back to Linux on 2026-11-13. If that message appears again, that's the cause.
 
 ### Lua API plan: step 2 built (2026-11-13, branch `luaapi-2`, on top of `codex/luaapi-1`)
 
