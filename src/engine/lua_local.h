@@ -21,7 +21,11 @@ float          *LuaG_CheckVec(lua_State *L, int idx);
 void            LuaG_PushVector(lua_State *L, const float *v);
 void            LuaG_AddEntityMethods(lua_State *L, const luaL_Reg *regs);
 
-// lua_fx.c: sound (and later effects); opened by LuaG_Open
+// lua_render.c: render.*, ClientsideModel, Material, Vector:ToScreen; opened by LuaG_Open
+void            LuaR_Open(lua_State *L);
+unsigned int    LuaR_MaterialTexture(lua_State *L, int idx);   // a Material's GL texture
+
+// lua_fx.c: sound and effects; opened by LuaG_Open
 void            LuaFX_Open(lua_State *L);
 // The game's own sounds pass here first: hook EntityEmitSound may change or block them.
 // False = blocked. sample/volume/attn/pitch/channel may be changed (sample points at static storage).

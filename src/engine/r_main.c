@@ -147,10 +147,15 @@ void R_RenderView(void)
 	CL_CaptureViewMatrices();
 	if (SV_Active())
 		SV_SetupRenderEntities();
+	else
+		R_ClearFrameEntities();   // nothing else rebuilds the list without a server
 	CL_AddEntities();   // the client's temp entities and the view model's events
+	LuaR_AddModels();   // Lua's clientside models
 	R_DrawWorld();
 	R_DrawEntities();
+	LuaR_DrawHook("PostDrawOpaque");
 	CL_DrawEffects();   // beams, particles, the client's triangles
+	LuaR_DrawHook("PostDrawTranslucent");
 	CL_DrawViewModel();
 }
 
@@ -233,6 +238,7 @@ void R_LoadMap(const char *mapname, const char *oldmap, const char *landmark, qb
 		Q_strncpy(mark, landmark, sizeof(mark));
 
 	Lua_RunHookString("WorldUnloaded", current_map);
+	LuaR_ClearModels();
 	GameUI_LoadingStarted(name);
 	// models belong to the map they were loaded for (as in GoldSrc)
 	CL_MapEnded();
@@ -289,6 +295,7 @@ static void Disconnect_f(void)
 	if (!world.loaded)
 		return;
 	Lua_RunHookString("WorldUnloaded", current_map);
+	LuaR_ClearModels();
 	CL_MapEnded();
 	SV_Deactivate();
 	R_ClearEntities();

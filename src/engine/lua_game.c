@@ -1190,6 +1190,7 @@ void LuaG_Open(lua_State *L)
 	SetIntGlobal(L, "IN_RELOAD", IN_RELOAD);
 	SetIntGlobal(L, "IN_SPEED", IN_RUN);
 	LuaFX_Open(L);   // last: it adds to util and surface
+	LuaR_Open(L);
 }
 
 // ---------------------------------------------------------------- hooks fired by the server

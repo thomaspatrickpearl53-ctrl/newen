@@ -342,6 +342,9 @@ void     Lua_Init(void);
 void     Lua_Shutdown(void);
 void     Lua_Frame(void);
 void     Lua_DrawOverlay(void);
+void     LuaR_AddModels(void);              // lua_render.c: Lua's clientside models into this frame
+void     LuaR_ClearModels(void);            // map change
+void     LuaR_DrawHook(const char *name);   // PostDrawOpaque / PostDrawTranslucent, with render.* allowed
 qboolean Lua_KeyEvent(int key, qboolean down);
 void     Lua_RunHookString(const char *hook, const char *arg);
 
