@@ -294,10 +294,16 @@ typedef struct {
 	int index, serial;
 } luaent_t;
 
+// entities are reachable while the map spawns too (sv.loading): Lua entities placed in the map run then
+static qboolean EdictsUp(void)
+{
+	return (sv.active || sv.loading) && sv.edicts;
+}
+
 void LuaG_PushEntity(lua_State *L, edict_t *e)
 {
 	luaent_t *le = lua_newuserdatauv(L, sizeof(luaent_t), 0);
-	if (e && sv.active && sv.edicts && !e->free) {
+	if (e && EdictsUp() && !e->free) {
 		le->index = NUM_FOR_EDICT(e);
 		le->serial = e->serialnumber;
 	} else {
@@ -310,7 +316,7 @@ void LuaG_PushEntity(lua_State *L, edict_t *e)
 static edict_t *ToEdict(lua_State *L, int idx)
 {
 	luaent_t *le = luaL_testudata(L, idx, ENTITY_MT);
-	if (!le || le->index < 0 || !sv.active || !sv.edicts || le->index >= sv.num_edicts)
+	if (!le || le->index < 0 || !EdictsUp() || le->index >= sv.num_edicts)
 		return NULL;
 	edict_t *e = EDICT_NUM(le->index);
 	if (e->free || e->serialnumber != le->serial)
@@ -405,6 +411,14 @@ static void SetField(lua_State *L, edict_t *e, const entfield_t *f, int idx)
 
 static int e_index(lua_State *L)
 {
+	// a Lua entity's own table (and through it its class) comes first, so ENT:Use is self:Use
+	edict_t *le = ToEdict(L, 1);
+	if (le && LuaE_PushTable(L, le)) {
+		lua_pushvalue(L, 2);
+		if (lua_gettable(L, -2) != LUA_TNIL)
+			return 1;
+		lua_pop(L, 2);
+	}
 	luaL_getmetatable(L, ENTITY_MT);
 	lua_getfield(L, -1, "methods");
 	lua_pushvalue(L, 2);
@@ -425,8 +439,15 @@ static int e_newindex(lua_State *L)
 	edict_t *e = CheckEdict(L, 1);
 	const char *k = luaL_checkstring(L, 2);
 	const entfield_t *f = FindField(k);
-	if (!f)
-		return luaL_error(L, "entities have no field '%s'", k);
+	if (!f) {
+		// anything else is kept in a Lua entity's own table
+		if (!LuaE_PushTable(L, e))
+			return luaL_error(L, "entities have no field '%s'", k);
+		lua_pushvalue(L, 2);
+		lua_pushvalue(L, 3);
+		lua_rawset(L, -3);
+		return 0;
+	}
 	SetField(L, e, f, 3);
 	return 0;
 }
@@ -625,6 +646,7 @@ static int m_Spawn(lua_State *L)
 		lua_pushboolean(L, false);
 		return 1;
 	}
+	LuaE_Spawned(e);
 	lua_pushboolean(L, true);
 	return 1;
 }
@@ -634,7 +656,8 @@ static int m_Use(lua_State *L)
 	edict_t *e = CheckEdict(L, 1);
 	edict_t *other = lua_isnoneornil(L, 2) ? SV_LocalPlayer() : ToEdict(L, 2);
 	gGlobals.time = (float)sv.time;
-	gEntityInterface.pfnUse(e, other ? other : sv.edicts);
+	if (!LuaE_Use(e, other ? other : sv.edicts))
+		gEntityInterface.pfnUse(e, other ? other : sv.edicts);
 	return 0;
 }
 
@@ -655,6 +678,7 @@ static int m_TakeDamage(lua_State *L)
 		return 1;
 	}
 	lua_pushboolean(L, SV_GameObjTakeDamage(e, inflictor, attacker, amount, type));
+	LuaE_Damaged(e, amount, attacker, inflictor, type);   // a Lua entity hears of it with who and how
 	return 1;
 }
 
@@ -740,7 +764,8 @@ static int m_Touch(lua_State *L)
 {
 	edict_t *e = CheckEdict(L, 1), *other = CheckEdict(L, 2);
 	gGlobals.time = (float)sv.time;
-	gEntityInterface.pfnTouch(e, other);
+	if (!LuaE_Touch(e, other))
+		gEntityInterface.pfnTouch(e, other);
 	return 0;
 }
 
@@ -1193,6 +1218,7 @@ void LuaG_Open(lua_State *L)
 	LuaFX_Open(L);   // last: it adds to util and surface
 	LuaR_Open(L);
 	LuaX_Open(L);
+	LuaE_Open(L);
 }
 
 // ---------------------------------------------------------------- hooks fired by the server
@@ -1301,6 +1327,7 @@ void LuaG_ServerStarted(void)
 		announced = Mem_Realloc(announced, sizeof(int) * announced_cap);
 	}
 	memset(announced, 0, sizeof(int) * announced_cap);
+	LuaE_ServerStarted();
 }
 
 // new entities since the last check (the game creates many itself, without telling the engine)
@@ -1352,6 +1379,7 @@ void LuaG_Tick(void)
 	lua_State *L = Lua_GetState();
 	if (!L)
 		return;
+	LuaE_Frame();   // OnTakeDamage for what the game's damage did this frame
 	int top = lua_gettop(L);
 	Lua_Hook("Tick", 0, 0);
 	lua_settop(L, top);

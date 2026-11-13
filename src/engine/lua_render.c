@@ -512,6 +512,8 @@ void LuaR_DrawHook(const char *name)
 	int top = lua_gettop(L);
 	Lua_Hook(name, 0, 0);
 	lua_settop(L, top);
+	if (!strcmp(name, "PostDrawOpaque"))
+		LuaE_Draw();
 	in_draw = false;
 	glPopAttrib();
 	glMatrixMode(GL_MODELVIEW);

@@ -244,6 +244,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_local.h` | 17 | What `lua_host.c` shares with `lua_game.c`: `Lua_GetState`, `Lua_Call`, `Lua_Hook`, `LuaG_PushEntity` |
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
+| `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
 | `lua_ext.c` | 407 | Lua's smaller entity/player calls, `ents.FindInCone/FindAlongRay/FireTargets`, hooks `KeyPress`/`KeyRelease`, `OnNPCKilled`, `CalcView` |
 | `lua_ui.c` | 164 | Lua fonts (`surface.CreateFont/SetFont`) and textured rectangles |
 | `lua_game.c` | 1284 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
@@ -1005,6 +1006,45 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### SWEP plan: step 5, scripted entities, built (2026-11-13, branch `swep-5`)
+
+Next in the brief's order after the Lua API plan (`docs/BRIEF_FOR_AGENTS.md`, section 4). Code: `lua_ents.c`.
+
+- A Lua class gets the game's `info_target` object: `SV_GetEntityInit` asks `LuaE_EntityInit` first, so the
+  map loader, `ents.Create`, the game's own `CreateNamedEntity` and save restores all make Lua entities with
+  no other change. Its think (`RunThink`, pushers' think in `sv_phys.c`), touch (`SV_Impact`,
+  `SV_TouchLinks`, `ent:Touch`) and use (`ent:Use`, `ents.FireTargets`) go to Lua; `ED_Free` calls
+  `OnRemove`. Map keys go to the game's KeyValue first (it fills entvars: origin, model, targetname...), then
+  to `ENT:KeyValue`; `Initialize` runs after the game's Spawn (`ParseEntity`, `ent:Spawn`).
+- `+use`: `info_target` isn't usable to the game, so `LuaE_PlayerUse` (called in `SV_RunPlayerCmd` after
+  `StartCommand`) finds a Lua entity with `Use` within 80 units of the eye, in a 0.7 view cone, not behind a
+  wall, and then removes `IN_USE` from the command (otherwise the game plays its "nothing to use" sound). The
+  `KeyPress` hook doesn't see `IN_USE` while that happens.
+- Entities can now be reached from Lua while a map spawns (`sv.loading`, `EdictsUp` in `lua_game.c`); before,
+  every handle was NULL until the server was active, which broke `self` for map-placed Lua entities.
+- `CurTime()` is the program's clock, not the map's: `NextThink` keeps only the delay from it, and the new
+  `ServerTime()` (the map's `sv.time`) is for times kept in an entity's table. Changing `CurTime` itself to
+  the map's clock (as GMod has it) would move existing timers; left for the owner.
+- Saves: `SAVE_VERSION` 2 adds each level state's Lua data after its light styles; version 1 files still
+  load (checked with an October save). Data is restored by the edict numbers at save time, mapped through
+  the restore table (`RestoreEntities`), not on transitions (point entities don't cross).
+- Checked on Linux, c1a0d: the example charger healed 50 -> 66 while `+use` was held (charge 75 -> 59);
+  saved, changed both, loaded: 66 and 59 came back on a different edict number; `lua_reload` kept them; a
+  test class named `func_healthcharger` replaced both map chargers (brush model from the map key, `SOLID_BSP`,
+  `SIMPLE_USE`, used once each). Damage: `ent:TakeDamage` reaches `OnTakeDamage` with the attacker; the
+  game's bullet and blast in one frame came as one amount without an attacker (`info_target` doesn't set
+  `dmg_inflictor`), then the game removed it and `OnRemove` ran, no crash. c1a0 and c2a5 load with the same
+  entity counts as before. MinGW build compiles; `lua_ents.c` is clean under `-std=c11 -pedantic -Wall
+  -Wextra -Wconversion` except the usual function-pointer cast.
+- 32-bit AddressSanitizer build (`build-asan/out`, recipe in "Source models" step 9 plus `-DOUT_DIR`): use,
+  save/load with nested tables, vectors, angles, an entity reference and a table that contains itself (left
+  out, the rest came back), `lua_reload`, game blast damage removing a Lua entity, a level change: no reports.
+- Not checked: real Windows, Visual C++, the screenshot regression (pixel compare) and
+  `mdlinfo` sweep from the brief (no renderer or model code changed), a Lua entity on a moving platform,
+  `MOVETYPE`s other than none/push for Lua entities.
+- Limits: a map trigger firing a Lua entity by name doesn't reach `ENT:Use` (the game calls the object's
+  `Use` directly; only `ents.FireTargets` routes to Lua). No `EndTouch`/`StartTouch`.
 
 ### Lua API plan: steps 5-7 built (2026-11-13, branches `luaapi-5` to `luaapi-7`); the plan is done
 

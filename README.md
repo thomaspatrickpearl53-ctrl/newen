@@ -367,6 +367,38 @@ Game API (works while a map runs):
   `lua_openscript examples/<name>.lua`.
 - `newen_spawn <classname>` (from the example script) spawns an entity where you're looking.
 
+### Scripted entities (`ENT`)
+
+A file `lua/entities/<class>.lua` fills in a global `ENT` table and becomes the class `<class>` (or call
+`scripted_ents.Register(ENT, class)` yourself; `scripted_ents.Get(class)`, `scripted_ents.GetList()`). Create
+one with `ents.Create(class)`, `ent:SetPos(...)`, `ent:Spawn()`; a map entity whose classname is a Lua class
+becomes one too (a Lua class wins over the game's own class of the same name).
+
+- Functions, all optional: `ENT:Initialize()` (after spawning), `ENT:KeyValue(key, value)` (each key from
+  the map, before `Initialize`), `ENT:Think()` (every frame, unless `self:NextThink(CurTime() + delay)` sets
+  a later time), `ENT:Touch(other)`, `ENT:Use(activator, caller, useType, value)`, `ENT:OnTakeDamage(dmginfo)`,
+  `ENT:OnRemove()`, `ENT:Draw()` (extra drawing with `render.*`; the model is drawn anyway),
+  `ENT:OnRestore()` (after a saved game or a revisited level brought it back), `ENT:OnReloaded()` (after
+  `lua_reload`).
+- `self` is the Entity: every entity method and field works, and any other field (`self.Charge = 10`) is
+  kept in the entity's own table, then looked up in `ENT`. `ENT.Base = "other_class"` inherits from another
+  class (`self.BaseClass`).
+- `+use`: the player uses the Lua entity with a `Use` function they're looking at within reach.
+  `self:SetUseType(SIMPLE_USE)` calls it once per press; the default `CONTINUOUS_USE` every frame the key is
+  held. While it's used the game doesn't see the use key (it would play its "nothing to use" sound).
+- Damage: give it `self.takedamage = DAMAGE_YES` and health. The game's own bullets and explosions take
+  health as they do from any entity (at 0 the game removes it); `OnTakeDamage` hears of it the same frame,
+  with the amount (hits in one frame come together) and, when the game says, who. `ent:TakeDamage` from Lua
+  calls it right away with attacker, inflictor and type. `dmginfo:GetDamage/GetAttacker/GetInflictor/
+  GetDamageType`.
+- Saved games and level states keep the entity's own table: numbers, strings, booleans, vectors, angles,
+  entities and tables of those (functions aren't kept). Times worth keeping should come from `ServerTime()`,
+  the map's clock, which stops while the game is paused and comes back with a save (`CurTime()` is the
+  program's).
+- Lua entities don't follow the player through a level change.
+- Example: `base/lua/entities/lua_healthcharger.lua`, a health charger: `lua_run SpawnHealthCharger()` puts
+  one on the floor in front of you; hold the use key on it.
+
 ## Roadmap
 
 Phase 1, Half-Life runs:

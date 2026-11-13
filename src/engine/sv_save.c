@@ -34,6 +34,8 @@ typedef struct {
 	LEVELLIST     levels[MAX_LEVEL_CONNECTIONS];
 	int           connections;
 	char          styles[64][128];
+	unsigned char *luadata;        // the Lua entities' own tables (lua_ents.c)
+	int           luasize;
 } levelstate_t;
 
 static levelstate_t *states;
@@ -68,6 +70,7 @@ static void FreeState(levelstate_t *ls)
 	Mem_Free(ls->data);
 	FreeTokens(ls->tokens, ls->tokencount);
 	Mem_Free(ls->ents);
+	Mem_Free(ls->luadata);
 	memset(ls, 0, sizeof(*ls));
 }
 
@@ -201,6 +204,7 @@ void SV_SaveLevelState(void)
 	memcpy(ls->levels, sd->levelList, sizeof(LEVELLIST) * ls->connections);
 	for (int i = 0; i < 64; i++)
 		Q_strncpy(ls->styles[i], R_LightStylePattern(i), sizeof(ls->styles[i]));
+	ls->luadata = LuaE_SaveData(&ls->luasize);
 	Con_DPrintf("Saved %s: %d KB, %d connections\n", ls->map, ls->size / 1024, ls->connections);
 	FreeSaveData(sd);
 }
@@ -293,6 +297,15 @@ static int RestoreEntities(levelstate_t *ls, restoremode_t mode, int mask, const
 			*player = true;
 	}
 	gGlobals.pSaveData = NULL;
+
+	// Lua entities' tables, by the edict numbers they had (they don't cross to another level)
+	if (mode != RESTORE_TRANSITION) {
+		edict_t **byindex = Mem_Alloc(sizeof(edict_t *) * (size_t)(ls->numents > 0 ? ls->numents : 1));
+		for (int i = 0; i < ls->numents; i++)
+			byindex[i] = sd->pTable[i].pent;
+		LuaE_RestoreData(ls->luadata, ls->luasize, byindex, ls->numents);
+		Mem_Free(byindex);
+	}
 	FreeSaveData(sd);
 	return count;
 }
@@ -389,7 +402,7 @@ qboolean SV_RestoreTransition(const char *oldmap, const char *landmark)
 // ---------------------------------------------------------------- saved games
 
 #define SAVE_MAGIC   "NEWENSAV"
-#define SAVE_VERSION 1
+#define SAVE_VERSION 2   // 2: the Lua entities' data per level
 
 static void WriteInt(FILE *f, int v) { fwrite(&v, 4, 1, f); }
 static void WriteBytes(FILE *f, const void *p, int n) { WriteInt(f, n); if (n > 0) fwrite(p, 1, (size_t)n, f); }
@@ -579,6 +592,7 @@ static qboolean SaveGame(const char *name, qboolean quiet)
 		}
 		for (int k = 0; k < 64; k++)
 			WriteString(f, ls->styles[k]);
+		WriteBytes(f, ls->luadata, ls->luasize);
 	}
 	fclose(f);
 	FreeSaveData(gd);
@@ -598,7 +612,8 @@ static qboolean LoadGame(const char *name)
 	}
 	size_t start = SkipGameHeader(file, len);
 	reader_t rd = { file + start + 8, file + len, false }, *r = &rd;
-	if (len < start + 12 || memcmp(file + start, SAVE_MAGIC, 8) || ReadInt(r) != SAVE_VERSION) {
+	int version = len >= start + 12 && !memcmp(file + start, SAVE_MAGIC, 8) ? ReadInt(r) : 0;
+	if (version < 1 || version > SAVE_VERSION) {
 		Con_Printf("%s isn't a newen saved game (or it's from another version)\n", name);
 		Mem_Free(file);
 		return false;
@@ -654,6 +669,13 @@ static qboolean LoadGame(const char *name)
 		}
 		for (int k = 0; k < 64 && !rd.bad; k++)
 			ReadStringTo(r, ls->styles[k], sizeof(ls->styles[k]));
+		if (version >= 2 && !rd.bad) {
+			ls->luadata = ReadBytes(r, &ls->luasize);
+			if (!ls->luasize) {
+				Mem_Free(ls->luadata);
+				ls->luadata = NULL;
+			}
+		}
 	}
 	Mem_Free(file);
 	qboolean found = false;

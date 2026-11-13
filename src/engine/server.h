@@ -177,6 +177,23 @@ qboolean    LuaG_PlayerCommand(edict_t *pl);
 void        LuaG_StartCommand(edict_t *pl, usercmd_t *cmd);
 const char *LuaG_EntityKeyValue(const char *classname, const char *key, const char *value);
 
+// lua_ents.c: scripted entities (ENT tables). The Think/Touch/Use calls return true when e is a Lua
+// entity: then Lua had it and the game DLL isn't asked.
+ENTITYINIT  LuaE_EntityInit(const char *classname);   // the class function for a Lua class, else NULL
+qboolean    LuaE_IsScripted(edict_t *e);
+void        LuaE_KeyValue(edict_t *e, const char *key, const char *value);
+void        LuaE_Spawned(edict_t *e);                 // after the game's Spawn: Initialize
+qboolean    LuaE_Think(edict_t *e);
+qboolean    LuaE_Touch(edict_t *e, edict_t *other);
+qboolean    LuaE_Use(edict_t *e, edict_t *activator);
+void        LuaE_PlayerUse(edict_t *pl, usercmd_t *cmd);   // +use on a Lua entity; may clear IN_USE
+void        LuaE_Damaged(edict_t *e, float amount, edict_t *attacker, edict_t *inflictor, int type);
+void        LuaE_Removed(edict_t *e);
+void        LuaE_Frame(void);
+void        LuaE_ServerStarted(void);
+unsigned char *LuaE_SaveData(int *size);              // the Lua entities' tables; NULL if none
+void        LuaE_RestoreData(const unsigned char *data, int size, edict_t **byindex, int count);
+
 // sv_pmove.c
 void        SV_InitPlayerMove(void);                      // after the game DLL loads
 playermove_t *SV_PlayerMove(void);                        // NULL before then

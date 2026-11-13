@@ -28,6 +28,12 @@ unsigned int    LuaR_MaterialTexture(lua_State *L, int idx);   // a Material's G
 
 // lua_ext.c: the smaller entity/player calls and the KeyPress, OnNPCKilled, CalcView hooks; opened by LuaG_Open
 void            LuaX_Open(lua_State *L);
+// lua_ents.c: scripted_ents, the entities' own tables; opened by LuaG_Open
+void            LuaE_Open(lua_State *L);
+qboolean        LuaE_PushTable(lua_State *L, struct edict_s *e);   // false (nothing pushed) if not a Lua entity
+void            LuaE_Draw(void);           // ENT:Draw, inside PostDrawOpaque
+void            LuaE_StateStopping(void);  // lua_reload: the tables are kept...
+void            LuaE_StateStarted(void);   // ...and put back after entities/*.lua ran
 // lua_ui.c: fonts and textured rectangles for surface.*; opened by the host after its surface table
 void            LuaUI_Open(lua_State *L);
 int             LuaUI_DrawText(float x, float y, const char *s, int r, int g, int b, int a);   // -1 = no font set

@@ -1,6 +1,7 @@
 # Lua weapons (SWEPs) and scripted entities: plan
 
-Design only, written 2026-11-12 from newen at commit c9a8232. Nothing here is built. Implementation starts
+Design written 2026-11-12 from newen at commit c9a8232. **Step 5 is built (2026-11-13, branch `swep-5`);
+see "Built" at the end.** The rest isn't. Implementation starts
 only when the owner says "go". It needs `docs/LUA_API_PLAN.md` first (damage, sound, effects), and is the
 second of the three plans the owner asked for together.
 
@@ -129,3 +130,12 @@ can't be checked by a harmless probe. Recommended only if A shows a problem it c
 | S2 | Lua weapons share Half-Life's ammo (9mm, buckshot...) | Not at first: their own ammo types. Sharing needs one more unprobeable number from `hl.dll` |
 | S3 | Scripted entities in the same plan | Yes: weapon pickups need them, and the machinery is the same |
 | S4 | GMod's `SWEP`/`ENT` field and function names | Yes, as far as Half-Life has the same idea, so GMod weapons port with small changes |
+
+## Built
+
+- **Step 5 (2026-11-13, `swep-5`)**: `src/engine/lua_ents.c`, example `base/lua/entities/lua_healthcharger.lua`.
+  As planned, with these differences: the player's `+use` is handled by newen (the game's own use search
+  ignores an `info_target`), and the use key is hidden from the game while it's on a Lua entity; Think runs
+  every frame unless `NextThink` says otherwise; `ServerTime()` was added because `CurTime()` is the
+  program's clock; save files went to version 2. A map trigger firing a Lua entity by name doesn't reach
+  `ENT:Use` yet (the game calls the object directly). Checks and what wasn't checked: HANDOFF section 9.

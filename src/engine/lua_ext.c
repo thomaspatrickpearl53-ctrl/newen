@@ -281,7 +281,8 @@ static int l_FireTargets(lua_State *L)
 		edict_t *e = EDICT_NUM(i);
 		if (e->free || !e->pvPrivateData || stricmp(SV_String(e->v.targetname), name))
 			continue;
-		gEntityInterface.pfnUse(e, activator ? activator : sv.edicts);
+		if (!LuaE_Use(e, activator ? activator : sv.edicts))
+			gEntityInterface.pfnUse(e, activator ? activator : sv.edicts);
 		fired++;
 	}
 	lua_pushinteger(L, fired);

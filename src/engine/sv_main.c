@@ -114,6 +114,7 @@ void ED_Free(edict_t *e)
 {
 	if (e->free)
 		return;
+	LuaE_Removed(e);
 	LuaG_EntityRemoved(e);
 	SV_UnlinkEdict(e);
 	FreePrivateData(e);
@@ -240,9 +241,11 @@ void *SV_GetProcAddress(const char *name)
 	return Sys_GetProcAddress(sv_game_dll, name);
 }
 
+// a class registered in Lua wins over the game's own of the same name
 ENTITYINIT SV_GetEntityInit(const char *classname)
 {
-	return (ENTITYINIT)SV_GetProcAddress(classname);
+	ENTITYINIT lua = LuaE_EntityInit(classname);
+	return lua ? lua : (ENTITYINIT)SV_GetProcAddress(classname);
 }
 
 // Save/restore stores think and touch functions by their exported (decorated) names
@@ -392,12 +395,16 @@ static void ParseEntity(const bspentity_t *be, qboolean isworld)
 		if (replaced)
 			Q_strncpy(value, replaced, sizeof(value));
 		KeyValueData kvd = { cls, key, value, 0 };
-		gEntityInterface.pfnKeyValue(e, &kvd);
+		gEntityInterface.pfnKeyValue(e, &kvd);   // a Lua entity too: the game fills in entvars
+		if (LuaE_IsScripted(e))
+			LuaE_KeyValue(e, key, value);
 	}
 
 	if (gEntityInterface.pfnSpawn(e) < 0 || (e->v.flags & FL_KILLME)) {
 		if (!isworld)
 			ED_Free(e);
+	} else {
+		LuaE_Spawned(e);
 	}
 }
 

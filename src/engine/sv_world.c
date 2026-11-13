@@ -495,7 +495,8 @@ static void TouchLinks(edict_t *ent)
 				continue;
 		}
 		gGlobals.time = (float)sv.time;
-		gEntityInterface.pfnTouch(touch, ent);
+		if (!LuaE_Touch(touch, ent))
+			gEntityInterface.pfnTouch(touch, ent);
 		if (ent->free)
 			return;
 	}

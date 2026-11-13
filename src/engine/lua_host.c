@@ -879,6 +879,35 @@ static int RunHook(const char *name, int nargs, int nres)
 	return SafeCall(nargs + 1, nres, va("hook %s", name)) ? nres : -1;
 }
 
+// lua/entities/<class>.lua: each file fills in a global ENT, registered under the file's name
+static void LoadEntities(void)
+{
+	char **list;
+	int n = ListScripts("entities", "*.lua", &list);
+	for (int i = 0; i < n; i++) {
+		char cls[64];
+		Q_strncpy(cls, list[i], sizeof(cls));
+		char *dot = strrchr(cls, '.');
+		if (dot)
+			*dot = 0;
+		lua_newtable(L);
+		lua_pushstring(L, cls);
+		lua_setfield(L, -2, "ClassName");
+		lua_setglobal(L, "ENT");
+		if (RunScript(va("entities/%s", list[i]), true) >= 0) {
+			lua_getglobal(L, "scripted_ents");
+			lua_getfield(L, -1, "Register");
+			lua_getglobal(L, "ENT");
+			lua_pushstring(L, cls);
+			SafeCall(2, 0, va("entities/%s", list[i]));
+		}
+		lua_settop(L, 0);
+		lua_pushnil(L);
+		lua_setglobal(L, "ENT");
+	}
+	FreeList(list, n);
+}
+
 static void StartState(void)
 {
 	L = luaL_newstate();
@@ -899,6 +928,8 @@ static void StartState(void)
 		lua_settop(L, 0);
 	}
 	FreeList(list, n);
+	LoadEntities();
+	LuaE_StateStarted();
 
 	RunHook("Initialize", 0, 0);
 	lua_settop(L, 0);
@@ -911,6 +942,7 @@ static void StopState(void)
 	if (!L)
 		return;
 	RunHook("ShutDown", 0, 0);
+	LuaE_StateStopping();
 	Cmd_RemoveFlagged(CMD_LUA);
 	lua_close(L);
 	L = NULL;

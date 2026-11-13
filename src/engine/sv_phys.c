@@ -36,7 +36,8 @@ static qboolean RunThink(edict_t *ent)
 		thinktime = (float)sv.time;   // don't let things stay in the past
 	ent->v.nextthink = 0;
 	gGlobals.time = thinktime;
-	gEntityInterface.pfnThink(ent);
+	if (!LuaE_Think(ent))
+		gEntityInterface.pfnThink(ent);
 	if (ent->v.flags & FL_KILLME)
 		ED_Free(ent);
 	return !ent->free;
@@ -50,9 +51,9 @@ void SV_RunThink(edict_t *ent)
 void SV_Impact(edict_t *e1, edict_t *e2)
 {
 	gGlobals.time = (float)sv.time;
-	if (!e1->free && !e2->free && e1->v.solid != SOLID_NOT)
+	if (!e1->free && !e2->free && e1->v.solid != SOLID_NOT && !LuaE_Touch(e1, e2))
 		gEntityInterface.pfnTouch(e1, e2);
-	if (!e1->free && !e2->free && e2->v.solid != SOLID_NOT)
+	if (!e1->free && !e2->free && e2->v.solid != SOLID_NOT && !LuaE_Touch(e2, e1))
 		gEntityInterface.pfnTouch(e2, e1);
 }
 
@@ -427,7 +428,8 @@ static void Physics_Pusher(edict_t *ent)
 	if (thinktime > oldltime && ((ent->v.flags & FL_ALWAYSTHINK) || thinktime <= ent->v.ltime)) {
 		ent->v.nextthink = 0;
 		gGlobals.time = (float)sv.time;
-		gEntityInterface.pfnThink(ent);
+		if (!LuaE_Think(ent))
+			gEntityInterface.pfnThink(ent);
 	}
 }
 
