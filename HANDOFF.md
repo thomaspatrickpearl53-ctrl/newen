@@ -246,9 +246,9 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
 | `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
-| `phys.h` | 46 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
-| `phys_jolt.cpp` | 337 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in fixed 1/120 s substeps (single-threaded job system, 8 MB temp allocator), boxes, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
-| `phys_world.c` | 108 | `phys_test` (no map: angle round trip, impulse units, a tumbling box lands flat, rests, sleeps); later the map's world mesh and edict sync |
+| `phys.h` | 54 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
+| `phys_jolt.cpp` | 415 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
+| `phys_world.c` | 516 | The map's physics world, made on first use (`ServerWorld`): the world model's faces as one static mesh (water left out), every `SOLID_BSP` brush entity as a kinematic body of convex pieces (the solid leaves of its hull-0 BSP tree, corners from plane triples), moved each frame to its edict (`SyncBrushes`, `Phys_ServerFrame` after `SV_Physics`), gone at `SV_Deactivate`; test boxes (`phys_dropbox/boxat/boxes/clear`, drawn after `R_DrawEntities`); `phys_test` |
 | `lua_ext.c` | 407 | Lua's smaller entity/player calls, `ents.FindInCone/FindAlongRay/FireTargets`, hooks `KeyPress`/`KeyRelease`, `OnNPCKilled`, `CalcView` |
 | `lua_ui.c` | 164 | Lua fonts (`surface.CreateFont/SetFont`) and textured rectangles |
 | `lua_game.c` | 1284 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
@@ -1010,6 +1010,34 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### Physics plan: step 2, the map and its brush entities, built (2026-11-13, branch `phys-2`)
+
+- The world model is one static Jolt mesh of its faces (polygons fanned, winding turned for Jolt; water
+  faces left out). Jolt meshes can't move (`MeshShape::MustBeStatic`), found when the first try left the
+  doors' bodies where they started. So each solid brush entity is a kinematic compound of convex pieces:
+  the solid leaves of its own hull-0 tree (`SV_ModelHull`), each the space inside the planes on the path to
+  it, closed by the model's box + 1; corners are the meeting points of plane triples inside every plane.
+  This is the same shape Half-Life's own traces use, exact, and works for rotating entities (their trees
+  are in their own space). A one-box door is 1 piece, a framed one 10.
+- `SyncBrushes` each frame: new solid brush entities join, removed or no-longer-solid ones leave, and only
+  ones whose origin/angles changed get `MoveKinematic` (one that stops gets one more, to zero its speed).
+  `Phys_Step` now takes the frame's whole time in equal substeps of at most 1/120 s (was: fixed substeps
+  with leftover time), so kinematic bodies reach their edict's pose exactly at the end of the frame.
+- MinGW crash, fixed: MinGW's g++ reports 16-byte `new` alignment, Windows' 32-bit `malloc` gives 8, and
+  Jolt stored SSE values to 8-aligned memory while building a mesh. `JPH_DEFAULT_ALLOCATE_ALIGNMENT=8` on
+  MinGW (`CMakeLists.txt`). Visual C++ reports 8 itself; Linux's 32-bit glibc gives 16.
+- Checked, Linux and the MinGW exe under Wine with the same numbers: a box dropped in c1a0d rests at z -280
+  (floor -288 + 8). Lift: c1a0d has none, so c1a0b's elevator (`ele_2`, a `func_platrot` that rises 216 and
+  turns 90 degrees): two boxes on it rose 216 and turned -96 (they slid 6 degrees), positions as the
+  platform's rotation predicts within 3 units; screenshots before/after. Door: c1a0d's restroom door `rr1`
+  slides into its wall pocket, so a box was put in the open doorway; the closing door pushed it 16 units out.
+  The physics world building takes ~10 ms (8469 triangles, 75 brush bodies in c1a0d). Map changes free it.
+  c1a0 loads as before (no physics world unless something asks).
+- c1a0d's `freeman_locker` is a passable door (spawnflag 8, `SOLID_NOT`), so not in the physics world; the
+  "step" there is the HEV suit's glass case.
+- Not checked: Visual C++, real Windows, AddressSanitizer (no file parsing; the hull walk checks node
+  ranges), trains (`func_tracktrain`) carrying boxes, a breakable brush breaking under a box.
 
 ### Physics plan: step 1, Jolt in the build, built (2026-11-13, branch `phys-1`, on `swep-5`)
 

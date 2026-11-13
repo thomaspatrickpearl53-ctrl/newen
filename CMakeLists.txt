@@ -52,6 +52,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
 	endif()
 endif()
 add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/JoltPhysics/Build ${CMAKE_BINARY_DIR}/jolt EXCLUDE_FROM_ALL)
+# 32-bit Windows malloc gives 8-byte alignment, but MinGW's g++ says 16 (__STDCPP_DEFAULT_NEW_ALIGNMENT__),
+# and Jolt then stores SSE values to memory that isn't aligned for them (a crash building map meshes).
+# Visual C++ already says 8; Linux's 32-bit malloc really gives 16.
+if(MINGW)
+	target_compile_definitions(Jolt PUBLIC JPH_DEFAULT_ALLOCATE_ALIGNMENT=8)
+endif()
 
 # ---------------------------------------------------------------- SDL2
 if(WIN32)

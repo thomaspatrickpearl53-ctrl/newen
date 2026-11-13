@@ -12,6 +12,9 @@
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 
 #include <cmath>
@@ -180,7 +183,6 @@ struct physworld_s {
 	PhysicsSystem system;
 	TempAllocatorImpl temp;
 	JobSystemSingleThreaded jobs;
-	float leftover = 0;
 	int bodies = 0;
 
 	physworld_s() : temp(8 * 1024 * 1024), jobs(cMaxPhysicsJobs) {}
@@ -222,14 +224,12 @@ extern "C" void Phys_Step(physworld_t *w, float dt)
 {
 	if (!w || dt <= 0)
 		return;
-	w->leftover += dt;
-	// after a long hitch, give up on catching up rather than spend the next frames simulating
-	if (w->leftover > 0.25f)
-		w->leftover = 0.25f;
-	while (w->leftover >= SUBSTEP) {
-		w->system.Update(SUBSTEP, 1, &w->temp, &w->jobs);
-		w->leftover -= SUBSTEP;
-	}
+	// the frame's whole time, in equal substeps no longer than 1/120 s, so kinematic bodies told to reach
+	// a pose in dt (Phys_MoveKinematic) get there exactly
+	if (dt > 0.25f)
+		dt = 0.25f;
+	int steps = (int)ceilf(dt / SUBSTEP - 0.001f);
+	w->system.Update(dt, steps < 1 ? 1 : steps, &w->temp, &w->jobs);
 }
 
 extern "C" void Phys_Optimize(physworld_t *w)
@@ -282,6 +282,84 @@ extern "C" physbody_t Phys_AddBox(physworld_t *w, const float halfsize[3], const
 	}
 	w->bodies++;
 	return id.GetIndexAndSequenceNumber();
+}
+
+extern "C" physbody_t Phys_AddMesh(physworld_t *w, const float *tris, int numtris, const float origin[3],
+	const float angles[3], physmotion_t motion)
+{
+	if (!w || numtris <= 0 || motion == PHYS_DYNAMIC)
+		return PHYS_NOBODY;
+	TriangleList list;
+	list.reserve((size_t)numtris);
+	for (int i = 0; i < numtris; i++) {
+		const float *t = tris + i * 9;
+		list.push_back(Triangle(Float3(t[0] * METRES, t[1] * METRES, t[2] * METRES),
+			Float3(t[3] * METRES, t[4] * METRES, t[5] * METRES), Float3(t[6] * METRES, t[7] * METRES, t[8] * METRES)));
+	}
+	MeshShapeSettings mesh(list);   // drops degenerate triangles itself
+	ShapeSettings::ShapeResult shape = mesh.Create();
+	if (shape.HasError()) {
+		Con_Warnf("Phys_AddMesh: %s\n", shape.GetError().c_str());
+		return PHYS_NOBODY;
+	}
+	BodyCreationSettings s(shape.Get(), ToJolt(origin), AnglesToQuat(angles), Motion(motion),
+		motion == PHYS_STATIC ? Layers::STILL : Layers::MOVING);
+	BodyID id = Bodies(w).CreateAndAddBody(s, EActivation::DontActivate);
+	if (id.IsInvalid()) {
+		Con_Warnf("Physics: out of bodies\n");
+		return PHYS_NOBODY;
+	}
+	w->bodies++;
+	return id.GetIndexAndSequenceNumber();
+}
+
+// Meshes can't move in Jolt; moving map pieces (doors, lifts) are made of convex pieces instead
+extern "C" physbody_t Phys_AddConvexSet(physworld_t *w, const float *points, const int *counts, int numpieces,
+	const float origin[3], const float angles[3], physmotion_t motion, float mass)
+{
+	if (!w || numpieces <= 0)
+		return PHYS_NOBODY;
+	StaticCompoundShapeSettings compound;
+	int used = 0;
+	for (int i = 0; i < numpieces; i++) {
+		Array<Vec3> pts;
+		pts.reserve((size_t)counts[i]);
+		for (int k = 0; k < counts[i]; k++, points += 3)
+			pts.push_back(Vec3(points[0] * METRES, points[1] * METRES, points[2] * METRES));
+		// a small rounding radius: map brushes can be thin (a 4-unit door is 10 cm)
+		Ref<ConvexHullShapeSettings> hull = new ConvexHullShapeSettings(pts, 0.005f);
+		ShapeSettings::ShapeResult r = hull->Create();
+		if (r.HasError())
+			continue;   // flat or degenerate: nothing to collide with
+		compound.AddShape(Vec3::sZero(), Quat::sIdentity(), r.Get());
+		used++;
+	}
+	if (!used)
+		return PHYS_NOBODY;
+	ShapeSettings::ShapeResult shape = compound.Create();
+	if (shape.HasError()) {
+		Con_Warnf("Phys_AddConvexSet: %s\n", shape.GetError().c_str());
+		return PHYS_NOBODY;
+	}
+	BodyCreationSettings s(shape.Get(), ToJolt(origin), AnglesToQuat(angles), Motion(motion),
+		motion == PHYS_STATIC ? Layers::STILL : Layers::MOVING);
+	if (motion == PHYS_DYNAMIC && mass > 0) {
+		s.mOverrideMassProperties = EOverrideMassProperties::CalculateInertia;
+		s.mMassPropertiesOverride.mMass = mass;
+	}
+	BodyID id = Bodies(w).CreateAndAddBody(s, motion == PHYS_DYNAMIC ? EActivation::Activate : EActivation::DontActivate);
+	if (id.IsInvalid()) {
+		Con_Warnf("Physics: out of bodies\n");
+		return PHYS_NOBODY;
+	}
+	w->bodies++;
+	return id.GetIndexAndSequenceNumber();
+}
+
+extern "C" void Phys_MoveKinematic(physworld_t *w, physbody_t b, const float origin[3], const float angles[3], float dt)
+{
+	if (w && dt > 0)
+		Bodies(w).MoveKinematic(BodyID(b), ToJolt(origin), AnglesToQuat(angles), dt);
 }
 
 extern "C" void Phys_RemoveBody(physworld_t *w, physbody_t b)

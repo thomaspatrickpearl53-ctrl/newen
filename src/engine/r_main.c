@@ -157,6 +157,7 @@ void R_RenderView(void)
 	LuaR_AddModels();   // Lua's clientside models
 	R_DrawWorld();
 	R_DrawEntities();
+	Phys_DrawBoxes();
 	LuaR_DrawHook("PostDrawOpaque");
 	CL_DrawEffects();   // beams, particles, the client's triangles
 	LuaR_DrawHook("PostDrawTranslucent");

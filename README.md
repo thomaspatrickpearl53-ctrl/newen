@@ -279,8 +279,18 @@ Ctrl+L clears it. Useful commands: `cmdlist`, `cvarlist`, `find <text>`, `path`,
 ## Physics (in progress)
 
 newen is getting a physics engine, Jolt, for ragdolls and objects that tumble (`docs/PHYSICS_PLAN.md`).
-Half-Life's own movement stays as it is. So far: `phys_test` checks the library without a map: a box
-dropped onto a floor must land flat, stop and sleep; it prints PASS or FAIL.
+Half-Life's own movement stays as it is. So far:
+
+- `phys_test` checks the library without a map: a box dropped onto a floor must land flat, stop and sleep;
+  it prints PASS or FAIL.
+- The map is in the physics world: its walls and floors, and every solid brush entity (doors, lifts, trains,
+  walls), which follow Half-Life's own movement, so boxes ride lifts and get pushed by doors. A map only
+  gets its physics world when something first needs one.
+- Test boxes: `phys_dropbox [half size 8] [mass kg 20]` drops one in front of you, `phys_boxat x y z [half
+  size] [mass]` puts one at a point, `phys_boxes` lists them (`phys_boxes all` also lists the brush
+  entities), `phys_clear` removes them. They're drawn as plain orange boxes, aren't solid to the player
+  or monsters yet, and aren't saved.
+- `phys_maxbodies` (8192): the most bodies one map's physics world holds, from the next map.
 
 ## Lua (engine level)
 

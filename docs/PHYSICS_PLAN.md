@@ -1,7 +1,7 @@
 # Physics and ragdolls on Half-Life maps: plan
 
-Design written 2026-11-12 from newen at commit c9a8232. **Step 1 is built (2026-11-13, branch `phys-1`); the
-owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
+Design written 2026-11-12 from newen at commit c9a8232. **Steps 1-2 are built (2026-11-13, branches `phys-1`,
+`phys-2`); the owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
 owner asked for together; its Lua calls build on `docs/LUA_API_PLAN.md`, and its props become scripted
 entities from `docs/SWEP_PLAN.md`.
 
@@ -141,3 +141,7 @@ Host frame ──> SV_Frame (hl.dll thinks, moves the player and monsters)
 - **Step 1 (2026-11-13, `phys-1`)**: Jolt 5.6.0, `phys.h`, `phys_jolt.cpp`, `phys_world.c` (`phys_test`).
   Different from the plan: Jolt is single-threaded for now; only SSE2 is assumed; the C++ runtime is linked
   into the exe on both platforms; Jolt allocates with its own allocator. Details in HANDOFF section 9.
+- **Step 2 (2026-11-13, `phys-2`)**: the world as a static mesh, brush entities as kinematic convex pieces
+  (Jolt meshes can't move) from their own BSP trees. The lift check ran on c1a0b's elevator (c1a0d has no
+  lift); the door check had the closing door push a box out of the doorway (c1a0d's doors slide into wall
+  pockets). Test commands `phys_dropbox`, `phys_boxat`, `phys_boxes`, `phys_clear`.

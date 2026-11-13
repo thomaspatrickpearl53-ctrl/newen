@@ -359,6 +359,10 @@ extern qboolean host_initialized;
 void Host_Init(int argc, char **argv);
 void Host_Frame(void);
 void Host_Shutdown(void);
-void Phys_InitCommands(void);   // phys_world.c (Phys_Shutdown is in phys.h)
+// phys_world.c (Phys_Shutdown is in phys.h)
+void Phys_InitCommands(void);
+void Phys_ServerFrame(float dt);    // after the server's frame: brush entities followed, Jolt stepped
+void Phys_ServerStopped(void);      // the map's physics world goes
+void Phys_DrawBoxes(void);          // the test boxes, in the world's view
 NORETURN void Host_Quit(void);
 extern cvar_t *developer;

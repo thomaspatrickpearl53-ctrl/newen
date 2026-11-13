@@ -435,6 +435,7 @@ void SV_Deactivate(void)
 {
 	SV_GameObjClear();
 	LuaG_ClearPlayerHurt();
+	Phys_ServerStopped();
 	if (!sv.edicts)
 		return;
 	if (sv.active && sv_game_loaded)
@@ -588,6 +589,7 @@ void SV_Frame(double frametime)
 	sv.frametime = ft;
 	gGlobals.frametime = ft;
 	SV_Physics();
+	Phys_ServerFrame(ft);
 	if ((pl = SV_LocalPlayer()) != NULL)
 		CheckFixAngle(pl);
 

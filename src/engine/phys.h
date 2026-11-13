@@ -27,12 +27,20 @@ const char  *Phys_Version(void);              // "Jolt 5.6.0 (SSE2, single preci
 physworld_t *Phys_CreateWorld(int maxbodies, float gravity);   // gravity in inches/s^2, downwards
 void         Phys_DestroyWorld(physworld_t *w);
 void         Phys_SetGravity(physworld_t *w, float gravity);
-void         Phys_Step(physworld_t *w, float dt);   // fixed 1/120 s substeps; leftover time carries over
+void         Phys_Step(physworld_t *w, float dt);   // in substeps of at most 1/120 s
 void         Phys_Optimize(physworld_t *w);         // after adding many static bodies at once
 int          Phys_BodyCount(physworld_t *w);
 
 physbody_t   Phys_AddBox(physworld_t *w, const float halfsize[3], const float origin[3], const float angles[3],
 	physmotion_t motion, float mass);
+// triangles (9 floats each, front faces counter-clockwise) in the body's own space; static or kinematic only
+physbody_t   Phys_AddMesh(physworld_t *w, const float *tris, int numtris, const float origin[3], const float angles[3],
+	physmotion_t motion);
+// convex pieces in the body's own space: counts[i] points (xyz) for piece i, one after another
+physbody_t   Phys_AddConvexSet(physworld_t *w, const float *points, const int *counts, int numpieces,
+	const float origin[3], const float angles[3], physmotion_t motion, float mass);
+// a kinematic body reaches this pose at the end of the next dt seconds, carrying what it touches
+void         Phys_MoveKinematic(physworld_t *w, physbody_t b, const float origin[3], const float angles[3], float dt);
 void         Phys_RemoveBody(physworld_t *w, physbody_t b);
 void         Phys_GetPose(physworld_t *w, physbody_t b, float origin[3], float angles[3]);
 void         Phys_SetPose(physworld_t *w, physbody_t b, const float origin[3], const float angles[3]);
