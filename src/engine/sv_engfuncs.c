@@ -61,7 +61,7 @@ float SV_VecToYaw(const vec3_t v)
 }
 
 // the edict as the renderer sees it, frozen at its current frame (for bone queries)
-static qboolean EdictToRentity(const edict_t *e, rentity_t *r)
+qboolean SV_EdictToRentity(const edict_t *e, rentity_t *r)
 {
 	model_t *m = SV_ModelForIndex(e->v.modelindex);
 	if (!m || m->type != mod_studio)
@@ -927,7 +927,7 @@ static void PF_AnimationAutomove(const edict_t *e, float t) {}
 static void PF_GetBonePosition(const edict_t *e, int bone, float *org, float *angles)
 {
 	rentity_t r;
-	if (!e || !EdictToRentity(e, &r))
+	if (!e || !SV_EdictToRentity(e, &r))
 		return;
 	float (*bones)[3][4];
 	int n = R_StudioSetupBones(&r, &bones);
@@ -940,7 +940,7 @@ static void PF_GetBonePosition(const edict_t *e, int bone, float *org, float *an
 static void PF_GetAttachment(const edict_t *e, int att, float *org, float *angles)
 {
 	rentity_t r;
-	if (!e || !EdictToRentity(e, &r))
+	if (!e || !SV_EdictToRentity(e, &r))
 		return;
 	const studiohdr_t *h = r.model->studio.hdr;
 	if (att < 0 || att >= h->numattachments)

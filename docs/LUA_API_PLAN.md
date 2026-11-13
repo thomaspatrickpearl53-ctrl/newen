@@ -1,8 +1,8 @@
 # Bigger Lua API: plan
 
-Written 2026-11-12 from newen at commit c9a8232 (release 0.2.0). **Step 1 is built and checked** on branch
-`codex/luaapi-1`. Implementation was authorized on 2026-11-12; **step 2 is waiting for the damage-bridge
-decision in section 10**. It is the first of three plans the owner asked for
+Written 2026-11-12 from newen at commit c9a8232 (release 0.2.0). **Steps 1 and 2 are built and checked**:
+step 1 by ChatGPT/Codex on branch `codex/luaapi-1`, step 2 (with the scope the owner chose on 2026-11-13,
+section 10) on `luaapi-2`, which builds on it. Step 3 is next. It is the first of three plans the owner asked for
 together; `docs/SWEP_PLAN.md` builds on this one, and `docs/PHYSICS_PLAN.md` adds physics calls to it.
 
 ## 1. In plain terms
@@ -96,7 +96,7 @@ that damage transaction needs the additional bridge described in section 10.
 | Step | Deliverable | Check |
 |---|---|---|
 | 1 — built, 2026-11-12 | `sv_gameobj.c`: the probe only, reported by a `gameobj_info` command | Passed on Linux `hl.so` and Windows `hl.dll` (Wine); deliberately wrong slot refused on both. Model, scene and memory checks recorded in HANDOFF |
-| 2 — decision needed | Damage: `TakeDamage`, `TraceAttack`, `BlastDamage`, `EntityTakeDamage` hook, fallback | Section 10 must be resolved first. A script kills a scientist with a head shot (blood, death animation); `EntityTakeDamage` halves damage; with the probe forced off, `BlastDamage` still hurts through `env_explosion` |
+| 2 — built, 2026-11-13 | Damage, revised scope (section 10): hitbox traces in the engine, `ent:TakeDamage`, `ent:FireBullets`, `util.BlastDamage`, `DMG_*` names, the `env_explosion` fallback. No `EntityTakeDamage` hook (deferred) | Head shot from a script kills a scientist (×3 from the game's own skill cvar, blood on the wall behind, death fall); HL2 Kleiner gets a chest hit; probe forced off: `TakeDamage` refuses, `BlastDamage` kills through `env_explosion`; Windows build gives identical results under Wine; probe passes on all 125 maps |
 | 3 | Sound | A script plays a sentence on a scientist, a sound at a position, swaps the crowbar's hit sound through `EntityEmitSound` |
 | 4 | Effects | Screenshot of each effect from a script |
 | 5 | Drawing in the world and clientside models | Screenshot: boxes round every monster, a floating Source model spinning, name tags via `ToScreen`; classic and modern |
@@ -153,3 +153,24 @@ before implementing it.
 stock-damage interception, and revise the dependent SWEP and physics checks to match the reduced scope.
 
 This is the stop required by the brief's section 8: a step cannot be built as the plan describes.
+
+### Decision (owner, 2026-11-13) and what was built
+
+The owner chose the recommended way through (proposed in review of the stop above):
+
+1. **Hitbox traces in the engine** (`sv_world.c`, `HitboxTrace`), as GoldSrc does: a line that hits a
+   monster's or player's box is tested against the model's posed hitboxes; the closest gives `hitgroup`,
+   `endpos` and the normal. A line that passes between hitboxes still hits the box (hit group 0), so what can
+   be hit is unchanged. This also gives Half-Life's own weapons their hit groups: before, newen never set
+   one, so head shots did body damage. Cvar `sv_hitboxes` (archived, default 1; 0 = boxes only, the old
+   behaviour). Works for Source models through their stand-in header's hitboxes.
+2. **Bullets without `TraceAttack`/`ApplyMultiDamage`** (`sv_damage.c`): the engine traces, scales by hit
+   group from the game's own `sk_<monster|player>_<part><skill>` cvars (Half-Life's defaults if missing),
+   draws blood (colour from the game's `BloodColor`, slot 14) and decals, then calls the checked
+   `TakeDamage` (slot 11). Armor, god mode, pain, death and gibs stay the game's.
+3. **No general `EntityTakeDamage` hook** for the game's own damage: deferred. The SWEP and physics plans
+   were revised so Lua entities always have a real game object behind them (see `docs/SWEP_PLAN.md` section 4).
+
+Probe change: `BloodColor` is checked too (player red, world none), which anchors `TakeDamage`'s slot between
+two checked ones. It is checked on the player, not the scientist: a temporary unspawned scientist (maps
+without one, such as c1a1a) has no blood colour yet, which failed the probe in the first version.

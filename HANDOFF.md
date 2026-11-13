@@ -233,8 +233,9 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `game_api.h` | 716 | Clean-room GoldSrc game interface: `entvars_t`, `edict_t`, `globalvars_t`, `TraceResult`, `KeyValueData`, `enginefuncs_t` (159 entries in order, plus 32 reserved slots in case a newer DLL copies a bigger table), `DLL_FUNCTIONS`, `NEW_DLL_FUNCTIONS`, constants. Static asserts check the sizes (entvars 676, edict 804) |
 | `server.h` | 185 | Server state (`sv`: edicts, precache lists, client info), `trace_t`/`hull_t`, entry points of the `sv_*.c` files, including the checked game-object probe |
 | `sv_main.c` | 953 | Loads the game DLL (`liblist.gam` `gamedll`, `GiveFnptrsToDll` is stdcall, `GetEntityAPI2`/`GetEntityAPI`, optional `GetNewDLLFunctions`), string pool (`string_t` = offset from an empty `pStringBase`), edict alloc/free (0.5 s reuse delay), precache lists (model 1 = world, 2.. = `*n`), map spawn (class export, `KeyValue`, `Spawn`; "angle" becomes "angles"), `ServerActivate`, 2 settling frames, local client connect, the ghost player, `SV_SetupRenderEntities` (edicts to the renderer every frame), commands `edicts`, `status`, `god`, `notarget`, `tracetest`, unknown commands to `pfnClientCommand`; runs the game-object probe before Lua's spawn hooks |
-| `sv_gameobj.c` | 164 | Checked C++ game-object calls: map-start player/world/scientist probe, session failure latch, guarded temporary scientist construction/cleanup, `gameobj_info` and the deliberately wrong-slot check. Linux and MSVC guards; MinGW calls remain unguarded |
+| `sv_gameobj.c` | 216 | Checked C++ game-object calls: map-start player/world/scientist probe (and `BloodColor` on player/world, which anchors `TakeDamage`'s slot), `SV_GameObjTakeDamage`, `SV_GameObjBloodColor`, session failure latch, guarded temporary scientist construction/cleanup, `gameobj_info` and the deliberately wrong-slot check. Linux and MSVC guards; MinGW calls remain unguarded |
 | `sv_engfuncs.c` | 1410 | Every `enginefuncs_t` function. Real: precache, models, traces (line, hull, toss, model, texture), PVS (`FindClientInPVS`, `EntitiesInPVS`, fat PVS, `CheckVisibility`), entity search, private data, cvars (game cvars via `Cvar_RegisterExternal`), info strings, bone/attachment positions, CRC32, random, files, the game's own command buffer (`ServerCommand`/`ServerExecute`), `NameForFunction` via the DLL's export table. Stubs: sound, messages, events, deltas, voice, save/restore helpers |
+| `sv_damage.c` | 177 | Engine-dealt damage (Lua, later Lua weapons): `SV_FireBullets` (spread, hitbox trace, hit-group scale from the game's `sk_*` skill cvars, blood/decals/impacts/tracers, then the checked `TakeDamage`), `SV_BlastDamage` (falloff, line of sight; `env_explosion` fallback when method calls are off) |
 | `sv_world.c` | 433 | Collision: hulls from the BSP clipnodes (hull 0 built from the render nodes in `bsp.c`), box hull, `SV_HullPointContents`, `RecursiveHullCheck`, rotated brush entities, `SV_Move` (world + every linked edict: owner, monsterclip, ignore-glass, `ShouldCollide`), linking (`pfnSetAbsBox`, touched leafs for PVS, brush-shaped trigger touches) |
 | `sv_phys.c` | 781 | `SV_Physics`: `StartFrame`, then per movetype: push (move and rotate, blocking, riders), step (gravity, ground friction), toss/bounce/fly/missile, noclip, follow; think timing (`ltime` for pushers), `FL_KILLME` removal; monster movement: `SV_movestep` (step up/down 18), `SV_CheckBottom`, `SV_MoveToOrigin`, `SV_DropToFloor` |
 | `sv_pmove.c` | 764 | Player movement: fills `playermove_t` (player state, movevars from the `sv_*` cvars, physinfo, physents = world + solid entities within ~256 units, moveents = water/ladder brushes), all the pm callbacks (player traces against physents with the pm hull numbering stand/duck/point/large mapped to BSP hulls 1/3/0/2, `PM_TestPlayerPosition`, point contents incl. content brushes, `PM_HullForBsp`, `PM_TraceModel` into GoldSrc's trace_t layout, `memfgets`, files), then per command `CmdStart`, `PlayerPreThink`, think, `PM_Move`, copy back, link with trigger touches, touch what the move hit, `PlayerPostThink`, `CmdEnd` |
@@ -998,6 +999,38 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### Lua API plan: step 2 built (2026-11-13, branch `luaapi-2`, on top of `codex/luaapi-1`)
+
+The owner chose the recommended way past step 1's stop (`docs/LUA_API_PLAN.md` section 10, "Decision") and
+asked for it to be built here rather than by ChatGPT.
+- **Hitbox traces** (`sv_world.c`, `HitboxTrace`/`RayHitbox`): after a zero-size trace hits a monster's or
+  player's box (`FL_MONSTER`/`FL_CLIENT`, not `SOLID_BSP`), the entity is posed (`SV_EdictToRentity`, now
+  shared from `sv_engfuncs.c`, + `R_StudioSetupBones`) and the ray is tested against each hitbox in its
+  bone's space; the nearest sets `hitgroup`, `fraction`, `endpos` and the face normal. Missing every hitbox
+  keeps the box hit with group 0, so hits and misses are unchanged. `sv_hitboxes 0` restores box-only.
+  **This changes stock play to match GoldSrc**: `hl.dll`'s own bullets now get hit groups (head shots ×3 on
+  monsters by default, also against the player), which newen never set before.
+- **Damage** (`sv_damage.c`, `sv_gameobj.c`): `TakeDamage` is slot 11, `BloodColor` slot 14 (verified by
+  calling slots on player/world/scientist: 14 gives 247/-1/247, and 39 = IsInWorld, 40 = IsPlayer, 41 =
+  IsNetClient, so step 1's slot 40 is right). Both calling conventions take the extra arguments correctly:
+  identical results from Linux `hl.so` and Windows `hl.dll` under Wine.
+- **Lua**: `ent:TakeDamage(amount, attacker, inflictor, type)` (false when calls are off),
+  `ent:FireBullets{Src, Dir, Spread, Num, Damage, Distance, Tracer, IgnoreEntity, Callback}` (defaults from
+  the entity's eyes and aim), `util.BlastDamage(inflictor, attacker, pos, radius, damage)` (returns how many
+  were hurt, -1 when it fell back to `env_explosion`), `DMG_*` globals, and `HitGroup` in trace results.
+- A monster's corpse reads `health` = half its maximum after `TakeDamage` kills it: Half-Life's `BecomeDead`
+  gives corpses health to bleed with. Not a bug; `deadflag` is the reliable "dead" test.
+- Checked: hit groups head/chest/stomach/leg down a scientist, group 0 between the legs, box-only with
+  `sv_hitboxes 0`; a script's head shot kills a scientist (blood on the wall, death fall, screenshot); HL2
+  Kleiner (`mdl_replace`) hit in the chest; probe forced off: `TakeDamage` refuses, blast kills through
+  `env_explosion`; probe passes on **all 125** `valve/maps` (it first failed on maps without a live
+  scientist, fixed by checking `BloodColor` on the player); c2a5 firefight with hitboxes on, no errors;
+  AddressSanitizer session (bullets, kills, blasts on c1a0d and c1a1a, an HL2 Barney): no reports.
+- Not checked: real Windows / Visual C++; the feel of stock fights with head shots now counting (harder for
+  the player too); Half-Life weapons' head shots seen in play (only Lua's were traced and logged).
+- The Linux build links SDL2 from `~/.local/share/Steam/ubuntu12_32/steam-runtime.old/...` now: Steam moved
+  its runtime and the old path vanished. A system 32-bit SDL2 (`lib32-sdl2-compat`) would make it stable.
 
 ### Lua API plan: step 1 built; decision needed before step 2 (2026-11-12)
 

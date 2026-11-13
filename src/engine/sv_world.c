@@ -6,6 +6,8 @@
 // Half-Life's entity counts.
 #include "server.h"
 
+static cvar_t *sv_hitboxes;
+
 vec3_t hull_mins[MAX_HULLS], hull_maxs[MAX_HULLS];
 
 static hull_t box_hull;
@@ -47,6 +49,9 @@ hull_t *SV_HullForBox(const vec3_t mins, const vec3_t maxs)
 
 void SV_InitWorld(void)
 {
+	if (!sv_hitboxes)
+		sv_hitboxes = Cvar_Get("sv_hitboxes", "1", FCVAR_ARCHIVE,
+			"lines that hit a monster or player find the hitbox (head, chest...) for damage, as GoldSrc does; 0 = box only");
 	static const float defmins[4][3] = { { 0, 0, 0 }, { -16, -16, -36 }, { -32, -32, -32 }, { -16, -16, -18 } };
 	static const float defmaxs[4][3] = { { 0, 0, 0 }, { 16, 16, 36 }, { 32, 32, 32 }, { 16, 16, 18 } };
 	// the map's clip hulls were compiled for these sizes; the game's GetHullBounds is for player
@@ -217,6 +222,93 @@ qboolean SV_RecursiveHullCheck(const hull_t *hull, int num, float p1f, float p2f
 	return false;
 }
 
+// The ray from start to end against one box in a bone's space (bone: that space to the world). Returns the
+// fraction along the ray where it enters, or 2 if it misses; *axis is the face it entered through (0-5).
+static float RayHitbox(const float bone[3][4], const vec3_t bmin, const vec3_t bmax, const vec3_t start,
+	const vec3_t end, int *axis)
+{
+	// into the bone's space: the bone matrix is a rotation and a move, so its inverse is the transpose
+	vec3_t s, d, rel;
+	for (int i = 0; i < 3; i++)
+		rel[i] = start[i] - bone[i][3];
+	for (int i = 0; i < 3; i++)
+		s[i] = rel[0] * bone[0][i] + rel[1] * bone[1][i] + rel[2] * bone[2][i];
+	VectorSubtract(end, start, rel);
+	for (int i = 0; i < 3; i++)
+		d[i] = rel[0] * bone[0][i] + rel[1] * bone[1][i] + rel[2] * bone[2][i];
+	float enter = -1, leave = 2;
+	*axis = 0;
+	for (int i = 0; i < 3; i++) {
+		if (fabsf(d[i]) < 1e-8f) {
+			if (s[i] < bmin[i] || s[i] > bmax[i])
+				return 2;
+			continue;
+		}
+		float t1 = (bmin[i] - s[i]) / d[i], t2 = (bmax[i] - s[i]) / d[i];
+		int face = i * 2;
+		if (t1 > t2) {
+			float t = t1; t1 = t2; t2 = t;
+			face++;
+		}
+		if (t1 > enter) {
+			enter = t1;
+			*axis = face;
+		}
+		if (t2 < leave)
+			leave = t2;
+		if (enter > leave)
+			return 2;
+	}
+	if (leave < 0 || enter > 1)
+		return 2;
+	return enter < 0 ? 0 : enter;
+}
+
+// A line that hits a monster's or player's box is tested against the model's hitboxes, posed as the entity
+// is now: the closest one gives the hit group (head, chest, ...) the game scales damage by, and the point on
+// the body where blood goes. A line that passes between the hitboxes still counts as a hit on the box, so
+// what can and can't be hit is unchanged; only where, and so how hard.
+static void HitboxTrace(edict_t *ent, const vec3_t start, const vec3_t end, trace_t *trace)
+{
+	if (!sv_hitboxes || !sv_hitboxes->value || !(ent->v.flags & (FL_MONSTER | FL_CLIENT)))
+		return;
+	rentity_t r;
+	if (!SV_EdictToRentity(ent, &r))
+		return;
+	const studiohdr_t *h = Mod_StudioHeader(r.model);
+	if (!h || h->numhitboxes <= 0)
+		return;
+	float (*bones)[3][4];
+	int nbones = R_StudioSetupBones(&r, &bones);
+	const mstudiobbox_t *hb = STUDIO_PTR(h, h->hitboxindex, mstudiobbox_t);
+	float best = 2;
+	int best_box = -1, best_axis = 0;
+	for (int i = 0; i < h->numhitboxes; i++) {
+		if (hb[i].bone < 0 || hb[i].bone >= nbones)
+			continue;
+		int axis;
+		float t = RayHitbox(bones[hb[i].bone], hb[i].bbmin, hb[i].bbmax, start, end, &axis);
+		if (t < best) {
+			best = t;
+			best_box = i;
+			best_axis = axis;
+		}
+	}
+	if (best_box < 0)
+		return;
+	trace->hitgroup = hb[best_box].group;
+	trace->fraction = best;
+	for (int i = 0; i < 3; i++)
+		trace->endpos[i] = start[i] + best * (end[i] - start[i]);
+	// the face it entered through, turned into the world
+	const float (*b)[4] = bones[hb[best_box].bone];
+	int a = best_axis / 2;
+	float sign = (best_axis & 1) ? 1.0f : -1.0f;
+	for (int i = 0; i < 3; i++)
+		trace->plane.normal[i] = b[i][a] * sign;
+	trace->plane.dist = DotProduct(trace->plane.normal, trace->endpos);
+}
+
 trace_t SV_ClipMoveToEntity(edict_t *ent, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end)
 {
 	trace_t trace;
@@ -256,6 +348,9 @@ trace_t SV_ClipMoveToEntity(edict_t *ent, const vec3_t start, const vec3_t mins,
 	}
 	if (trace.fraction < 1 || trace.startsolid)
 		trace.ent = ent;
+	// a line (bullets, the game's aiming checks) against a body: which part of it
+	if (trace.ent && ent->v.solid != SOLID_BSP && !mins[0] && !mins[1] && !mins[2] && !maxs[0] && !maxs[1] && !maxs[2])
+		HitboxTrace(ent, start, end, &trace);
 	return trace;
 }
 

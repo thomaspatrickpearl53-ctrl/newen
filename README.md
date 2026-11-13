@@ -311,6 +311,16 @@ Game API (works while a map runs):
   `PlayerInitialSpawn(ply)`, `PlayerDeath(ply)`, `PlayerCommand(ply, cmd, args)` (return true to swallow),
   `StartCommand(ply, cmd)` (change the movement input), `EntityKeyValue(class, key, value)` (return a string to
   change a map's entity keys as it loads).
+- Damage, through the game's own rules (armor, god mode, death, gibs): `ent:TakeDamage(amount, [attacker],
+  [inflictor], [DMG_type])`; `ent:FireBullets{ Src, Dir, Spread = Vector(x, y, 0), Num, Damage, Distance,
+  Tracer, IgnoreEntity, Callback = function(hit, damage) end }` (bullets with hit groups, blood and decals,
+  aimed from the entity's eyes by default); `util.BlastDamage(inflictor, attacker, pos, radius, damage)`.
+  Damage types are the `DMG_*` globals (`DMG_BULLET`, `DMG_BLAST`...). If newen's startup check on the game
+  DLL fails (`gameobj_info` says why), `TakeDamage` does nothing and returns false, and `BlastDamage` uses
+  the game's own `env_explosion` instead.
+- Traces also return `HitGroup` (0 body, 1 head, 2 chest, 3 stomach, 4/5 arms, 6/7 legs). Lines that hit a
+  monster or player are checked against its hitboxes, as in GoldSrc, so head shots count for the game's
+  weapons too; `sv_hitboxes 0` goes back to whole-box hits.
 - `PlayerHurt(ply, amount, inflictor, attackerGuess, damageBits)` fires after server DLL calls return,
   including without a client DLL. It snapshots the player's `dmg_take` when the game completes a `Damage`
   message: an accumulated HUD damage amount, not one event per hit or guaranteed health loss (godmode can

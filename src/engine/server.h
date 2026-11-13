@@ -33,6 +33,8 @@ int      SV_TruePointContents(const vec3_t p);  // keeps the current directions
 trace_t  SV_Move(const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int type, edict_t *passedict);
 trace_t  SV_ClipMoveToEntity(edict_t *ent, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end);
 edict_t *SV_TestEntityPosition(edict_t *e);     // what e is stuck in, or NULL
+// sv_engfuncs.c: an edict as the renderer would pose it (studio models only); false otherwise
+qboolean SV_EdictToRentity(const edict_t *e, rentity_t *r);
 hull_t  *SV_HullForBsp(edict_t *ent, const vec3_t mins, const vec3_t maxs, vec3_t offset);
 int      SV_HullPointContents(const hull_t *hull, int num, const vec3_t p);
 hull_t  *SV_HullForBox(const vec3_t mins, const vec3_t maxs);   // shared storage, valid until the next call
@@ -125,6 +127,26 @@ const char *SV_LastSave(void);                          // NULL in a new game
 void        SV_InitGameObj(void);
 void        SV_GameObjProbe(void);
 void        SV_GameObjClear(void);
+qboolean    SV_GameObjReady(void);
+int         SV_GameObjBloodColor(edict_t *e);   // palette index, -1 = doesn't bleed (or calls are off)
+qboolean    SV_GameObjTakeDamage(edict_t *victim, edict_t *inflictor, edict_t *attacker, float damage, int type);
+
+// sv_damage.c: damage dealt by the engine (Lua, later Lua weapons), through the game's own rules
+#define DMG_GENERIC   0
+#define DMG_BULLET    (1 << 1)
+#define DMG_BLAST     (1 << 6)
+#define DMG_NEVERGIB  (1 << 12)
+typedef struct {
+	vec3_t   src, dir;
+	float    spread_x, spread_y;   // tangents of the cone, as Half-Life's VECTOR_CONE_*
+	int      num;
+	float    damage, distance;
+	int      tracer_every;         // a tracer every Nth bullet, 0 = none
+	edict_t *attacker, *ignore;
+} svbullets_t;
+typedef void (*svbullet_hit_t)(const trace_t *tr, float damage, void *ctx);
+void        SV_FireBullets(const svbullets_t *b, svbullet_hit_t on_hit, void *ctx);
+int         SV_BlastDamage(edict_t *inflictor, edict_t *attacker, const vec3_t pos, float radius, float damage);
 // r_main.c: loads a map and starts the server on it (oldmap: a level change; loadgame: from a save)
 void        R_LoadMap(const char *mapname, const char *oldmap, const char *landmark, qboolean loadgame);
 

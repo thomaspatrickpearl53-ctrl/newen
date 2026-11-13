@@ -638,6 +638,104 @@ static int m_Use(lua_State *L)
 	return 0;
 }
 
+// ent:TakeDamage(amount, [attacker], [inflictor], [damagetype]): the game's own damage rules
+static int m_TakeDamage(lua_State *L)
+{
+	edict_t *e = CheckEdict(L, 1);
+	float amount = (float)luaL_checknumber(L, 2);
+	edict_t *attacker = lua_isnoneornil(L, 3) ? NULL : ToEdict(L, 3);
+	edict_t *inflictor = lua_isnoneornil(L, 4) ? attacker : ToEdict(L, 4);
+	int type = (int)luaL_optinteger(L, 5, DMG_GENERIC);
+	if (!SV_GameObjReady()) {
+		static qboolean warned;
+		if (!warned)
+			Con_Warnf("TakeDamage: game method calls are off this session (gameobj_info says why)\n");
+		warned = true;
+		lua_pushboolean(L, false);
+		return 1;
+	}
+	lua_pushboolean(L, SV_GameObjTakeDamage(e, inflictor, attacker, amount, type));
+	return 1;
+}
+
+static int BulletCallback(lua_State *L, int fn, const trace_t *tr, float damage)
+{
+	lua_pushvalue(L, fn);
+	lua_newtable(L);
+	PushVector(L, tr->endpos);
+	lua_setfield(L, -2, "HitPos");
+	PushVector(L, tr->plane.normal);
+	lua_setfield(L, -2, "HitNormal");
+	LuaG_PushEntity(L, tr->ent);
+	lua_setfield(L, -2, "Entity");
+	lua_pushboolean(L, tr->ent == sv.edicts);
+	lua_setfield(L, -2, "HitWorld");
+	lua_pushinteger(L, tr->hitgroup);
+	lua_setfield(L, -2, "HitGroup");
+	lua_pushnumber(L, damage);
+	return lua_pcall(L, 2, 0, 0);
+}
+
+typedef struct { lua_State *L; int fn; } bulletctx_t;
+static void OnBulletHit(const trace_t *tr, float damage, void *ctx)
+{
+	bulletctx_t *c = ctx;
+	if (c->fn && BulletCallback(c->L, c->fn, tr, damage) != LUA_OK) {
+		Con_Errorf("FireBullets callback: %s\n", lua_tostring(c->L, -1));
+		lua_pop(c->L, 1);
+	}
+}
+
+// ent:FireBullets{Src, Dir, Spread = Vector(x, y, 0), Num, Damage, Distance, Tracer, IgnoreEntity,
+// Callback = function(hit, damage)}: bullets from ent, as Half-Life's weapons fire them
+static int m_FireBullets(lua_State *L)
+{
+	edict_t *e = CheckEdict(L, 1);
+	luaL_checktype(L, 2, LUA_TTABLE);
+	svbullets_t b;
+	memset(&b, 0, sizeof(b));
+	b.attacker = e;
+	lua_getfield(L, 2, "Src");
+	if (lua_isnil(L, -1))
+		VectorAdd(e->v.origin, e->v.view_ofs, b.src);
+	else
+		VectorCopy(CheckVec(L, -1), b.src);
+	lua_getfield(L, 2, "Dir");
+	if (lua_isnil(L, -1)) {
+		vec3_t ang = { (e->v.flags & FL_CLIENT) ? e->v.v_angle[0] : -e->v.angles[0],
+			(e->v.flags & FL_CLIENT) ? e->v.v_angle[1] : e->v.angles[1], 0 };
+		AngleVectors(ang, b.dir, NULL, NULL);
+	} else
+		VectorCopy(CheckVec(L, -1), b.dir);
+	lua_getfield(L, 2, "Spread");
+	if (lua_isnumber(L, -1))
+		b.spread_x = b.spread_y = (float)lua_tonumber(L, -1);
+	else if (!lua_isnil(L, -1)) {
+		const float *sp = CheckVec(L, -1);
+		b.spread_x = sp[0];
+		b.spread_y = sp[1];
+	}
+	lua_getfield(L, 2, "Num");
+	b.num = (int)luaL_optinteger(L, -1, 1);
+	lua_getfield(L, 2, "Damage");
+	b.damage = (float)luaL_optnumber(L, -1, 8);
+	lua_getfield(L, 2, "Distance");
+	b.distance = (float)luaL_optnumber(L, -1, 8192);
+	lua_getfield(L, 2, "Tracer");
+	b.tracer_every = (int)luaL_optinteger(L, -1, 0);
+	lua_getfield(L, 2, "IgnoreEntity");
+	b.ignore = lua_isnil(L, -1) ? NULL : ToEdict(L, -1);
+	lua_getfield(L, 2, "Callback");
+	bulletctx_t ctx = { L, 0 };
+	if (lua_isfunction(L, -1))
+		ctx.fn = lua_gettop(L);
+	if (b.num > 256)
+		b.num = 256;   // a typo shouldn't freeze the game
+	SV_FireBullets(&b, OnBulletHit, &ctx);
+	lua_settop(L, 1);
+	return 0;
+}
+
 static int m_Touch(lua_State *L)
 {
 	edict_t *e = CheckEdict(L, 1), *other = CheckEdict(L, 2);
@@ -870,6 +968,8 @@ static int DoTrace(lua_State *L, qboolean hull)
 	lua_setfield(L, -2, "StartSolid");
 	lua_pushboolean(L, t.allsolid);
 	lua_setfield(L, -2, "AllSolid");
+	lua_pushinteger(L, t.hitgroup);
+	lua_setfield(L, -2, "HitGroup");   // 0 body, 1 head, 2 chest, 3 stomach, 4/5 left/right arm, 6/7 legs
 	if (t.fraction < 1 && t.ent) {
 		// the texture name, for footstep-style material checks
 		vec3_t dir, past;
@@ -888,6 +988,18 @@ static int DoTrace(lua_State *L, qboolean hull)
 static int l_util_TraceLine(lua_State *L) { return DoTrace(L, false); }
 static int l_util_TraceHull(lua_State *L) { return DoTrace(L, true); }
 static int l_util_PointContents(lua_State *L) { lua_pushinteger(L, SV_PointContents(CheckVec(L, 1))); return 1; }
+
+// util.BlastDamage(inflictor, attacker, pos, radius, damage): an explosion's damage without its effects
+static int l_util_BlastDamage(lua_State *L)
+{
+	RequireServer(L);
+	edict_t *inflictor = lua_isnoneornil(L, 1) ? NULL : ToEdict(L, 1);
+	edict_t *attacker = lua_isnoneornil(L, 2) ? inflictor : ToEdict(L, 2);
+	vec3_t pos;
+	VectorCopy(CheckVec(L, 3), pos);
+	lua_pushinteger(L, SV_BlastDamage(inflictor, attacker, pos, (float)luaL_checknumber(L, 4), (float)luaL_checknumber(L, 5)));
+	return 1;
+}
 
 static int l_util_PrecacheModel(lua_State *L)
 {
@@ -944,7 +1056,7 @@ void LuaG_Open(lua_State *L)
 		{ "GetAimVector", m_GetAimVector }, { "GetForward", m_GetForward }, { "GetRight", m_GetRight },
 		{ "GetUp", m_GetUp }, { "SetKeyValue", m_SetKeyValue }, { "Spawn", m_Spawn }, { "Use", m_Use },
 		{ "Touch", m_Touch }, { "Remove", m_Remove }, { "Kill", m_Kill }, { "Nick", m_Nick }, { "Name", m_Nick },
-		{ "Give", m_Give }, { NULL, NULL }
+		{ "Give", m_Give }, { "TakeDamage", m_TakeDamage }, { "FireBullets", m_FireBullets }, { NULL, NULL }
 	};
 	luaL_newmetatable(L, ENTITY_MT);
 	lua_pushcfunction(L, e_index);
@@ -980,6 +1092,20 @@ void LuaG_Open(lua_State *L)
 	luaL_newlib(L, ents);
 	lua_setglobal(L, "ents");
 
+	// damage types, Half-Life's numbers
+	static const struct { const char *name; int value; } dmg[] = {
+		{ "DMG_GENERIC", 0 }, { "DMG_CRUSH", 1 << 0 }, { "DMG_BULLET", 1 << 1 }, { "DMG_SLASH", 1 << 2 },
+		{ "DMG_BURN", 1 << 3 }, { "DMG_FREEZE", 1 << 4 }, { "DMG_FALL", 1 << 5 }, { "DMG_BLAST", 1 << 6 },
+		{ "DMG_CLUB", 1 << 7 }, { "DMG_SHOCK", 1 << 8 }, { "DMG_SONIC", 1 << 9 }, { "DMG_ENERGYBEAM", 1 << 10 },
+		{ "DMG_NEVERGIB", 1 << 12 }, { "DMG_ALWAYSGIB", 1 << 13 }, { "DMG_DROWN", 1 << 14 },
+		{ "DMG_PARALYZE", 1 << 15 }, { "DMG_NERVEGAS", 1 << 16 }, { "DMG_POISON", 1 << 17 },
+		{ "DMG_RADIATION", 1 << 18 }, { "DMG_ACID", 1 << 20 },
+	};
+	for (size_t i = 0; i < sizeof(dmg) / sizeof(dmg[0]); i++) {
+		lua_pushinteger(L, dmg[i].value);
+		lua_setglobal(L, dmg[i].name);
+	}
+
 	static const luaL_Reg player[] = {
 		{ "GetAll", l_player_GetAll }, { "GetByID", l_Entity }, { NULL, NULL }
 	};
@@ -989,7 +1115,7 @@ void LuaG_Open(lua_State *L)
 	static const luaL_Reg util[] = {
 		{ "TraceLine", l_util_TraceLine }, { "TraceHull", l_util_TraceHull },
 		{ "PointContents", l_util_PointContents }, { "PrecacheModel", l_util_PrecacheModel },
-		{ "PrecacheSound", l_util_PrecacheSound }, { NULL, NULL }
+		{ "PrecacheSound", l_util_PrecacheSound }, { "BlastDamage", l_util_BlastDamage }, { NULL, NULL }
 	};
 	luaL_newlib(L, util);
 	lua_setglobal(L, "util");

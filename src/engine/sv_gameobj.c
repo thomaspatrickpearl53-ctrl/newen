@@ -25,16 +25,21 @@
 #endif
 
 typedef int (OBJ_CALL *obj_int_t)(OBJ_THIS);
+typedef int (OBJ_CALL *obj_takedamage_t)(OBJ_THIS, entvars_t *inflictor, entvars_t *attacker, float damage, int type);
 
 // CBaseEntity has no virtual destructor. These slots are the same in Valve's MSVC and GCC builds.
 // Order checked against ValveSoftware/halflife's public dlls/cbase.h; no SDK code is used here.
+// TakeDamage sits between Classify and BloodColor, which the probe both checks, so a layout change
+// anywhere up to it moves BloodColor and fails the probe.
 static const struct {
-	int classify, is_player;
-} object_slots = { 8, 40 };
+	int classify, take_damage, blood_color, is_player;
+} object_slots = { 8, 11, 14, 40 };
+#define BLOOD_COLOR_RED  247
+#define DONT_BLEED       -1
 
 static cvar_t *gameobj_testbadslot;
 static qboolean object_ready, session_failed, probe_ran;
-static int player_answer, world_answer, scientist_answer;
+static int player_answer, world_answer, scientist_answer, blood_answer, world_blood_answer;
 static const char *object_reason = "no map probe yet";
 
 static void ObjectFailed(const char *reason)
@@ -130,15 +135,61 @@ void SV_GameObjProbe(void)
 		ObjectFailed("scientist Classify probe failed");
 		return;
 	}
+	// on the player and the world: both always spawned (a temporary scientist isn't, and has no blood yet)
+	if (!ObjectInt(player, object_slots.blood_color, &blood_answer) || blood_answer != BLOOD_COLOR_RED ||
+		!ObjectInt(EDICT_NUM(0), object_slots.blood_color, &world_blood_answer) || world_blood_answer != DONT_BLEED) {
+		ObjectFailed("BloodColor probe failed");
+		return;
+	}
 	object_ready = true;
 	object_reason = "probe passed";
-	Con_Printf("Game objects: probe passed (player 1, world 0, scientist 3)\n");
+	Con_Printf("Game objects: probe passed (player 1, world 0, scientist 3; blood: player red, world none)\n");
+}
+
+qboolean SV_GameObjReady(void)
+{
+	return object_ready;
+}
+
+// The entity's blood colour (a palette index), or -1 for none or when calls are off
+int SV_GameObjBloodColor(edict_t *e)
+{
+	int color = DONT_BLEED;
+	if (!object_ready || !ObjectInt(e, object_slots.blood_color, &color))
+		return DONT_BLEED;
+	return color;
+}
+
+static int TakeDamageRaw(edict_t *victim, entvars_t *inflictor, entvars_t *attacker, float damage, int type)
+{
+	obj_takedamage_t *methods = *(obj_takedamage_t **)victim->pvPrivateData;
+	if (!methods || !methods[object_slots.take_damage])
+		return 0;
+	return methods[object_slots.take_damage](OBJ_ARGS(victim->pvPrivateData), inflictor, attacker, damage, type);
+}
+
+// The game's own damage on victim: its armor, god mode, pain, death and gibbing rules all apply.
+// inflictor/attacker may be NULL (the world). False if calls are off or the call failed.
+qboolean SV_GameObjTakeDamage(edict_t *victim, edict_t *inflictor, edict_t *attacker, float damage, int type)
+{
+	if (!object_ready || !victim || victim->free || !victim->pvPrivateData || victim->v.takedamage == 0)
+		return false;
+	entvars_t *world = &sv.edicts->v;
+	entvars_t *inf = inflictor && !inflictor->free ? &inflictor->v : world;
+	entvars_t *att = attacker && !attacker->free ? &attacker->v : world;
+	volatile qboolean ok = true;
+	gGlobals.time = (float)sv.time;
+	OBJ_GUARDED(TakeDamageRaw(victim, inf, att, damage, type), ok = false);
+	if (!ok)
+		ObjectFailed("TakeDamage call failed");
+	return ok;
 }
 
 static void GameObjInfo_f(void)
 {
 	Con_Printf("Game objects: %s (%s)\n", object_ready ? "ready" : "off", object_reason);
-	Con_Printf("  slots: Classify %d, IsPlayer %d; %s ABI\n", object_slots.classify, object_slots.is_player,
+	Con_Printf("  slots: Classify %d, TakeDamage %d, BloodColor %d, IsPlayer %d; %s ABI\n", object_slots.classify,
+		object_slots.take_damage, object_slots.blood_color, object_slots.is_player,
 #ifdef _WIN32
 		"Windows thiscall");
 #ifdef _MSC_VER
@@ -151,7 +202,8 @@ static void GameObjInfo_f(void)
 	Con_Printf("  calls guarded with the engine's signal handler\n");
 #endif
 	if (probe_ran)
-		Con_Printf("  answers: player %d, world %d, scientist %d\n", player_answer, world_answer, scientist_answer);
+		Con_Printf("  answers: player %d, world %d, scientist %d, blood %d / %d\n", player_answer, world_answer,
+			scientist_answer, blood_answer, world_blood_answer);
 	if (gameobj_testbadslot->value)
 		Con_Printf("  deliberate wrong-slot test enabled (applies at map start)\n");
 }

@@ -83,6 +83,7 @@ add_executable(newen WIN32
 	src/engine/r_ents.c
 	src/engine/sv_main.c
 	src/engine/sv_gameobj.c
+	src/engine/sv_damage.c
 	src/engine/sv_engfuncs.c
 	src/engine/sv_world.c
 	src/engine/sv_phys.c
