@@ -101,6 +101,7 @@ add_executable(newen WIN32
 	src/engine/lua_ents.c
 	src/engine/phys_jolt.cpp
 	src/engine/phys_world.c
+	src/engine/phys_ragdoll.c
 	src/engine/lua_ui.c
 	src/engine/image.c
 	src/engine/wad.c

@@ -16,6 +16,9 @@
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyLockMulti.h>
+#include <Jolt/Physics/Collision/GroupFilterTable.h>
+#include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 
 #include <cmath>
 #include <cstdarg>
@@ -184,6 +187,8 @@ struct physworld_s {
 	TempAllocatorImpl temp;
 	JobSystemSingleThreaded jobs;
 	int bodies = 0;
+	Array<Ref<GroupFilterTable>> groups;   // physgroup_t - 1; freed slots are null and reused
+	Array<Ref<Constraint>> joints;         // physjoint_t - 1, the same way
 
 	physworld_s() : temp(8 * 1024 * 1024), jobs(cMaxPhysicsJobs) {}
 };
@@ -204,6 +209,9 @@ extern "C" void Phys_DestroyWorld(physworld_t *w)
 {
 	if (!w)
 		return;
+	for (Ref<Constraint> &c : w->joints)
+		if (c != nullptr)
+			w->system.RemoveConstraint(c);
 	BodyInterface &bi = w->system.GetBodyInterfaceNoLock();
 	BodyIDVector ids;
 	w->system.GetBodies(ids);
@@ -412,4 +420,214 @@ extern "C" void Phys_AddImpulse(physworld_t *w, physbody_t b, const float impuls
 extern "C" int Phys_IsAwake(physworld_t *w, physbody_t b)
 {
 	return Bodies(w).IsActive(BodyID(b)) ? 1 : 0;
+}
+
+// ---------------------------------------------------------------- jointed things
+
+static Mat44 ToJoltMatrix(const float m[3][4])
+{
+	return Mat44(Vec4(m[0][0], m[1][0], m[2][0], 0), Vec4(m[0][1], m[1][1], m[2][1], 0), Vec4(m[0][2], m[1][2], m[2][2], 0),
+		Vec4(m[0][3] * METRES, m[1][3] * METRES, m[2][3] * METRES, 1));
+}
+
+// one hull per piece; flat or degenerate pieces are left out. Null if nothing is left.
+static RefConst<Shape> ConvexSetShape(const float *points, const int *counts, int numpieces, const char *who)
+{
+	StaticCompoundShapeSettings compound;
+	int used = 0;
+	for (int i = 0; i < numpieces; i++) {
+		Array<Vec3> pts;
+		pts.reserve((size_t)counts[i]);
+		for (int k = 0; k < counts[i]; k++, points += 3)
+			pts.push_back(Vec3(points[0] * METRES, points[1] * METRES, points[2] * METRES));
+		Ref<ConvexHullShapeSettings> hull = new ConvexHullShapeSettings(pts, 0.005f);
+		ShapeSettings::ShapeResult r = hull->Create();
+		if (r.HasError())
+			continue;
+		compound.AddShape(Vec3::sZero(), Quat::sIdentity(), r.Get());
+		used++;
+	}
+	if (!used)
+		return nullptr;
+	ShapeSettings::ShapeResult shape = compound.Create();
+	if (shape.HasError()) {
+		Con_Warnf("%s: %s\n", who, shape.GetError().c_str());
+		return nullptr;
+	}
+	return shape.Get();
+}
+
+extern "C" physbody_t Phys_AddConvexSetAt(physworld_t *w, const float *points, const int *counts, int numpieces,
+	const float pose[3][4], physmotion_t motion, float mass, float inertiascale)
+{
+	if (!w || numpieces <= 0)
+		return PHYS_NOBODY;
+	RefConst<Shape> shape = ConvexSetShape(points, counts, numpieces, "Phys_AddConvexSetAt");
+	if (!shape)
+		return PHYS_NOBODY;
+	Mat44 m = ToJoltMatrix(pose);
+	BodyCreationSettings s(shape, RVec3(m.GetTranslation()), m.GetQuaternion().Normalized(), Motion(motion),
+		motion == PHYS_STATIC ? Layers::STILL : Layers::MOVING);
+	if (motion == PHYS_DYNAMIC && mass > 0) {
+		s.mOverrideMassProperties = EOverrideMassProperties::CalculateInertia;
+		s.mMassPropertiesOverride.mMass = mass;
+	}
+	if (inertiascale > 0)
+		s.mInertiaMultiplier = inertiascale;
+	BodyID id = Bodies(w).CreateAndAddBody(s, motion == PHYS_DYNAMIC ? EActivation::Activate : EActivation::DontActivate);
+	if (id.IsInvalid()) {
+		Con_Warnf("Physics: out of bodies\n");
+		return PHYS_NOBODY;
+	}
+	w->bodies++;
+	return id.GetIndexAndSequenceNumber();
+}
+
+extern "C" void Phys_GetMatrix(physworld_t *w, physbody_t b, float pose[3][4])
+{
+	RVec3 pos;
+	Quat rot;
+	Bodies(w).GetPositionAndRotation(BodyID(b), pos, rot);
+	Mat44 m = Mat44::sRotation(rot);
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++)
+			pose[r][c] = m(r, c);
+		pose[r][3] = (float)pos[r] * INCHES;
+	}
+}
+
+extern "C" void Phys_SetMotion(physworld_t *w, physbody_t b, const float velocity[3], const float spin[3])
+{
+	BodyInterface &bi = Bodies(w);
+	BodyID id(b);
+	Vec3 v(velocity[0] * METRES, velocity[1] * METRES, velocity[2] * METRES);
+	Vec3 a(spin[0] * DEG, spin[1] * DEG, spin[2] * DEG);
+	// Jolt's speed is the centre of mass's, which a turning body moves differently from its origin
+	Vec3 arm = Vec3(bi.GetCenterOfMassPosition(id) - bi.GetPosition(id));
+	bi.SetLinearAndAngularVelocity(id, v + a.Cross(arm), a);
+}
+
+extern "C" void Phys_SetDamping(physworld_t *w, physbody_t b, float linear, float angular)
+{
+	BodyLockWrite lock(w->system.GetBodyLockInterface(), BodyID(b));
+	if (!lock.Succeeded() || !lock.GetBody().IsDynamic())
+		return;
+	MotionProperties *mp = lock.GetBody().GetMotionProperties();
+	mp->SetLinearDamping(linear < 0 ? 0 : linear);
+	mp->SetAngularDamping(angular < 0 ? 0 : angular);
+}
+
+extern "C" void Phys_Sleep(physworld_t *w, physbody_t b)
+{
+	Bodies(w).DeactivateBody(BodyID(b));
+}
+
+extern "C" physgroup_t Phys_NewGroup(physworld_t *w, int numparts)
+{
+	if (!w || numparts < 1)
+		return 0;
+	Ref<GroupFilterTable> table = new GroupFilterTable((uint)numparts);
+	for (int i = 0; i < numparts; i++)
+		for (int j = i + 1; j < numparts; j++)
+			table->DisableCollision((CollisionGroup::SubGroupID)i, (CollisionGroup::SubGroupID)j);
+	size_t slot = 0;
+	while (slot < w->groups.size() && w->groups[slot] != nullptr)
+		slot++;
+	if (slot == w->groups.size())
+		w->groups.push_back(table);
+	else
+		w->groups[slot] = table;
+	return (physgroup_t)slot + 1;
+}
+
+static GroupFilterTable *Group(physworld_t *w, physgroup_t g)
+{
+	return w && g > 0 && (size_t)g <= w->groups.size() ? w->groups[(size_t)g - 1].GetPtr() : nullptr;
+}
+
+extern "C" void Phys_GroupCollide(physworld_t *w, physgroup_t g, int part1, int part2)
+{
+	GroupFilterTable *t = Group(w, g);
+	if (t && part1 != part2 && part1 >= 0 && part2 >= 0)
+		t->EnableCollision((CollisionGroup::SubGroupID)part1, (CollisionGroup::SubGroupID)part2);
+}
+
+extern "C" void Phys_SetGroup(physworld_t *w, physbody_t b, physgroup_t g, int part)
+{
+	GroupFilterTable *t = Group(w, g);
+	if (!t)
+		return;
+	BodyLockWrite lock(w->system.GetBodyLockInterface(), BodyID(b));
+	if (lock.Succeeded())
+		lock.GetBody().SetCollisionGroup(CollisionGroup(t, (CollisionGroup::GroupID)g, (CollisionGroup::SubGroupID)part));
+}
+
+extern "C" void Phys_FreeGroup(physworld_t *w, physgroup_t g)
+{
+	if (Group(w, g))
+		w->groups[(size_t)g - 1] = nullptr;
+}
+
+extern "C" physjoint_t Phys_AddJoint(physworld_t *w, physbody_t parent, physbody_t child, const float frame1[3][4],
+	const float frame2[3][4], const float mindeg[3], const float maxdeg[3], float friction)
+{
+	if (!w || parent == PHYS_NOBODY || child == PHYS_NOBODY || parent == child)
+		return 0;
+	BodyID ids[2] = { BodyID(parent), BodyID(child) };
+	Ref<Constraint> joint;
+	{
+		BodyLockMultiWrite lock(w->system.GetBodyLockInterface(), ids, 2);
+		Body *b1 = lock.GetBody(0), *b2 = lock.GetBody(1);
+		if (!b1 || !b2)
+			return 0;
+		Mat44 f1 = ToJoltMatrix(frame1), f2 = ToJoltMatrix(frame2);
+		SixDOFConstraintSettings s;
+		// the frames are in the bodies' own spaces; Jolt wants them from each centre of mass
+		s.mSpace = EConstraintSpace::LocalToBodyCOM;
+		s.mPosition1 = RVec3(f1.GetTranslation() - b1->GetShape()->GetCenterOfMass());
+		s.mAxisX1 = f1.GetAxisX().Normalized();
+		s.mAxisY1 = f1.GetAxisY().Normalized();
+		s.mPosition2 = RVec3(f2.GetTranslation() - b2->GetShape()->GetCenterOfMass());
+		s.mAxisX2 = f2.GetAxisX().Normalized();
+		s.mAxisY2 = f2.GetAxisY().Normalized();
+		s.mSwingType = ESwingType::Pyramid;   // the limits aren't the same both ways (a knee)
+		s.MakeFixedAxis(SixDOFConstraintSettings::EAxis::TranslationX);
+		s.MakeFixedAxis(SixDOFConstraintSettings::EAxis::TranslationY);
+		s.MakeFixedAxis(SixDOFConstraintSettings::EAxis::TranslationZ);
+		for (int i = 0; i < 3; i++) {
+			SixDOFConstraintSettings::EAxis axis = (SixDOFConstraintSettings::EAxis)(SixDOFConstraintSettings::EAxis::RotationX + i);
+			float lo = mindeg[i], hi = maxdeg[i];
+			lo = lo < -180 ? -180 : lo > 180 ? 180 : lo;
+			hi = hi < -180 ? -180 : hi > 180 ? 180 : hi;
+			if (hi - lo < 0.5f) {
+				// no turning: a range that doesn't hold zero can't be fixed there, so it stays a (tiny) range
+				if (lo <= 0 && hi >= 0)
+					s.MakeFixedAxis(axis);
+				else
+					s.SetLimitedAxis(axis, lo * DEG, (lo + 0.5f) * DEG);
+			} else
+				s.SetLimitedAxis(axis, lo * DEG, hi * DEG);
+			s.mMaxFriction[axis] = friction > 0 ? friction : 0;
+		}
+		joint = s.Create(*b1, *b2);
+	}
+	if (joint == nullptr)
+		return 0;
+	w->system.AddConstraint(joint);
+	size_t slot = 0;
+	while (slot < w->joints.size() && w->joints[slot] != nullptr)
+		slot++;
+	if (slot == w->joints.size())
+		w->joints.push_back(joint);
+	else
+		w->joints[slot] = joint;
+	return (physjoint_t)slot + 1;
+}
+
+extern "C" void Phys_RemoveJoint(physworld_t *w, physjoint_t j)
+{
+	if (!w || j <= 0 || (size_t)j > w->joints.size() || w->joints[(size_t)j - 1] == nullptr)
+		return;
+	w->system.RemoveConstraint(w->joints[(size_t)j - 1]);
+	w->joints[(size_t)j - 1] = nullptr;
 }

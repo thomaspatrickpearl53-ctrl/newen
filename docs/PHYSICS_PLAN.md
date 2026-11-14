@@ -1,7 +1,7 @@
 # Physics and ragdolls on Half-Life maps: plan
 
-Design written 2026-11-12 from newen at commit c9a8232. **Steps 1-3 are built (2026-11-14, branches `phys-1` to
-`phys-3`); the owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
+Design written 2026-11-12 from newen at commit c9a8232. **Steps 1-4 are built (2026-11-14, branches `phys-1` to
+`phys-4`); the owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
 owner asked for together; its Lua calls build on `docs/LUA_API_PLAN.md`, and its props become scripted
 entities from `docs/SWEP_PLAN.md`.
 
@@ -149,3 +149,9 @@ Host frame ──> SV_Frame (hl.dll thinks, moves the player and monsters)
   the episodes' and Lost Coast's, 2747 in all). Found on the way: a jointed model's solids are stored in
   their bones' own space, a prop's in the model's; the seagull's feather solids are flat and have no
   shape. `phyinfo` also takes a pattern (`phyinfo hl2:models/*.phy`) to read and count every match.
+- **Step 4 (2026-11-14, `phys-4`)**: `phys_ragdoll.c`; joints and collision groups in `phys.h`. A Combine
+  soldier standing in for a grunt on c2a5 falls limp; 25 killed at once all fall, then 16 stay simulated.
+  Different from the plan: a ragdoll over `phys_ragdoll_max` keeps its last pose instead of disappearing,
+  and only once it lies still or is 3 seconds old; its starting speed comes from the entity's last two
+  living frames; after loading a save a corpse falls again (an edict can't hold a ragdoll's pose).
+  New: `phys_ragdolls` (on/off), `phys_showtime`, `phys_ragdolls_list`.

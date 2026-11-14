@@ -124,7 +124,7 @@ static brushbody_t *brushes;      // by edict number
 static int          brushes_cap;
 static dropbox_t   *boxes;
 static int          box_count, box_cap;
-static cvar_t      *phys_maxbodies;
+static cvar_t      *phys_maxbodies, *phys_showtime;
 
 // a brush model's faces as triangles in its own space (front faces counter-clockwise; BSP polygons run
 // clockwise seen from the front)
@@ -347,6 +347,13 @@ static void SyncBrushes(float dt)
 	}
 }
 
+static physworld_t *ServerWorld(void);
+
+physworld_t *Phys_ServerWorld(qboolean create)
+{
+	return create ? ServerWorld() : svworld;
+}
+
 // the map's physics world, made the first time something needs it
 static physworld_t *ServerWorld(void)
 {
@@ -370,15 +377,37 @@ static physworld_t *ServerWorld(void)
 // after the server's frame: Half-Life has moved its doors and trains; Jolt follows and steps
 void Phys_ServerFrame(float dt)
 {
-	if (!svworld || dt <= 0)
+	if (dt <= 0)
+		return;
+	double t0 = Sys_FloatTime();
+	Ragdoll_Frame();   // may make the world
+	if (!svworld)
 		return;
 	Phys_SetGravity(svworld, Cvar_VariableValue("sv_gravity"));
 	SyncBrushes(dt);
 	Phys_Step(svworld, dt);
+	Ragdoll_AfterStep();
+
+	// phys_showtime: what physics cost, once a second
+	static double total, worst, next;
+	static int frames;
+	double ms = (Sys_FloatTime() - t0) * 1000;
+	total += ms;
+	frames++;
+	if (ms > worst)
+		worst = ms;
+	if (sv.time >= next || sv.time < next - 2) {
+		if (phys_showtime->value)
+			Con_Printf("physics: %.2f ms a frame, worst %.2f, %d bodies\n", total / frames, worst, Phys_BodyCount(svworld));
+		total = worst = 0;
+		frames = 0;
+		next = sv.time + 1;
+	}
 }
 
 void Phys_ServerStopped(void)
 {
+	Ragdoll_Clear();
 	Phys_DestroyWorld(svworld);
 	svworld = NULL;
 	worldbody = PHYS_NOBODY;
@@ -512,5 +541,7 @@ void Phys_InitCommands(void)
 	Cmd_AddCommand("phys_boxat", BoxAt_f, "a test box at x y z [half size] [mass]");
 	Cmd_AddCommand("phys_boxes", Boxes_f, "lists the test boxes");
 	Cmd_AddCommand("phys_clear", ClearBoxes_f, "removes the test boxes");
+	phys_showtime = Cvar_Get("phys_showtime", "0", 0, "prints what physics costs each frame (milliseconds), once a second");
+	Ragdoll_Init();
 	phys_maxbodies = Cvar_Get("phys_maxbodies", "8192", FCVAR_ARCHIVE, "most bodies a map's physics world holds (from the next map)");
 }

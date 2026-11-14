@@ -236,6 +236,8 @@ typedef struct srcmodel_s {
 	// or a jaw bone turned about one of its axes (settings file)
 	int             jawbone, jawaxis;
 	float           jawdegrees;
+	// its physics file, or NULL: for ragdolls and props
+	struct srcphys_s *phys;
 } srcmodel_t;
 
 // Loads a Source model into m. path is the .mdl's file (its companions sit beside it); it differs from
@@ -266,6 +268,7 @@ void     SrcAnim_CalcPose(const srcmodel_t *s, int sequence, float cycle, const 
 // One rigid part of a model. A character has one per moving bone, named after it; a prop has one.
 typedef struct {
 	int    index;
+	int    bone;                // set by the model loader: the model's bone of that name, or -1
 	char   name[64];            // the bone it moves with (a jointed model), or the model's name
 	char   parent[64];          // the solid it hangs from, "" for the root
 	char   surfaceprop[64];     // what it's made of ("flesh", "metal"): sounds and friction
@@ -290,7 +293,7 @@ typedef struct {
 	float friction[3];
 } srcphyjoint_t;
 
-typedef struct {
+typedef struct srcphys_s {
 	int            checksum;    // the .mdl's it was made with
 	int            numsolids;
 	srcphysolid_t *solids;
@@ -304,7 +307,7 @@ typedef struct {
 } srcphys_t;
 
 // name: the model's or the .phy's path. NULL if it has none or it's damaged (with a warning). SrcPhys_Free it.
-srcphys_t *SrcPhys_Load(const char *name);
+struct srcphys_s *SrcPhys_Load(const char *name);
 srcphys_t *SrcPhys_Parse(const char *label, const unsigned char *data, size_t size);
 void       SrcPhys_Free(srcphys_t *ph);
 void       SrcPhys_Init(void);   // the phyinfo command

@@ -246,10 +246,11 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
 | `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
-| `phys.h` | 54 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
-| `phys_jolt.cpp` | 415 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
+| `phys.h` | 84 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
+| `phys_jolt.cpp` | 633 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
+| `phys_ragdoll.c` | 513 | Ragdolls (physics plan step 4): `Ragdoll_Frame` before each physics step watches every edict whose Source model has a jointed `.phy` (two snapshots of its last living frames), makes a ragdoll when `deadflag` is set (`MakeRagdoll`: a body per solid at its bone, joints from the rest pose, the file's collision pairs), removes it when the edict goes; `Ragdoll_AfterStep` copies the bodies into bone matrices and enforces `phys_ragdoll_max`/`phys_ragdoll_time`; `Ragdoll_ForEdict`/`Ragdoll_Bones` give them to the renderer (`rentity_t::ragdoll`, `SrcSetupBones`); `phys_ragdolls_list` |
 | `src_phys.c` | 530 | Source models' `.phy` files (physics plan step 3): `SrcPhys_Load`/`SrcPhys_Parse` give a `srcphys_t` (`src_local.h`): each solid's convex pieces as points + counts (the layout `Phys_AddConvexSet` takes), its bone name, mass, damping; the joints (`ragdollconstraint`: parent and child solid, min/max degrees per axis); which solid pairs collide. `phyinfo` |
-| `phys_world.c` | 516 | The map's physics world, made on first use (`ServerWorld`): the world model's faces as one static mesh (water left out), every `SOLID_BSP` brush entity as a kinematic body of convex pieces (the solid leaves of its hull-0 BSP tree, corners from plane triples), moved each frame to its edict (`SyncBrushes`, `Phys_ServerFrame` after `SV_Physics`), gone at `SV_Deactivate`; test boxes (`phys_dropbox/boxat/boxes/clear`, drawn after `R_DrawEntities`); `phys_test` |
+| `phys_world.c` | 547 | The map's physics world, made on first use (`ServerWorld`): the world model's faces as one static mesh (water left out), every `SOLID_BSP` brush entity as a kinematic body of convex pieces (the solid leaves of its hull-0 BSP tree, corners from plane triples), moved each frame to its edict (`SyncBrushes`, `Phys_ServerFrame` after `SV_Physics`), gone at `SV_Deactivate`; test boxes (`phys_dropbox/boxat/boxes/clear`, drawn after `R_DrawEntities`); `phys_test` |
 | `lua_ext.c` | 407 | Lua's smaller entity/player calls, `ents.FindInCone/FindAlongRay/FireTargets`, hooks `KeyPress`/`KeyRelease`, `OnNPCKilled`, `CalcView` |
 | `lua_ui.c` | 164 | Lua fonts (`surface.CreateFont/SetFont`) and textured rectangles |
 | `lua_game.c` | 1284 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
@@ -1011,6 +1012,66 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### Physics plan: step 4, ragdolls, built (2026-11-14, branch `phys-4`)
+
+- **What happens**: a Source model loads its `.phy` with it (`LoadPhysics` in `src_studio.c`:
+  `srcmodel_t::phys`, each solid's `bone` looked up by name; a file with another checksum is dropped with a
+  warning). `Phys_ServerFrame` now calls `Ragdoll_Frame` first (which makes the map's physics world if a
+  ragdoll needs it), then the step, then `Ragdoll_AfterStep`. An edict past the players whose model has a
+  jointed `.phy` and whose `deadflag` is not 0 gets a ragdoll; `SV_SetupRenderEntities` gives the drawn
+  entity its handle and moves its origin to the ragdoll's first body (so culling and lighting follow it);
+  `SrcSetupBones` returns the ragdoll's matrices instead of the animation's. Shadows, eyes and the rest
+  of the drawing use the same bones. Hitbox traces and `GetBonePosition` still see the animation pose.
+- **The pose it starts from**: `deadflag` is set by `hl.dll` in the same think that switches to a death
+  sequence the Source model doesn't have, so the pose at that moment may already be wrong. Each watched
+  edict keeps two snapshots (origin, angles, sequence, frame, animtime, controllers, time) of its last two
+  living frames; the ragdoll starts from the last one, and each body's speed and spin come from the
+  difference between the two (ignored above 1000 in/s or 720 degrees/s: a teleport or a sequence change;
+  then the edict's velocity). A corpse never seen alive starts from its current pose.
+- **Bodies and joints** (`phys.h` grew: `Phys_AddConvexSetAt`, `Phys_GetMatrix`, `Phys_SetMotion`,
+  `Phys_SetDamping`, `Phys_Sleep`, groups, joints): one dynamic body per solid with a bone and a shape, in
+  the bone's space, at the bone's world matrix, with the file's mass, inertia multiplier and damping.
+  A joint is a Jolt `SixDOFConstraint` with pyramid swing limits (they allow different limits each way):
+  the joint's frame on the child is the child's bone axes; on the parent it is where the child's bone sits
+  in the rest pose (`posetobone` of the parent x inverse of the child's), which is where the file's angles
+  are zero. Positions fixed, the three angles limited to the file's min/max (an axis with no range is
+  fixed). **The file's angles are right-handed turns of the child about its own bone axes**: checked on the
+  rest pose (a calf turned +90 about z puts the foot behind and up, a knee bending; a forearm at -90 brings
+  the hand forward) and on the settled ragdolls (`phys_ragdolls_list x`: every knee between -12 and 126,
+  every elbow between -120 and 4). Every joint also resists turning with 3 N m (`RAGDOLL_JOINT_FRICTION`),
+  a guess that looks right; the file's own friction numbers aren't used.
+- **Collisions**: a Jolt group per ragdoll. With `collisionpair`s (or `selfcollisions 0`) in the file only
+  those pairs of its solids collide; with no rules, all pairs that aren't joined. Ragdolls collide with
+  the map, brush entities, the test boxes and each other. Nothing in `hl.dll` knows about them.
+- **Bones without a body** (fingers, the spine between pelvis and chest, the seagull's feathers) keep
+  the place they had against their parent bone at death; one above the first body hangs from that body.
+- **Limits**: `phys_ragdoll_max` (16) simulated at once; over it, the oldest stop being simulated and
+  **keep their last pose** (bodies freed). `phys_ragdoll_time` (0 = never) does the same by age.
+  `phys_ragdolls 0` turns ragdolls off. `phys_showtime 1` prints what physics costs once a second.
+- **Different from the plan**: (1) the limit is soft: a ragdoll over it is only stopped once it is asleep
+  or 3 seconds old (`RAGDOLL_SETTLE`), else many dying at once would freeze standing; (2) "removed" means
+  kept still in its pose, not gone back to the animation; (3) speeds come from the entity's snapshots, not
+  from tracking every bone every frame; (4) **saves**: nothing of a ragdoll is saved; after loading, a
+  corpse becomes a ragdoll again from the pose `hl.dll` saved (it falls again where it died). The plan's
+  "copy the last pose into the entity" isn't possible: an edict only has a sequence and a frame.
+- Checked, Linux and the MinGW exe under Wine: c2a5 with `mdl_replace models/hgrunt.mdl
+  hl2:models/combine_soldier.mdl`, the five soldiers killed from Lua (`TakeDamage` of health + 1): six
+  screenshots over three seconds show the two at the gate standing, sagging, folding against the wall and
+  lying; all asleep by 2.3 s. Twenty more spawned from Lua and all 25 killed in one frame: all fall;
+  after 3 s 16 are simulated and 9 kept still; physics cost 3.6-4 ms a frame while they fell (worst
+  frame 25 ms, the one that built 25 ragdolls), 0.17 ms once asleep (Wine: 11.6 ms and 0.2 ms).
+  Save and load (5 ragdolls again after loading), `ent:Remove()` on the corpses (0 ragdolls), a map
+  change (0, no leak reports). c1a0d with Kleiner and Barney for the scientists and guard: 7 ragdolls.
+  The same runs under AddressSanitizer (recipe above, now also with `-DCMAKE_CXX_FLAGS` the same as the C
+  flags and `-DOUT_DIR` so it doesn't overwrite `bin/newen`): no reports.
+- Known: a character killed while standing in something (the c1a0d scientist behind the counter) ends up
+  draped on it or kneeling against it. The ragdoll starts at the edict's origin, not the smoothed
+  (`r_steplerp`) one, so a walking monster can jump a few units as it goes limp. Ragdolls don't react to
+  shots or explosions yet (step 6). Test scripts leave `phys_ragdolls` as they set it: it is archived.
+- Not checked: Visual C++, real Windows; a ragdoll gibbed or faded by `hl.dll` (removal was tested with
+  `ent:Remove()`); ragdolls on lifts and trains; models other than the Combine soldier, Kleiner and Barney
+  (zombies, headcrabs, the seagull's shapeless solids); real fights, where the killing shot's push is missed.
 
 ### Physics plan: step 3, `.phy` reading, built (2026-11-14, branch `phys-3`)
 

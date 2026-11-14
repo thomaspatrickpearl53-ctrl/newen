@@ -956,6 +956,27 @@ static void BuildStandIn(model_t *m, srcmodel_t *s)
 
 // ---------------------------------------------------------------- loading
 
+// The model's .phy, if it has one made for this .mdl; each solid finds its bone
+static void LoadPhysics(const char *path, srcmodel_t *s, int checksum)
+{
+	srcphys_t *ph = SrcPhys_Load(path);
+	if (!ph)
+		return;
+	if (ph->checksum != checksum) {
+		Con_Warnf("%s: its physics file was made for another version of the model; not used\n", path);
+		SrcPhys_Free(ph);
+		return;
+	}
+	for (int i = 0; i < ph->numsolids; i++) {
+		srcphysolid_t *so = &ph->solids[i];
+		so->bone = -1;
+		for (int b = 0; b < s->numbones && so->bone < 0; b++)
+			if (!stricmp(s->bones[b].name, so->name))
+				so->bone = b;
+	}
+	s->phys = ph;
+}
+
 qboolean SrcStudio_Load(model_t *m, const char *path, unsigned char *data, size_t size)
 {
 	// from here on the model owns data, whatever happens (SrcStudio_Free)
@@ -1025,6 +1046,7 @@ qboolean SrcStudio_Load(model_t *m, const char *path, unsigned char *data, size_
 		}
 	LoadSettings(m, path, s);
 	BuildStandIn(m, s);
+	LoadPhysics(path, s, checksum);
 	return true;
 }
 
@@ -1050,6 +1072,7 @@ void SrcStudio_Free(model_t *m)
 	Mem_Free(s->skins);
 	Mem_Free(s->morphs);
 	SrcAnim_Free(s);
+	SrcPhys_Free(s->phys);
 	Mem_Free(s->mdl);
 	Mem_Free(s);
 	m->studio.source = NULL;

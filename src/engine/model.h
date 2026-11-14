@@ -290,7 +290,12 @@ typedef struct {
 	int      rendercolor[3];
 	float    scale;
 	float    dist;                // for sorting
+	int      ragdoll;             // 0, or the ragdoll its bones come from (Ragdoll_ForEdict)
 } rentity_t;
+
+// phys_ragdoll.c: an edict's ragdoll (0 = none) and where it lies; its bones in the world for model m
+int      Ragdoll_ForEdict(int num, vec3_t origin);
+qboolean Ragdoll_Bones(int handle, const struct model_s *m, float (*out)[3][4], int numbones);
 
 // r_studio.c
 void     R_StudioInit(void);

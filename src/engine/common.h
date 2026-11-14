@@ -363,6 +363,11 @@ void Host_Shutdown(void);
 void Phys_InitCommands(void);
 void Phys_ServerFrame(float dt);    // after the server's frame: brush entities followed, Jolt stepped
 void Phys_ServerStopped(void);      // the map's physics world goes
+// phys_ragdoll.c
+void Ragdoll_Init(void);
+void Ragdoll_Frame(void);           // before the step: the newly dead become ragdolls, removed corpses lose theirs
+void Ragdoll_AfterStep(void);
+void Ragdoll_Clear(void);
 void Phys_DrawBoxes(void);          // the test boxes, in the world's view
 NORETURN void Host_Quit(void);
 extern cvar_t *developer;

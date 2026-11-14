@@ -49,6 +49,36 @@ void         Phys_SetVelocity(physworld_t *w, physbody_t b, const float velocity
 void         Phys_AddImpulse(physworld_t *w, physbody_t b, const float impulse[3]);   // kg * inches/s
 int          Phys_IsAwake(physworld_t *w, physbody_t b);
 
+// ---- jointed things (ragdolls). Poses here are 3x4 matrices (rotation, then the position in column 3),
+// as the model code has its bones.
+physbody_t   Phys_AddConvexSetAt(physworld_t *w, const float *points, const int *counts, int numpieces,
+	const float pose[3][4], physmotion_t motion, float mass, float inertiascale);
+void         Phys_GetMatrix(physworld_t *w, physbody_t b, float pose[3][4]);
+// how fast the body's own origin moves (inches/s) and the body turns (degrees/s about the world's axes)
+void         Phys_SetMotion(physworld_t *w, physbody_t b, const float velocity[3], const float spin[3]);
+void         Phys_SetDamping(physworld_t *w, physbody_t b, float linear, float angular);   // lost per second
+void         Phys_Sleep(physworld_t *w, physbody_t b);
+
+// A group's bodies only collide with each other where a pair is switched on; with everything else they
+// collide as usual. 0 if there's no room.
+typedef int physgroup_t;
+physgroup_t  Phys_NewGroup(physworld_t *w, int numparts);
+void         Phys_GroupCollide(physworld_t *w, physgroup_t g, int part1, int part2);
+void         Phys_SetGroup(physworld_t *w, physbody_t b, physgroup_t g, int part);
+void         Phys_FreeGroup(physworld_t *w, physgroup_t g);   // after its bodies are removed
+
+// The child hangs on the parent at a point and may turn about the joint's three axes between mindeg and
+// maxdeg (equal = no turning about that one). frame1 is the joint's place and axes in the parent body's
+// space, frame2 in the child's; the angles are zero when the two line up. Axis 0 is the twist.
+// friction: torque in newton metres that resists turning. 0 if it can't be made.
+typedef int physjoint_t;
+physjoint_t  Phys_AddJoint(physworld_t *w, physbody_t parent, physbody_t child, const float frame1[3][4],
+	const float frame2[3][4], const float mindeg[3], const float maxdeg[3], float friction);
+void         Phys_RemoveJoint(physworld_t *w, physjoint_t j);
+
+// phys_world.c: the running map's world; create = make it if the map has none yet. NULL without a map.
+physworld_t *Phys_ServerWorld(int create);
+
 #ifdef __cplusplus
 }
 #endif

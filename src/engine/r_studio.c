@@ -311,6 +311,9 @@ static int SrcSetupBones(const rentity_t *e)
 {
 	const srcmodel_t *s = e->model->studio.source;
 	const studiohdr_t *h = e->model->studio.hdr;
+	// dead and limp: the physics has every bone
+	if (e->ragdoll && Ragdoll_Bones(e->ragdoll, e->model, bonetransform, s->numbones))
+		return s->numbones;
 	float cycle = 0;
 	if (e->sequence >= 0 && e->sequence < h->numseq) {
 		int frames = STUDIO_PTR(h, h->seqindex, mstudioseqdesc_t)[e->sequence].numframes;

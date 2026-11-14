@@ -738,6 +738,7 @@ void SV_SetupRenderEntities(void)
 			VectorCopy(e->v.origin, r->origin);
 			VectorCopy(e->v.angles, r->angles);
 		}
+		r->ragdoll = Ragdoll_ForEdict(i, r->origin);
 		r->sequence = e->v.sequence;
 		r->frame = e->v.frame;
 		r->body = e->v.body;

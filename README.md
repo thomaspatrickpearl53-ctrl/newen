@@ -286,6 +286,13 @@ Half-Life's own movement stays as it is. So far:
 - The map is in the physics world: its walls and floors, and every solid brush entity (doors, lifts, trains,
   walls), which follow Half-Life's own movement, so boxes ride lifts and get pushed by doors. A map only
   gets its physics world when something first needs one.
+- **Ragdolls**: a Half-Life 2 character standing in for a Half-Life one (`mdl_replace`) falls limp when it
+  dies, with the joints its model's physics file describes, instead of freezing in a pose. They're for
+  looking at: you walk through them and shots pass through. `phys_ragdolls 0` turns them off;
+  `phys_ragdoll_max` (16) is how many are simulated at once (older ones keep their pose and stop moving);
+  `phys_ragdoll_time` stops each after that many seconds (0 = never). `phys_ragdolls_list` lists them and
+  `phys_showtime 1` prints what physics costs each frame. They aren't saved: after loading, a corpse falls
+  again where it died.
 - `phyinfo <model>` lists a Source model's physics file (`.phy`): its solids with their bones and masses, and
   its joints with how far each turns (`phyinfo hl2:models/combine_soldier.mdl`). With a pattern it reads every
   match and counts them (`phyinfo hl2:models/*.phy`).
