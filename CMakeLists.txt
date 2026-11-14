@@ -112,6 +112,7 @@ add_executable(newen WIN32
 	src/engine/src_material.c
 	src/engine/src_studio.c
 	src/engine/src_anim.c
+	src/engine/src_phys.c
 	src/engine/r_studio.c
 	src/engine/r_sprite.c
 	src/engine/r_light.c

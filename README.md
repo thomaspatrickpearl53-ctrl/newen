@@ -286,6 +286,9 @@ Half-Life's own movement stays as it is. So far:
 - The map is in the physics world: its walls and floors, and every solid brush entity (doors, lifts, trains,
   walls), which follow Half-Life's own movement, so boxes ride lifts and get pushed by doors. A map only
   gets its physics world when something first needs one.
+- `phyinfo <model>` lists a Source model's physics file (`.phy`): its solids with their bones and masses, and
+  its joints with how far each turns (`phyinfo hl2:models/combine_soldier.mdl`). With a pattern it reads every
+  match and counts them (`phyinfo hl2:models/*.phy`).
 - Test boxes: `phys_dropbox [half size 8] [mass kg 20]` drops one in front of you, `phys_boxat x y z [half
   size] [mass]` puts one at a point, `phys_boxes` lists them (`phys_boxes all` also lists the brush
   entities), `phys_clear` removes them. They're drawn as plain orange boxes, aren't solid to the player

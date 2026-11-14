@@ -248,6 +248,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
 | `phys.h` | 54 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
 | `phys_jolt.cpp` | 415 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
+| `src_phys.c` | 530 | Source models' `.phy` files (physics plan step 3): `SrcPhys_Load`/`SrcPhys_Parse` give a `srcphys_t` (`src_local.h`): each solid's convex pieces as points + counts (the layout `Phys_AddConvexSet` takes), its bone name, mass, damping; the joints (`ragdollconstraint`: parent and child solid, min/max degrees per axis); which solid pairs collide. `phyinfo` |
 | `phys_world.c` | 516 | The map's physics world, made on first use (`ServerWorld`): the world model's faces as one static mesh (water left out), every `SOLID_BSP` brush entity as a kinematic body of convex pieces (the solid leaves of its hull-0 BSP tree, corners from plane triples), moved each frame to its edict (`SyncBrushes`, `Phys_ServerFrame` after `SV_Physics`), gone at `SV_Deactivate`; test boxes (`phys_dropbox/boxat/boxes/clear`, drawn after `R_DrawEntities`); `phys_test` |
 | `lua_ext.c` | 407 | Lua's smaller entity/player calls, `ents.FindInCone/FindAlongRay/FireTargets`, hooks `KeyPress`/`KeyRelease`, `OnNPCKilled`, `CalcView` |
 | `lua_ui.c` | 164 | Lua fonts (`surface.CreateFont/SetFont`) and textured rectangles |
@@ -1010,6 +1011,40 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### Physics plan: step 3, `.phy` reading, built (2026-11-14, branch `phys-3`)
+
+- `src_phys.c` (new) reads a Source model's `.phy`: a 16-byte header (solid count, the `.mdl`'s checksum),
+  each solid as a size + a "compact surface", then text. A surface is a header (centre of mass, `IVPS`
+  mark, offset to a tree), convex pieces ("ledges": a 16-byte header, 16-byte triangles whose three edges
+  each start with a point number, 16-byte points) and a tree of 28-byte bounding-sphere nodes whose leaves
+  point at the pieces. The reader walks the tree to its leaves (no recursion; a visit limit stops a looping
+  tree) and collects each piece's points once. Offsets count from the structure holding them and all are
+  range-checked; a bad file is refused whole with a warning. Format from public community documentation.
+- **Units and space, checked on the files**: points are metres with Y down: inches = (x, z, -y) / 0.0254.
+  A one-solid model (a prop) is in the model's space (`props_c17/oildrum001`: 28 x 28 x 45, upright).
+  **A jointed model's solids are each in their own bone's space**: the soldier's head solid is centred at
+  (3, -1, 0) raw, and (0, -1, 68) once taken from `Bip01_Head1`'s space to the model's with `posetobone`
+  inverted (the bone is at z 65); thighs land between hip and knee. Step 4 builds on this.
+- The text: `solid` blocks (index, name = the bone, parent, mass, damping, rotdamping, inertia, volume,
+  surfaceprop), `ragdollconstraint` (parent and child solid numbers, x/y/z min, max, friction in degrees),
+  `editparams` (totalmass, rootname), `collisionrules` (`selfcollisions 0` and `collisionpair "a,b"`: the
+  soldier has 13 pairs that do collide). Other blocks (`break`, `animatedfriction`...) are skipped.
+- A piece with fewer than 4 points is dropped (no volume). Only `seagull.phy` has solids left with no piece
+  (its four feather solids are flat); step 4 must cope with a solid that has no shape.
+- `phyinfo <model>` lists solids (bone, mass, pieces, points, size, material), joints and colliding pairs,
+  loads the `.mdl` if it's there and flags a different checksum or a solid naming no bone.
+  `phyinfo <pattern>` reads every match and counts. `SrcFS_Find` (new, `src_fs.c`) walks the archives for it.
+- Nothing loads a `.phy` yet except `phyinfo`; step 4 will hang the `srcphys_t` on the model.
+- Checked, Linux and the MinGW exe under Wine with the same output: `phyinfo hl2:models/combine_soldier.mdl`
+  gives 15 solids (100 kg, pelvis 11, chest 22.5, head 8), 14 joints (knees and elbows turn on z only),
+  every solid naming a bone of the model. `phyinfo hl2:models/*.phy`: 1955 files, 1955 read, 0 refused;
+  3640 solids, 9817 pieces, 1673 joints in 142 jointed models. Outside the engine, a test program built
+  with AddressSanitizer + UBSan read all 2747 `.phy` files of HL2, Episode One, Episode Two and Lost Coast
+  (all read) and 1.1 million damaged copies (cut short, bytes and offsets overwritten): no memory error
+  (it found one: `memset` on a NULL array for a piece with no triangles, fixed). c1a0 loads as before.
+- Not checked: Visual C++, real Windows; the old solid layout without the `VPHY` mark (the code accepts
+  it, none of the 2747 files has it); what the joint axes mean in Jolt's terms (step 4).
 
 ### Physics plan: step 2, the map and its brush entities, built (2026-11-13, branch `phys-2`)
 

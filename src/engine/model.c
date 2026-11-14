@@ -702,6 +702,7 @@ void Mod_Init(void)
 {
 	SrcFS_Init();
 	SrcMat_Init();
+	SrcPhys_Init();
 	Cmd_AddCommand("mdl_replace", MdlReplace_f, "mdl_replace <model> <other model> - loads another model file in its place (from the next map)");
 	Cmd_AddCommand("modellist", ModelList_f, "lists loaded models and sprites");
 	Cmd_AddCommand("mdlinfo", MdlInfo_f, "mdlinfo <model> - lists a model's sequences, body parts and textures");

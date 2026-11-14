@@ -15,6 +15,9 @@ void        SrcFS_Init(void);
 void        SrcFS_Shutdown(void);
 void       *SrcFS_LoadFile(const char *path, size_t *len);   // NUL-terminated, Mem_Free it; NULL if missing
 qboolean    SrcFS_FileExists(const char *path);
+// Calls fn with every file matching a pattern ("hl2:models/*.phy": Half-Life 2's archives; without the
+// prefix: Half-Life's own folders are not searched, only an exact name is passed on). Returns how many.
+int         SrcFS_Find(const char *pattern, void (*fn)(const char *name, void *ctx), void *ctx);
 // "hl2:" when path has the prefix, else "": what a file's companions (materials, .vvd...) are looked up with
 const char *SrcFS_Prefix(const char *path);
 
@@ -258,3 +261,50 @@ const srcanim_t *SrcAnim_SeqAnim(const srcmodel_t *s, int i);   // its timing an
 // pose: s->numpose values 0..1, or NULL for each parameter's resting value. A sequence out of range gives
 // the rest pose. q and pos hold s->numbones entries.
 void     SrcAnim_CalcPose(const srcmodel_t *s, int sequence, float cycle, const float *pose, float (*q)[4], vec3_t *pos);
+
+// ---------------------------------------------------------------- physics shapes (src_phys.c)
+// One rigid part of a model. A character has one per moving bone, named after it; a prop has one.
+typedef struct {
+	int    index;
+	char   name[64];            // the bone it moves with (a jointed model), or the model's name
+	char   parent[64];          // the solid it hangs from, "" for the root
+	char   surfaceprop[64];     // what it's made of ("flesh", "metal"): sounds and friction
+	float  mass;                // kilograms
+	float  damping, rotdamping; // how fast its speed and spin die away
+	float  inertia;             // multiplies its resistance to turning
+	float  volume;              // cubic inches
+	float  masscenter[3];
+	qboolean described;         // the text has a block for it
+	// its shape: convex pieces, counts[i] points (xyz, inches) for piece i one after another, as
+	// Phys_AddConvexSet takes them. In the bone's own space for a jointed model, else in the model's.
+	int    numpieces, numpoints, numtris;
+	int   *counts;
+	float *points;
+	float  mins[3], maxs[3];
+} srcphysolid_t;
+
+// How far the child solid may turn against its parent about each of its axes, in degrees
+typedef struct {
+	int   parent, child;        // solid numbers
+	float min[3], max[3];
+	float friction[3];
+} srcphyjoint_t;
+
+typedef struct {
+	int            checksum;    // the .mdl's it was made with
+	int            numsolids;
+	srcphysolid_t *solids;
+	int            numjoints;
+	srcphyjoint_t *joints;
+	float          totalmass;
+	char           rootname[64];
+	qboolean       selfcollide; // false: its solids pass through each other, except the pairs
+	int            numpairs;
+	int          (*pairs)[2];
+} srcphys_t;
+
+// name: the model's or the .phy's path. NULL if it has none or it's damaged (with a warning). SrcPhys_Free it.
+srcphys_t *SrcPhys_Load(const char *name);
+srcphys_t *SrcPhys_Parse(const char *label, const unsigned char *data, size_t size);
+void       SrcPhys_Free(srcphys_t *ph);
+void       SrcPhys_Init(void);   // the phyinfo command

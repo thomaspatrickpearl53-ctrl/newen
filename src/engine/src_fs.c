@@ -429,6 +429,27 @@ qboolean SrcFS_FileExists(const char *path)
 	return FindEntry(clean) || LooseFullPath(clean, full, sizeof(full));
 }
 
+int SrcFS_Find(const char *pattern, void (*fn)(const char *name, void *ctx), void *ctx)
+{
+	if (!strchr(pattern, '*') && !strchr(pattern, '?')) {
+		if (!SrcFS_FileExists(pattern))
+			return 0;
+		fn(pattern, ctx);
+		return 1;
+	}
+	if (!*SrcFS_Prefix(pattern) || !MountHL2())
+		return 0;
+	char clean[MAX_OSPATH];
+	CleanName(pattern + strlen(SRC_HL2_PREFIX), clean, sizeof(clean));
+	int n = 0;
+	for (int i = 0; i < entries_count; i++)
+		if (Q_WildcardMatch(clean, entries[i].name) && FindEntry(entries[i].name) == &entries[i]) {
+			fn(va(SRC_HL2_PREFIX "%s", entries[i].name), ctx);
+			n++;
+		}
+	return n;
+}
+
 // srcfs_find <pattern>: which files match, and where each comes from
 static void SrcFSFind_f(void)
 {

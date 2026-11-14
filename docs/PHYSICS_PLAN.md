@@ -1,7 +1,7 @@
 # Physics and ragdolls on Half-Life maps: plan
 
-Design written 2026-11-12 from newen at commit c9a8232. **Steps 1-2 are built (2026-11-13, branches `phys-1`,
-`phys-2`); the owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
+Design written 2026-11-12 from newen at commit c9a8232. **Steps 1-3 are built (2026-11-14, branches `phys-1` to
+`phys-3`); the owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
 owner asked for together; its Lua calls build on `docs/LUA_API_PLAN.md`, and its props become scripted
 entities from `docs/SWEP_PLAN.md`.
 
@@ -145,3 +145,7 @@ Host frame ──> SV_Frame (hl.dll thinks, moves the player and monsters)
   (Jolt meshes can't move) from their own BSP trees. The lift check ran on c1a0b's elevator (c1a0d has no
   lift); the door check had the closing door push a box out of the doorway (c1a0d's doors slide into wall
   pockets). Test commands `phys_dropbox`, `phys_boxat`, `phys_boxes`, `phys_clear`.
+- **Step 3 (2026-11-14, `phys-3`)**: `src_phys.c` and `phyinfo`. All 1955 of HL2's `.phy` files read (and
+  the episodes' and Lost Coast's, 2747 in all). Found on the way: a jointed model's solids are stored in
+  their bones' own space, a prop's in the model's; the seagull's feather solids are flat and have no
+  shape. `phyinfo` also takes a pattern (`phyinfo hl2:models/*.phy`) to read and count every match.
