@@ -136,6 +136,7 @@ qboolean    SV_GameObjTakeDamage(edict_t *victim, edict_t *inflictor, edict_t *a
 
 // sv_damage.c: damage dealt by the engine (Lua, later Lua weapons), through the game's own rules
 #define DMG_GENERIC   0
+#define DMG_CRUSH     (1 << 0)
 #define DMG_BULLET    (1 << 1)
 #define DMG_BLAST     (1 << 6)
 #define DMG_NEVERGIB  (1 << 12)

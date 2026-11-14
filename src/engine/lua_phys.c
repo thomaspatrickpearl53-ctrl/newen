@@ -23,11 +23,12 @@ typedef struct {
 	qboolean   motion;          // false: held still (EnableMotion)
 	qboolean   wasawake;
 	double     blasted;         // the map's time when an explosion last threw it; 0 = never
+	double     nexthit;         // it hurts nobody before this (one blow per impact, not one per frame)
 } prop_t;
 
 static prop_t *props;
 static int     props_cap;
-static cvar_t *phys_pushforce;
+static cvar_t *phys_pushforce, *phys_impactspeed, *phys_impactdamage;
 
 static prop_t *PropFor(const edict_t *e)
 {
@@ -211,6 +212,54 @@ void Prop_BeforeStep(float dt)
 	}
 }
 
+// A prop flying into a monster hurts it: Jolt knows nothing of Half-Life's monsters, so this looks for
+// living ones whose box the prop's box has reached while it moves towards them. The damage grows with the
+// prop's mass and its speed over phys_impactspeed; the prop loses most of its speed, as if it had hit.
+static void HitMonsters(edict_t *e, prop_t *p, physworld_t *w)
+{
+	if (!p->motion || phys_impactdamage->value <= 0 || sv.time < p->nexthit || !SV_GameObjReady())
+		return;
+	vec3_t vel, centre;
+	Phys_GetVelocity(w, p->body, vel);
+	float speed = VectorLength(vel);
+	if (speed <= phys_impactspeed->value)
+		return;
+	for (int k = 0; k < 3; k++)
+		centre[k] = (e->v.absmin[k] + e->v.absmax[k]) * 0.5f;
+	float damage = Phys_GetMass(w, p->body) * (speed - phys_impactspeed->value) * 0.01f * phys_impactdamage->value;
+	qboolean hit = false;
+	for (int i = sv.maxclients + 1; i < sv.num_edicts; i++) {
+		edict_t *m = EDICT_NUM(i);
+		if (m->free || m == e || !(m->v.flags & FL_MONSTER) || m->v.health <= 0 || m->v.deadflag != 0 ||
+			m->v.takedamage == 0 || !m->pvPrivateData)
+			continue;
+		qboolean touching = true;
+		vec3_t to;
+		for (int k = 0; k < 3; k++) {
+			if (e->v.absmin[k] > m->v.absmax[k] + 2 || e->v.absmax[k] < m->v.absmin[k] - 2)
+				touching = false;
+			to[k] = (m->v.absmin[k] + m->v.absmax[k]) * 0.5f - centre[k];
+		}
+		if (!touching || DotProduct(to, vel) <= 0)
+			continue;
+		// never gibbed: what it kills goes limp and flies on with the prop's speed
+		// (a 30 kg crate doesn't carry an 80 kg body off at its own speed)
+		vec3_t kick;
+		float mass = Phys_GetMass(w, p->body);
+		VectorScale(vel, mass / (mass + 60.0f), kick);
+		Ragdoll_Kick(i, kick);
+		SV_GameObjTakeDamage(m, e, e, damage, DMG_CRUSH | DMG_NEVERGIB);
+		hit = true;
+		if (e->free)
+			return;
+	}
+	if (hit) {
+		VectorScale(vel, 0.3f, vel);
+		Phys_SetVelocity(w, p->body, vel);
+		p->nexthit = sv.time + 0.3;
+	}
+}
+
 // ENT:PhysicsCollide(data) on a scripted entity, then the PhysicsCollide(ent, data) hook
 static void TellCollide(lua_State *L, edict_t *e, edict_t *other, const physcontact_t *c, float sign)
 {
@@ -262,6 +311,11 @@ void Prop_AfterStep(void)
 		if (awake || p->wasawake)
 			SyncEdict(e, p, w);
 		p->wasawake = awake;
+		if (awake) {
+			HitMonsters(e, p, w);
+			if (e->free || !(p = PropFor(e)))
+				continue;
+		}
 		// one that left the map (spawned outside it, or squeezed through a wall) would fall for ever
 		const model_t *wm = SV_ModelForIndex(1);
 		for (int k = 0; k < 3 && wm; k++)
@@ -610,6 +664,10 @@ void LuaP_Open(lua_State *L)
 
 void Prop_Init(void)
 {
+	phys_impactspeed = Cvar_Get("phys_impactspeed", "250", FCVAR_ARCHIVE,
+		"a prop moving faster than this (units a second) hurts the monsters it flies into");
+	phys_impactdamage = Cvar_Get("phys_impactdamage", "1", FCVAR_ARCHIVE,
+		"scales that damage: the prop's mass in kilograms x each 100 units a second over the limit (0 = none)");
 	phys_pushforce = Cvar_Get("phys_pushforce", "500", FCVAR_ARCHIVE,
 		"how hard the player pushes a physics prop by walking into it, in newtons (0 = not at all)");
 }

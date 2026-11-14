@@ -124,7 +124,7 @@ static brushbody_t *brushes;      // by edict number
 static int          brushes_cap;
 static dropbox_t   *boxes;
 static int          box_count, box_cap;
-static cvar_t      *phys_maxbodies, *phys_showtime;
+static cvar_t      *phys_maxbodies, *phys_showtime, *phys_blastforce;
 
 // a brush model's faces as triangles in its own space (front faces counter-clockwise; BSP polygons run
 // clockwise seen from the front)
@@ -377,8 +377,9 @@ static physworld_t *ServerWorld(void)
 
 // ---------------------------------------------------------------- pushes
 
-#define BLAST_SPEED   6.0f     // inches/s a light body at the middle gets per point of the explosion's damage
-#define BLAST_REFMASS 20.0f    // kg; heavier bodies are thrown less
+#define BLAST_SPEED   6.0f     // inches/s a light body at the middle gets per point of damage, x phys_blastforce
+#define BLAST_REFMASS 40.0f    // kg; heavier bodies are thrown less
+#define BLAST_LIFT    0.4f     // how much of the throw is turned upwards, so things fly instead of sliding
 #define BLAST_MEMORY  0.3      // seconds an explosion still throws a ragdoll made after it (what it killed)
 #define BULLET_PUSH   400.0f   // kg inches/s per point of a Lua bullet's damage, on the ragdoll part it hits
 
@@ -401,7 +402,7 @@ void Phys_ServerExplosion(const float pos[3], float radius, float damage)
 	b->damage = damage;
 	if (!svworld)
 		return;   // nothing to push
-	Phys_Explode(svworld, pos, radius, damage * BLAST_SPEED, BLAST_REFMASS);
+	Phys_Explode(svworld, pos, radius, damage * BLAST_SPEED * phys_blastforce->value, BLAST_REFMASS, BLAST_LIFT);
 	Prop_Blasted(pos, radius);
 }
 
@@ -417,9 +418,11 @@ void Phys_BlastVelocity(const float point[3], float mass, float addvel[3])
 		float dist = VectorNormalize(d);
 		if (dist >= b->radius)
 			continue;
-		float dv = b->damage * BLAST_SPEED * (1.0f - dist / b->radius);
+		float dv = b->damage * BLAST_SPEED * phys_blastforce->value * (1.0f - dist / b->radius);
 		if (mass > BLAST_REFMASS)
 			dv *= BLAST_REFMASS / mass;
+		d[2] += BLAST_LIFT;
+		VectorNormalize(d);
 		VectorMA(addvel, dv, d, addvel);
 	}
 }
@@ -658,6 +661,7 @@ void Phys_InitCommands(void)
 	Cmd_AddCommand("phys_boxat", BoxAt_f, "a test box at x y z [half size] [mass]");
 	Cmd_AddCommand("phys_boxes", Boxes_f, "lists the test boxes");
 	Cmd_AddCommand("phys_clear", ClearBoxes_f, "removes the test boxes");
+	phys_blastforce = Cvar_Get("phys_blastforce", "3", FCVAR_ARCHIVE, "how hard explosions throw props and ragdolls (1 = gently, 0 = not at all)");
 	phys_showtime = Cvar_Get("phys_showtime", "0", 0, "prints what physics costs each frame (milliseconds), once a second");
 	Ragdoll_Init();
 	Prop_Init();

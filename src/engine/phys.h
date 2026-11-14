@@ -103,7 +103,8 @@ void         Phys_SetLayer(physworld_t *w, physbody_t b, physlayer_t layer);
 // An explosion: every moving body within radius that the map doesn't hide from pos is thrown away from
 // it, hardest at the middle. speed: how fast a light body at the middle leaves (inches/s); bodies heavier
 // than refmass (kg) leave slower in proportion. Returns how many were pushed.
-int          Phys_Explode(physworld_t *w, const float pos[3], float radius, float speed, float refmass);
+// lift: how much of the push is turned upwards (0 = straight away from pos).
+int          Phys_Explode(physworld_t *w, const float pos[3], float radius, float speed, float refmass, float lift);
 // The first moving body a line meets, or PHYS_NOBODY: where, and the body's tag
 physbody_t   Phys_CastRay(physworld_t *w, const float from[3], const float to[3], float hitpos[3], int *tag);
 

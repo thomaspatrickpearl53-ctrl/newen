@@ -32,6 +32,8 @@ typedef struct {
 	int    ragdoll;             // index + 1, 0 = none
 	qboolean dead;              // seen dead: don't try again each frame if it couldn't become one
 	qboolean forced;            // limp though alive (ent:BecomeRagdoll), until the edict goes
+	vec3_t   kick;              // what hit it (a flying prop) was going this fast...
+	double   kicktime;          // ...at this time
 } track_t;
 
 typedef struct {
@@ -298,6 +300,9 @@ static qboolean MakeRagdoll(int num, edict_t *e, track_t *t, model_t *m)
 		vec3_t at = { rd->bones[so->bone][0][3], rd->bones[so->bone][1][3], rd->bones[so->bone][2][3] }, blast;
 		Phys_BlastVelocity(at, so->mass, blast);
 		VectorAdd(vel, blast, vel);
+		// or a flying prop
+		if (t->kicktime > 0 && sv.time - t->kicktime < 0.5 && sv.time >= t->kicktime)
+			VectorAdd(vel, t->kick, vel);
 		Phys_SetMotion(w, b, vel, spin);
 		made++;
 	}
@@ -369,8 +374,10 @@ void Ragdoll_Frame(void)
 		ragdoll_t *rd = t->ragdoll ? &ragdolls[t->ragdoll - 1] : NULL;
 		model_t *m = e->free || !e->v.modelindex ? NULL : SV_ModelForIndex(e->v.modelindex);
 		const srcmodel_t *s = m && m->type == mod_studio ? m->studio.source : NULL;
-		if (e->free)
+		if (e->free) {
 			t->forced = false;
+			t->kicktime = 0;
+		}
 		qboolean dead = s && (e->v.deadflag != 0 || t->forced);
 		// gone, alive again, or another model: the ragdoll goes with it
 		if (rd && (!dead || rd->modelindex != e->v.modelindex || rd->model != m)) {
@@ -390,6 +397,10 @@ void Ragdoll_Frame(void)
 		}
 		if (!rd && !t->dead && phys_ragdolls->value && !(e->v.effects & EF_NODRAW))
 			MakeRagdoll(i, e, t, m);
+		// The corpse's box stays where it died while the body lies elsewhere, so shots and blasts there
+		// would bleed and gib thin air. A corpse with a ragdoll takes no damage: explosions throw it instead.
+		if (t->ragdoll && e->v.deadflag != 0)
+			e->v.takedamage = 0;
 		t->dead = true;
 	}
 	// edicts past the end are gone too
@@ -414,6 +425,14 @@ void Ragdoll_AfterStep(void)
 			FreeBodies(rd);
 	}
 	EnforceLimit(w);
+}
+
+void Ragdoll_Kick(int num, const float velocity[3])
+{
+	if (num <= 0 || num >= tracks_cap)
+		return;
+	VectorCopy(velocity, tracks[num].kick);
+	tracks[num].kicktime = sv.time > 0 ? sv.time : 0.001;
 }
 
 qboolean Ragdoll_Force(int num)

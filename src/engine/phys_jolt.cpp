@@ -770,7 +770,7 @@ extern "C" void Phys_SetLayer(physworld_t *w, physbody_t b, physlayer_t layer)
 		layer == PHYS_LAYER_PLAYER ? Layers::PLAYER : Layers::MOVING);
 }
 
-extern "C" int Phys_Explode(physworld_t *w, const float pos[3], float radius, float speed, float refmass)
+extern "C" int Phys_Explode(physworld_t *w, const float pos[3], float radius, float speed, float refmass, float lift)
 {
 	if (!w || radius <= 0 || speed <= 0)
 		return 0;
@@ -810,6 +810,7 @@ extern "C" int Phys_Explode(physworld_t *w, const float pos[3], float radius, fl
 		}
 		// a body right at the middle goes up
 		Vec3 dir = dist > 0.05f ? d / dist : Vec3(0, 0, 1);
+		dir = (dir + Vec3(0, 0, lift)).NormalizedOr(Vec3(0, 0, 1));
 		float dv = speed * METRES * (1.0f - dist / r);
 		if (mass > refmass && refmass > 0)
 			dv *= refmass / mass;

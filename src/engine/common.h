@@ -368,6 +368,7 @@ void Ragdoll_Init(void);
 void Ragdoll_Frame(void);           // before the step: the newly dead become ragdolls, removed corpses lose theirs
 void Ragdoll_AfterStep(void);
 void Ragdoll_Clear(void);
+void Ragdoll_Kick(int edict, const float velocity[3]);   // if it becomes a ragdoll in the next moment, it starts this much faster
 qboolean Ragdoll_Force(int edict);  // a living entity goes limp (ent:BecomeRagdoll); false if its model can't
 // lua_phys.c: entities with a physics body
 void Prop_Init(void);
