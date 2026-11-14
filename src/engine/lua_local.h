@@ -34,6 +34,8 @@ qboolean        LuaE_PushTable(lua_State *L, struct edict_s *e);   // false (not
 void            LuaE_Draw(void);           // ENT:Draw, inside PostDrawOpaque
 void            LuaE_StateStopping(void);  // lua_reload: the tables are kept...
 void            LuaE_StateStarted(void);   // ...and put back after entities/*.lua ran
+// lua_phys.c: physics objects, ent:PhysicsInit, the physics table; opened by LuaG_Open
+void            LuaP_Open(lua_State *L);
 // lua_ui.c: fonts and textured rectangles for surface.*; opened by the host after its surface table
 void            LuaUI_Open(lua_State *L);
 int             LuaUI_DrawText(float x, float y, const char *s, int r, int g, int b, int a);   // -1 = no font set

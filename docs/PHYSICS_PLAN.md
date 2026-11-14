@@ -1,7 +1,7 @@
 # Physics and ragdolls on Half-Life maps: plan
 
-Design written 2026-11-12 from newen at commit c9a8232. **Steps 1-4 are built (2026-11-14, branches `phys-1` to
-`phys-4`); the owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
+Design written 2026-11-12 from newen at commit c9a8232. **Steps 1-5 are built (2026-11-14, branches `phys-1` to
+`phys-5`); the owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
 owner asked for together; its Lua calls build on `docs/LUA_API_PLAN.md`, and its props become scripted
 entities from `docs/SWEP_PLAN.md`.
 
@@ -155,3 +155,9 @@ Host frame ──> SV_Frame (hl.dll thinks, moves the player and monsters)
   and only once it lies still or is 3 seconds old; its starting speed comes from the entity's last two
   living frames; after loading a save a corpse falls again (an edict can't hold a ragdoll's pose).
   New: `phys_ragdolls` (on/off), `phys_showtime`, `phys_ragdolls_list`.
+- **Step 5 (2026-11-14, `phys-5`)**: `lua_phys.c` and `base/lua/entities/prop_physics.lua`. HL2 crates on
+  c1a0d stack; the player stands on one, shoves one, the pistol knocks one; save/load keeps them.
+  Different from the plan: `prop_physics` is a Lua file on top of `ent:PhysicsInit`, not C; the player's
+  shove is a force along the way they walk (`phys_pushforce`), because Half-Life stops the player at the
+  prop's box before a capsule could touch it; shots push along the player's aim (the game doesn't say who
+  fired). The explosion pushes and ragdoll pushes of section 5 are step 6.

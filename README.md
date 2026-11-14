@@ -286,6 +286,19 @@ Half-Life's own movement stays as it is. So far:
 - The map is in the physics world: its walls and floors, and every solid brush entity (doors, lifts, trains,
   walls), which follow Half-Life's own movement, so boxes ride lifts and get pushed by doors. A map only
   gets its physics world when something first needs one.
+- **Physics props**: `lua_run physics.SpawnProp("hl2:models/props_junk/wood_crate001a.mdl", pos)` puts down
+  an object that falls, tumbles and stacks, with the model's own collision shape (a box for Half-Life
+  models). You can stand on props, push them by walking into them (`phys_pushforce`, in newtons; heavy
+  ones don't move) and shoot them. Maps can place them: classname `prop_physics` with the keys `model`,
+  `mass` (kilograms) and `health` (it breaks after that much damage). To Half-Life's own collision a prop
+  is an upright box round its shape. They are saved with the game.
+- Lua physics: `ent:PhysicsInit([mass])` or `ent:PhysicsInitBox(mins, maxs, [mass])` give any entity a
+  body; `ent:GetPhysicsObject()` returns it, with `IsValid`, `ApplyForceCenter(vec)`, `ApplyForceOffset(vec,
+  pos)`, `SetVelocity`, `AddVelocity`, `GetVelocity`, `EnableMotion(bool)`, `Wake`, `Sleep`, `IsAsleep`,
+  `GetMass`, `SetMass`, `GetPos`, `GetMassCenter`, `GetEntity`. `ent:PhysicsDestroy()` removes it.
+  `ent:BecomeRagdoll()` makes a living Half-Life 2 character go limp. The hook `PhysicsCollide(ent, data)`
+  (and `ENT:PhysicsCollide(data)`) runs when a prop hits something: `data.HitEntity`, `HitPos`,
+  `HitNormal`, `Speed`. The prop class itself is `base/lua/entities/prop_physics.lua`.
 - **Ragdolls**: a Half-Life 2 character standing in for a Half-Life one (`mdl_replace`) falls limp when it
   dies, with the joints its model's physics file describes, instead of freezing in a pose. They're for
   looking at: you walk through them and shots pass through. `phys_ragdolls 0` turns them off;

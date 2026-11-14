@@ -31,6 +31,7 @@ typedef struct {
 	snap_t snap[2];             // the last frame and the one before, while it was alive
 	int    ragdoll;             // index + 1, 0 = none
 	qboolean dead;              // seen dead: don't try again each frame if it couldn't become one
+	qboolean forced;            // limp though alive (ent:BecomeRagdoll), until the edict goes
 } track_t;
 
 typedef struct {
@@ -362,7 +363,9 @@ void Ragdoll_Frame(void)
 		ragdoll_t *rd = t->ragdoll ? &ragdolls[t->ragdoll - 1] : NULL;
 		model_t *m = e->free || !e->v.modelindex ? NULL : SV_ModelForIndex(e->v.modelindex);
 		const srcmodel_t *s = m && m->type == mod_studio ? m->studio.source : NULL;
-		qboolean dead = s && e->v.deadflag != 0;
+		if (e->free)
+			t->forced = false;
+		qboolean dead = s && (e->v.deadflag != 0 || t->forced);
 		// gone, alive again, or another model: the ragdoll goes with it
 		if (rd && (!dead || rd->modelindex != e->v.modelindex || rd->model != m)) {
 			RemoveRagdoll(rd);
@@ -405,6 +408,23 @@ void Ragdoll_AfterStep(void)
 			FreeBodies(rd);
 	}
 	EnforceLimit(w);
+}
+
+qboolean Ragdoll_Force(int num)
+{
+	if (!sv.active || num <= sv.maxclients || num >= sv.num_edicts || !phys_ragdolls->value)
+		return false;
+	edict_t *e = EDICT_NUM(num);
+	model_t *m = e->free ? NULL : SV_ModelForIndex(e->v.modelindex);
+	const srcmodel_t *s = m && m->type == mod_studio ? m->studio.source : NULL;
+	if (!s || !s->phys || !s->phys->numjoints)
+		return false;
+	Ragdoll_Frame();   // makes sure it's tracked
+	if (num >= tracks_cap)
+		return false;
+	tracks[num].forced = true;
+	Ragdoll_Frame();
+	return tracks[num].ragdoll != 0;
 }
 
 void Ragdoll_Clear(void)

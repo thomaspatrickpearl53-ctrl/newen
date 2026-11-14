@@ -530,6 +530,7 @@ static int m_SetPos(lua_State *L)
 	edict_t *e = CheckEdict(L, 1);
 	VectorCopy(CheckVec(L, 2), e->v.origin);
 	SV_LinkEdict(e, false);
+	Prop_EdictMoved(e);
 	return 0;
 }
 
@@ -541,6 +542,7 @@ static int m_SetAngles(lua_State *L)
 		VectorCopy(e->v.angles, e->v.v_angle);
 		e->v.fixangle = 1;   // turns the view too
 	}
+	Prop_EdictMoved(e);
 	return 0;
 }
 
@@ -834,6 +836,13 @@ static void RequireServer(lua_State *L)
 		luaL_error(L, "no map is running");
 }
 
+// precaching is also allowed while a map is loading (a map's own Lua entities spawn then, saves are restored then)
+static void RequireMap(lua_State *L)
+{
+	if (!sv.active && !sv.loading)
+		luaL_error(L, "no map is running");
+}
+
 static int l_ents_Create(lua_State *L)
 {
 	RequireServer(L);
@@ -1028,14 +1037,14 @@ static int l_util_BlastDamage(lua_State *L)
 
 static int l_util_PrecacheModel(lua_State *L)
 {
-	RequireServer(L);
+	RequireMap(L);
 	lua_pushinteger(L, SV_PrecacheModel(luaL_checkstring(L, 1)));
 	return 1;
 }
 
 static int l_util_PrecacheSound(lua_State *L)
 {
-	RequireServer(L);
+	RequireMap(L);
 	lua_pushinteger(L, SV_PrecacheSound(luaL_checkstring(L, 1)));
 	return 1;
 }
@@ -1219,6 +1228,7 @@ void LuaG_Open(lua_State *L)
 	LuaR_Open(L);
 	LuaX_Open(L);
 	LuaE_Open(L);
+	LuaP_Open(L);
 }
 
 // ---------------------------------------------------------------- hooks fired by the server

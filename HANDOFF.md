@@ -246,11 +246,12 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
 | `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
-| `phys.h` | 84 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
-| `phys_jolt.cpp` | 633 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
-| `phys_ragdoll.c` | 513 | Ragdolls (physics plan step 4): `Ragdoll_Frame` before each physics step watches every edict whose Source model has a jointed `.phy` (two snapshots of its last living frames), makes a ragdoll when `deadflag` is set (`MakeRagdoll`: a body per solid at its bone, joints from the rest pose, the file's collision pairs), removes it when the edict goes; `Ragdoll_AfterStep` copies the bodies into bone matrices and enforces `phys_ragdoll_max`/`phys_ragdoll_time`; `Ragdoll_ForEdict`/`Ragdoll_Bones` give them to the renderer (`rentity_t::ragdoll`, `SrcSetupBones`); `phys_ragdolls_list` |
+| `phys.h` | 103 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
+| `phys_jolt.cpp` | 754 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
+| `phys_ragdoll.c` | 533 | Ragdolls (physics plan step 4): `Ragdoll_Frame` before each physics step watches every edict whose Source model has a jointed `.phy` (two snapshots of its last living frames), makes a ragdoll when `deadflag` is set (`MakeRagdoll`: a body per solid at its bone, joints from the rest pose, the file's collision pairs), removes it when the edict goes; `Ragdoll_AfterStep` copies the bodies into bone matrices and enforces `phys_ragdoll_max`/`phys_ragdoll_time`; `Ragdoll_ForEdict`/`Ragdoll_Bones` give them to the renderer (`rentity_t::ragdoll`, `SrcSetupBones`); `phys_ragdolls_list` |
+| `lua_phys.c`, `base/lua/entities/prop_physics.lua` | 589 | Physics props (physics plan step 5): any entity can get a Jolt body (`CreateProp`: the model's one-solid `.phy`, else a box); `Prop_BeforeStep` is the player's push, `Prop_AfterStep` copies bodies into edicts (origin, angles with the pitch flipped as studio models are drawn, velocity, and the upright box round the shape via `SV_SetMinMaxSize`), removes props that left the map and runs `PhysicsCollide`; Lua: `ent:PhysicsInit/PhysicsInitBox/PhysicsDestroy/GetPhysicsObject/BecomeRagdoll/WorldSpaceCenter`, the `PhysObj` methods, `physics.SpawnProp`. The Lua file is the `prop_physics` class (damage pushes, breaking, `OnRestore`) |
 | `src_phys.c` | 530 | Source models' `.phy` files (physics plan step 3): `SrcPhys_Load`/`SrcPhys_Parse` give a `srcphys_t` (`src_local.h`): each solid's convex pieces as points + counts (the layout `Phys_AddConvexSet` takes), its bone name, mass, damping; the joints (`ragdollconstraint`: parent and child solid, min/max degrees per axis); which solid pairs collide. `phyinfo` |
-| `phys_world.c` | 547 | The map's physics world, made on first use (`ServerWorld`): the world model's faces as one static mesh (water left out), every `SOLID_BSP` brush entity as a kinematic body of convex pieces (the solid leaves of its hull-0 BSP tree, corners from plane triples), moved each frame to its edict (`SyncBrushes`, `Phys_ServerFrame` after `SV_Physics`), gone at `SV_Deactivate`; test boxes (`phys_dropbox/boxat/boxes/clear`, drawn after `R_DrawEntities`); `phys_test` |
+| `phys_world.c` | 552 | The map's physics world, made on first use (`ServerWorld`): the world model's faces as one static mesh (water left out), every `SOLID_BSP` brush entity as a kinematic body of convex pieces (the solid leaves of its hull-0 BSP tree, corners from plane triples), moved each frame to its edict (`SyncBrushes`, `Phys_ServerFrame` after `SV_Physics`), gone at `SV_Deactivate`; test boxes (`phys_dropbox/boxat/boxes/clear`, drawn after `R_DrawEntities`); `phys_test` |
 | `lua_ext.c` | 407 | Lua's smaller entity/player calls, `ents.FindInCone/FindAlongRay/FireTargets`, hooks `KeyPress`/`KeyRelease`, `OnNPCKilled`, `CalcView` |
 | `lua_ui.c` | 164 | Lua fonts (`surface.CreateFont/SetFont`) and textured rectangles |
 | `lua_game.c` | 1284 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
@@ -1012,6 +1013,69 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### Physics plan: step 5, props, built (2026-11-14, branch `phys-5`)
+
+- **A prop is an edict with a Jolt body** (`lua_phys.c`, one `prop_t` per edict number, checked by serial
+  number). `ent:PhysicsInit([mass])` makes the body from the model's `.phy` when it has exactly one solid
+  (in the model's space), else from a box (the model's `mins`/`maxs`; `PhysicsInitBox` gives one); mass from
+  the file, else the box's volume at 400 kg/m3 (1 to 500 kg); friction 0.6; it starts with the edict's
+  `velocity` and `avelocity` (so thrown props and restored saves keep moving). The edict becomes
+  `MOVETYPE_NONE` (Half-Life never moves it) and `SOLID_BBOX` if it wasn't solid.
+- **What Half-Life sees** (decision P3): after each step an awake prop's edict gets the body's origin, its
+  angles (pitch sign turned: studio models are drawn with it flipped), its velocity (and the spin in
+  `avelocity`, only for saves) and the box round its shape (`Phys_GetBounds`), linked with
+  `SV_SetMinMaxSize`. So the player and monsters collide with an upright box, bullets hit it, `ents.Find*`
+  find it. A sleeping prop costs nothing.
+- **`prop_physics` is a Lua scripted entity**, `base/lua/entities/prop_physics.lua`, not C: keys `model`,
+  `mass`, `health` (breaks after that much damage; without it its health is put back to 100000 after every
+  hit, so the game never removes it). `OnTakeDamage` pushes it 250 kg in/s per point of damage: the game's
+  own weapons don't name an attacker (see SWEP step 5), so the player is assumed; the push goes along the
+  player's aim at the point it meets the prop when the aim does, else straight away from them.
+  `physics.SpawnProp(model, pos, [angles])` is defined in the same file.
+- **The player's shove** is not the plan's kinematic capsule: Half-Life stops the player at the prop's
+  box, so a capsule inside the player's hull would never touch an upright crate. Instead `Prop_BeforeStep`
+  gives every prop whose box touches the player's sideways (not one stood on) an impulse of `phys_pushforce`
+  newtons (500) x the frame time along the direction the player's movement keys ask for, if that points
+  at the prop and the prop isn't already going faster than the player's `maxspeed`. A 30 kg crate slides;
+  friction holds heavy things (the weight at which that happens wasn't measured). Ragdolls aren't pushed by the player (they have no box).
+- **Lua**: `PhysObj` (from `ent:GetPhysicsObject()`, invalid when the entity has no body): `IsValid`,
+  `GetEntity`, `ApplyForceCenter(v)`, `ApplyForceOffset(v, pos)` (impulses, kg in/s, as GMod's are),
+  `SetVelocity`, `AddVelocity`, `GetVelocity`, `EnableMotion(bool)` (off = Jolt static, still solid),
+  `IsMotionEnabled`, `Wake`, `Sleep`, `IsAsleep`, `GetMass`, `SetMass`, `GetPos`, `GetMassCenter`.
+  `ent:SetPos`/`SetAngles` move the body too (`Prop_EdictMoved`). `ent:BecomeRagdoll()` makes a living
+  Source-model character limp (`Ragdoll_Force`; it stays one until the edict goes). Hook
+  `PhysicsCollide(ent, data)` and `ENT:PhysicsCollide(data)`: `HitEntity` (the world if not a prop),
+  `HitPos`, `HitNormal`, `Speed`; from Jolt's contact listener (`TouchList`: new contacts of tagged bodies,
+  at most 256 a step, 64 passed on a frame, slower than 30 in/s left out).
+- **Saves**: nothing new in the file. `hl.dll` saves the `info_target`'s origin, angles, velocity,
+  avelocity and model; the entity's Lua table (mass, break health) is saved by scripted entities;
+  `ENT:OnRestore` makes the body again and puts it to sleep if it had no speed. For that, the physics
+  world can now be made while a map is loading (`sv.loading`), and `util.PrecacheModel/PrecacheSound` work
+  then too (they refused: "no map is running", which also broke precaching in a map-placed Lua entity's
+  `Initialize`).
+- **Fixed on the way**: removing a body didn't wake what rested on it (the crates above a removed one
+  hung in the air): `Phys_RemoveBody` now wakes bodies round its box, which also covers a breakable brush
+  breaking under a box (unchecked in step 2). A prop outside the map fell for ever: one more than 512
+  units outside the world model's box is removed. `near` as a variable name doesn't compile on Windows.
+- Checked, Linux and the MinGW exe under Wine, c1a0d, one scripted run: three HL2 crates
+  (`props_junk/wood_crate001a`, 40 units, 30 kg from its `.phy`) stack at 39.6-unit spacing and sleep; a
+  barrel and a Half-Life medkit model (box) settle; **stand**: the player dropped on a crate rests at its
+  top + 36, speed 0; **shove**: `+forward` for 300 frames moves a crate 63 units ahead of the player (55
+  under Wine); **shoot**: the game's pistol (`+attack`) moves the stack's top crate 13 units; **save/load**:
+  after removing one crate and moving another, loading gives all 7 at exactly the saved positions and
+  angles, asleep. A save taken with crates in the air loads and they carry on. Also: `SetPos`/`SetAngles`,
+  `EnableMotion(false)` (damage doesn't move it), `SetMass`, a breakable crate (health 20: 12 after 8
+  damage, gone after 30 more, and the crate on it falls), `BecomeRagdoll` on a living soldier (true),
+  `lua_reload` (bodies stay), 24-27 `PhysicsCollide` calls in the run. Under AddressSanitizer: the props
+  run, and c2a5 ragdolls with a crate dropped on one, `lua_reload` and a map change: no reports.
+- Known: a tilted prop's box is bigger than it looks, and the player can get stuck in a box that grows
+  into them; the player isn't carried by a prop that moves under them and their weight isn't felt; a
+  jointed model (a character) used as a prop gets a box, not its solids; `ent:PhysicsInit`'s argument is
+  a mass, not GMod's solid type; props make no impact sounds unless a script adds them in `PhysicsCollide`.
+- Not checked: Visual C++, real Windows; a `prop_physics` placed in a map (only spawned from Lua;
+  the loading-time paths were exercised by save restores); props across a level change (they don't
+  travel); monsters walking into props; props on lifts or pushed by doors (boxes were, in step 2).
 
 ### Physics plan: step 4, ragdolls, built (2026-11-14, branch `phys-4`)
 

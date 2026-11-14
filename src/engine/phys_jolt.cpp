@@ -189,8 +189,37 @@ struct physworld_s {
 	int bodies = 0;
 	Array<Ref<GroupFilterTable>> groups;   // physgroup_t - 1; freed slots are null and reused
 	Array<Ref<Constraint>> joints;         // physjoint_t - 1, the same way
+	Array<physcontact_t> contacts;         // new touches of tagged bodies since Phys_TakeContacts
+	ContactListener *listener = nullptr;
 
 	physworld_s() : temp(8 * 1024 * 1024), jobs(cMaxPhysicsJobs) {}
+};
+
+// Tagged bodies' new touches, for impact sounds and Lua's PhysicsCollide. Jolt runs on one thread here,
+// so the list needs no lock.
+class TouchList final : public ContactListener {
+public:
+	explicit TouchList(physworld_t *w) : world(w) {}
+	void OnContactAdded(const Body &b1, const Body &b2, const ContactManifold &m, ContactSettings &) override
+	{
+		int t1 = (int)b1.GetUserData(), t2 = (int)b2.GetUserData();
+		if ((!t1 && !t2) || world->contacts.size() >= 256 || m.mRelativeContactPointsOn1.empty())
+			return;
+		RVec3 p = m.GetWorldSpaceContactPointOn1(0);
+		Vec3 v1 = b1.IsStatic() ? Vec3::sZero() : b1.GetPointVelocity(p);
+		Vec3 v2 = b2.IsStatic() ? Vec3::sZero() : b2.GetPointVelocity(p);
+		physcontact_t c;
+		c.tag1 = t1;
+		c.tag2 = t2;
+		c.speed = fabsf((v2 - v1).Dot(m.mWorldSpaceNormal)) * INCHES;
+		for (int i = 0; i < 3; i++) {
+			c.pos[i] = (float)p[i] * INCHES;
+			c.normal[i] = m.mWorldSpaceNormal[i];
+		}
+		world->contacts.push_back(c);
+	}
+private:
+	physworld_t *world;
 };
 
 extern "C" physworld_t *Phys_CreateWorld(int maxbodies, float gravity)
@@ -202,6 +231,8 @@ extern "C" physworld_t *Phys_CreateWorld(int maxbodies, float gravity)
 	physworld_t *w = new physworld_t();
 	w->system.Init((uint)maxbodies, 0, (uint)maxbodies * 2, (uint)maxbodies * 2, bp_layers, obj_vs_bp, obj_pairs);
 	Phys_SetGravity(w, gravity);
+	w->listener = new TouchList(w);
+	w->system.SetContactListener(w->listener);
 	return w;
 }
 
@@ -219,6 +250,8 @@ extern "C" void Phys_DestroyWorld(physworld_t *w)
 		bi.RemoveBody(id);
 		bi.DestroyBody(id);
 	}
+	w->system.SetContactListener(nullptr);
+	delete w->listener;
 	delete w;
 }
 
@@ -378,7 +411,11 @@ extern "C" void Phys_RemoveBody(physworld_t *w, physbody_t b)
 	BodyInterface &bi = Bodies(w);
 	if (!bi.IsAdded(id))
 		return;
+	// what rested on it is asleep and wouldn't notice it's gone
+	AABox box = bi.GetTransformedShape(id).GetWorldSpaceBounds();
+	box.ExpandBy(Vec3::sReplicate(0.1f));
 	bi.RemoveBody(id);
+	bi.ActivateBodiesInAABox(box, BroadPhaseLayerFilter(), ObjectLayerFilter());
 	bi.DestroyBody(id);
 	w->bodies--;
 }
@@ -630,4 +667,88 @@ extern "C" void Phys_RemoveJoint(physworld_t *w, physjoint_t j)
 		return;
 	w->system.RemoveConstraint(w->joints[(size_t)j - 1]);
 	w->joints[(size_t)j - 1] = nullptr;
+}
+
+// ---------------------------------------------------------------- more for props
+
+extern "C" void Phys_GetBounds(physworld_t *w, physbody_t b, float mins[3], float maxs[3])
+{
+	AABox box = Bodies(w).GetTransformedShape(BodyID(b)).GetWorldSpaceBounds();
+	for (int i = 0; i < 3; i++) {
+		mins[i] = box.mMin[i] * INCHES;
+		maxs[i] = box.mMax[i] * INCHES;
+	}
+}
+
+extern "C" void Phys_GetMassCenter(physworld_t *w, physbody_t b, float pos[3])
+{
+	FromJolt(Bodies(w).GetCenterOfMassPosition(BodyID(b)), pos);
+}
+
+extern "C" void Phys_AddImpulseAt(physworld_t *w, physbody_t b, const float impulse[3], const float pos[3])
+{
+	Bodies(w).AddImpulse(BodyID(b), Vec3(impulse[0] * METRES, impulse[1] * METRES, impulse[2] * METRES), ToJolt(pos));
+}
+
+extern "C" void Phys_GetSpin(physworld_t *w, physbody_t b, float spin[3])
+{
+	Vec3 a = Bodies(w).GetAngularVelocity(BodyID(b));
+	for (int i = 0; i < 3; i++)
+		spin[i] = a[i] / DEG;
+}
+
+extern "C" void Phys_Wake(physworld_t *w, physbody_t b)
+{
+	Bodies(w).ActivateBody(BodyID(b));
+}
+
+extern "C" void Phys_EnableMotion(physworld_t *w, physbody_t b, int on)
+{
+	BodyInterface &bi = Bodies(w);
+	BodyID id(b);
+	// the layer stays "moving": things still land on it, and it can be let go again
+	bi.SetMotionType(id, on ? EMotionType::Dynamic : EMotionType::Static, on ? EActivation::Activate : EActivation::DontActivate);
+}
+
+extern "C" float Phys_GetMass(physworld_t *w, physbody_t b)
+{
+	BodyLockRead lock(w->system.GetBodyLockInterface(), BodyID(b));
+	if (!lock.Succeeded() || !lock.GetBody().GetMotionPropertiesUnchecked())
+		return 0;
+	float inv = lock.GetBody().GetMotionPropertiesUnchecked()->GetInverseMassUnchecked();
+	return inv > 0 ? 1.0f / inv : 0;
+}
+
+extern "C" void Phys_SetMass(physworld_t *w, physbody_t b, float mass)
+{
+	if (mass <= 0)
+		return;
+	BodyLockWrite lock(w->system.GetBodyLockInterface(), BodyID(b));
+	if (!lock.Succeeded() || !lock.GetBody().GetMotionPropertiesUnchecked())
+		return;
+	MotionProperties *mp = lock.GetBody().GetMotionPropertiesUnchecked();
+	float inv = mp->GetInverseMassUnchecked();
+	if (inv > 0)
+		mp->ScaleToMass(mass);   // the resistance to turning grows with it
+}
+
+extern "C" void Phys_SetFriction(physworld_t *w, physbody_t b, float friction)
+{
+	Bodies(w).SetFriction(BodyID(b), friction < 0 ? 0 : friction);
+}
+
+extern "C" void Phys_SetTag(physworld_t *w, physbody_t b, int tag)
+{
+	Bodies(w).SetUserData(BodyID(b), (uint64)(uint32)tag);
+}
+
+extern "C" int Phys_TakeContacts(physworld_t *w, physcontact_t *out, int max)
+{
+	if (!w)
+		return 0;
+	int n = (int)w->contacts.size() < max ? (int)w->contacts.size() : max;
+	for (int i = 0; i < n; i++)
+		out[i] = w->contacts[(size_t)i];
+	w->contacts.clear();
+	return n;
 }

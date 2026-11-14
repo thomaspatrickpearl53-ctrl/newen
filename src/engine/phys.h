@@ -76,6 +76,25 @@ physjoint_t  Phys_AddJoint(physworld_t *w, physbody_t parent, physbody_t child, 
 	const float frame2[3][4], const float mindeg[3], const float maxdeg[3], float friction);
 void         Phys_RemoveJoint(physworld_t *w, physjoint_t j);
 
+// ---- more for props
+void         Phys_GetBounds(physworld_t *w, physbody_t b, float mins[3], float maxs[3]);   // its box in the world
+void         Phys_GetMassCenter(physworld_t *w, physbody_t b, float pos[3]);
+void         Phys_AddImpulseAt(physworld_t *w, physbody_t b, const float impulse[3], const float pos[3]);   // spins it too
+void         Phys_GetSpin(physworld_t *w, physbody_t b, float spin[3]);   // degrees/s about the world's axes
+void         Phys_Wake(physworld_t *w, physbody_t b);
+void         Phys_EnableMotion(physworld_t *w, physbody_t b, int on);     // off: it stays where it is, solid
+float        Phys_GetMass(physworld_t *w, physbody_t b);
+void         Phys_SetMass(physworld_t *w, physbody_t b, float mass);
+void         Phys_SetFriction(physworld_t *w, physbody_t b, float friction);
+// A body with a tag reports what it hits: each new touch during Phys_Step is kept until taken.
+// speed: how fast the two closed on each other (inches/s); normal points from the first body to the second.
+typedef struct {
+	int   tag1, tag2;           // 0 = a body without one (the map)
+	float pos[3], normal[3], speed;
+} physcontact_t;
+void         Phys_SetTag(physworld_t *w, physbody_t b, int tag);
+int          Phys_TakeContacts(physworld_t *w, physcontact_t *out, int max);
+
 // phys_world.c: the running map's world; create = make it if the map has none yet. NULL without a map.
 physworld_t *Phys_ServerWorld(int create);
 

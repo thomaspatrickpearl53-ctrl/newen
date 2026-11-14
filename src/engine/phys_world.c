@@ -357,7 +357,8 @@ physworld_t *Phys_ServerWorld(qboolean create)
 // the map's physics world, made the first time something needs it
 static physworld_t *ServerWorld(void)
 {
-	if (svworld || !sv.active || !world.loaded)
+	// also while a map loads: its own props spawn then, and a save's props come back then
+	if (svworld || (!sv.active && !sv.loading) || !world.loaded)
 		return svworld;
 	double t0 = Sys_FloatTime();
 	svworld = Phys_CreateWorld((int)phys_maxbodies->value, Cvar_VariableValue("sv_gravity"));
@@ -385,8 +386,10 @@ void Phys_ServerFrame(float dt)
 		return;
 	Phys_SetGravity(svworld, Cvar_VariableValue("sv_gravity"));
 	SyncBrushes(dt);
+	Prop_BeforeStep(dt);
 	Phys_Step(svworld, dt);
 	Ragdoll_AfterStep();
+	Prop_AfterStep();
 
 	// phys_showtime: what physics cost, once a second
 	static double total, worst, next;
@@ -408,6 +411,7 @@ void Phys_ServerFrame(float dt)
 void Phys_ServerStopped(void)
 {
 	Ragdoll_Clear();
+	Prop_Clear();
 	Phys_DestroyWorld(svworld);
 	svworld = NULL;
 	worldbody = PHYS_NOBODY;
@@ -543,5 +547,6 @@ void Phys_InitCommands(void)
 	Cmd_AddCommand("phys_clear", ClearBoxes_f, "removes the test boxes");
 	phys_showtime = Cvar_Get("phys_showtime", "0", 0, "prints what physics costs each frame (milliseconds), once a second");
 	Ragdoll_Init();
+	Prop_Init();
 	phys_maxbodies = Cvar_Get("phys_maxbodies", "8192", FCVAR_ARCHIVE, "most bodies a map's physics world holds (from the next map)");
 }

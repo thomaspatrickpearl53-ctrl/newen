@@ -116,6 +116,7 @@ void ED_Free(edict_t *e)
 		return;
 	LuaE_Removed(e);
 	LuaG_EntityRemoved(e);
+	Prop_EdictFreed(e);
 	SV_UnlinkEdict(e);
 	FreePrivateData(e);
 	e->serialnumber++;
