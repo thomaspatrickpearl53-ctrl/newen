@@ -1029,7 +1029,8 @@ Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later:
 ### SWEP plan: step 6, weapon pickups and the examples; the plan is built (2026-11-14, branch `swep-6`, on `swep-4`)
 
 The owner's "Go: step 6". **`docs/SWEP_PLAN.md` is built, steps 1-6, on branches `swep-1` ... `swep-6`
-(each from the one before, `swep-1` from `master`); none is merged or pushed. The plan's own check for this
+(each from the one before, `swep-1` from `master`). `master` was fast-forwarded to `swep-6` on 2026-11-14
+at the owner's word ("Merge to master"); not pushed, no release cut. The plan's own check for this
 step is the owner's review.** With this the three plans handed over on 2026-11-12 are all built.
 
 - **Pickups**: `weapons.Register` also calls `scripted_ents.Register({ Base = "lua_weapon_pickup",
