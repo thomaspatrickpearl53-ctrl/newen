@@ -966,6 +966,13 @@ GoldSrc header for the DLLs. Written fresh (NewenSource couldn't be found on the
     -Wconversion` and use nothing outside C11 and the engine's own helpers (no POSIX calls), but MSVC hasn't
     seen them. First thing on the Windows machine: `build.bat`, then the `mdlview hl2:...` and `mdl_replace`
     checks from README. `bin\basedir_hl2.txt` caches where Half-Life 2 was found.
+- **Release 0.5.0 (2026-11-14, the owner's "push it and release 0.5.0"):** the SWEP plan's steps 1-4 and 6
+  (Lua weapons: the weapon menu, taking in hand, firing, saved games and level changes, pickups). Built with
+  `tools/make_release.sh`. Checked from the unpacked archives: the Linux build (against the folder of links,
+  see the SWEP step 1 entry: the Linux Half-Life install had lost its game files) and the MinGW exe on
+  Windows 10 in the test VM both picked the Lua pistol up, fired three shots, saved, switched away, loaded
+  and had it back in hand with clip 9; the exe also passed `suite.sh` (physics self-test, carrying, the
+  menu click, the tau beam, ragdolls, an explosion, save/load) as 0.4.1 did.
 - **Release 0.4.1 (2026-11-14):** the two input fixes and prop carrying of branch `post-0.4.0` (merged into
   `master`), built and checked the same way as 0.4.0. Later the same day **the published 0.4.1 Windows exe
   was run on Windows 10** in the test VM (`./suite.sh`): everything in it passed; its release notes now
