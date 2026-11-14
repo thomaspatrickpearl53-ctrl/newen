@@ -960,16 +960,20 @@ GoldSrc header for the DLLs. Written fresh (NewenSource couldn't be found on the
     -fsanitize=address" -DCMAKE_LIBRARY_ARCHITECTURE=i386-linux-gnu -DSDL2_LIBRARY=<the 32-bit libSDL2>
     -DSDL2_INCLUDE_DIR=/usr/include/SDL2`, build it (it overwrites `bin/newen`; rebuild the normal one
     after), run with `ASAN_OPTIONS=detect_leaks=0:halt_on_error=0:alloc_dealloc_mismatch=0:log_path=<file>`.
-  - **Windows: not built.** The four new files compile clean under `gcc -std=c11 -pedantic -Wall -Wextra
+  - **Windows: not built at the time** (since then: built with Visual C++ and run on Windows 10 in the test VM
+    on 2026-11-14, where the Combine soldier stands in for grunts and loads its `.phy`). The four new files compile clean under `gcc -std=c11 -pedantic -Wall -Wextra
     -Wconversion` and use nothing outside C11 and the engine's own helpers (no POSIX calls), but MSVC hasn't
     seen them. First thing on the Windows machine: `build.bat`, then the `mdlview hl2:...` and `mdl_replace`
     checks from README. `bin\basedir_hl2.txt` caches where Half-Life 2 was found.
 - **Release 0.4.1 (2026-11-14):** the two input fixes and prop carrying of branch `post-0.4.0` (merged into
-  `master`), built and checked the same way as 0.4.0.
+  `master`), built and checked the same way as 0.4.0. Later the same day **the published 0.4.1 Windows exe
+  was run on Windows 10** in the test VM (`./suite.sh`): everything in it passed; its release notes now
+  say so.
 - **Release 0.4.0 (2026-11-14):** the finished physics plan (`docs/PHYSICS_PLAN.md`, steps 1-7 and the
   two extras) and scripted entities (SWEP plan step 5), built with `tools/make_release.sh` as 0.3.0 was
-  (MinGW Windows build, not run on real Windows). Both packaged builds were unpacked and checked before
-  publishing: `phys_test`, c1a0, and props on c1a0d (the Windows one under Wine).
+  (MinGW Windows build, not run on real Windows; 0.4.1, the same code plus fixes, has been). Both packaged
+  builds were unpacked and checked before publishing: `phys_test`, c1a0, and props on c1a0d (the Windows one
+  under Wine).
 - **Release 0.3.0 (2026-11-13):** the finished Lua API plan (steps 1-7), built with `tools/make_release.sh` as
   0.2.0 was (MinGW Windows build, not run on real Windows). Linux build checked on c1a0 before publishing.
 - **Release 0.2.0 and the MinGW Windows build (2026-11-12):** `tools/make_release.sh` builds both archives
@@ -982,8 +986,9 @@ GoldSrc header for the DLLs. Written fresh (NewenSource couldn't be found on the
   This was the first time the Windows side of `gameui.c` / `vgui2_*.c` and the Source model files went through
   a Windows compiler: no errors. Run under Wine against the Linux Steam install (which carries `hl.dll` and
   `client.dll` but not `vgui.dll`): the Windows `hl.dll` loads and runs c1a0 and c1a0d, Half-Life 2 is read
-  from `-hl2dir`, Source models load and draw. **Not tested: anything needing client.dll (HUD, weapons, view
-  models, the menu), because `vgui.dll` isn't in the Linux install, and real Windows.** 0.1.0 was a Visual C++
+  from `-hl2dir`, Source models load and draw. **Not tested then: anything needing client.dll (HUD, weapons, view
+  models, the menu), because `vgui.dll` isn't in the Linux install, and real Windows.** (Since 2026-11-14 the
+  MinGW build runs on Windows 10 with the Windows `client.dll` in the test VM.) 0.1.0 was a Visual C++
   build; the MinGW one needs Windows 10+ (system UCRT) and no VCRUNTIME140.dll.
 - Not built: IK, layers of layers.
 - Next: the Windows build, step 10 (docs review by the owner), and a commit (nothing from this work is
@@ -1057,8 +1062,15 @@ with `build.bat` was. Also `build.bat` now uses the Build Tools folder when Visu
 installed (`VS` can be set beforehand). Visual C++ warnings: 18, none new in kind (C4152 function/data
 pointer casts, C4701, C4459).
 
-Not checked in the VM yet: sound, the menu with a mouse, a long play session, the Visual C++ build's
-ragdolls and explosions.
+**Checked on Windows 10 in the VM (2026-11-14), with `./suite.sh <folder>`** (three runs: `phys_test` and
+c1a0d with carrying, the weapon-menu click and the tau beam; c2a5 with Source ragdolls, an explosion and a
+thrown crate; c1a0d with `phys_ragdoll_hl 1` and save/load), on both **the published 0.4.1 exe** (MinGW)
+and **a Visual C++ build of `master`**: `client.dll` and `hl.dll` load, the game-object probe passes,
+`phys_test` passes, a crate is picked up, carried and thrown, the menu click doesn't fire the pistol and a
+later click does, the tau beam ends at the crosshair looking up and down, an explosion throws crates up to
+600 units up, a thrown crate kills a soldier who goes limp, six Half-Life scientists go limp and come back
+after a load. No errors. Still not checked on Windows: sound, the menu with a mouse, a long play session,
+a real GPU's OpenGL driver (the VM renders with Mesa on the CPU), and Windows 11.
 
 ### The Windows build with Windows game libraries, under Wine (2026-11-14)
 
@@ -1075,7 +1087,7 @@ draw; the weapon-menu click doesn't fire the pistol; the tau beam ends at the cr
 down; a crate is picked up, carried and thrown; Source ragdolls (c2a5), an `env_explosion` throwing
 crates, a blast-thrown crate and a Lua-thrown one each killing a soldier; Half-Life model ragdolls
 (`phys_ragdoll_hl 1`, 6 scientists on c1a0d) and save/load. No errors in the log.
-Still not checked: real Windows (Wine isn't it: drivers, input, sound), and Visual C++ (`build.bat`).
+Then still not checked: real Windows and Visual C++ (`build.bat`) (since checked on Windows 10 in the test VM, 2026-11-14: section "A Windows 10 test VM").
 
 ### After 0.4.0: two input fixes and carrying props (2026-11-14, branch `post-0.4.0`, released as 0.4.1)
 
@@ -1102,8 +1114,7 @@ Reported by the owner playing 0.4.0.
   from the game until it is let go. New `PhysObj:GetAngleVelocity/SetAngleVelocity` (`Phys_SetSpin`).
   Checked on Linux and the MinGW exe under Wine: a crate picked up with `+use` rises to eye height, follows
   a turn of the view, and attack throws it 110 units without the gun firing.
-- Not checked: the two input fixes on Windows (the Wine setup has no Windows `client.dll`/`vgui.dll`, so
-  the client DLL doesn't run there at all); the weapon actually changing after the menu click in a scripted
+- Not checked at the time: the two input fixes on Windows (the Wine setup had no Windows `client.dll`/`vgui.dll`) (since checked on Windows 10 in the test VM, 2026-11-14: section "A Windows 10 test VM"); the weapon actually changing after the menu click in a scripted
   run (the client's switch command queues behind the script's own `wait`s; the path is unchanged);
   carrying in a real play session, through doors, or while standing on the carried prop.
 
@@ -1112,8 +1123,9 @@ Reported by the owner playing 0.4.0.
 **The plan is built, steps 1-7, each on its own branch from the one before (`phys-1` ... `phys-7`, on
 `swep-5`). `master` was fast-forwarded to `phys-7` on 2026-11-14 at the owner's word (so it also has
 `swep-5`), pushed, and released as 0.4.0. Next in the brief's order (`docs/BRIEF_FOR_AGENTS.md`
-section 4): `docs/SWEP_PLAN.md` steps 1-4 and 6. Nothing in the physics work has been built with Visual
-C++ or run on real Windows: Linux and the MinGW exe under Wine only.**
+section 4): `docs/SWEP_PLAN.md` steps 1-4 and 6. When written, nothing in the physics work had been built
+with Visual C++ or run on real Windows; both have been since, in the Windows 10 test VM, which found and
+fixed a Visual C++-only physics bug (section "A Windows 10 test VM").**
 
 - **Extras the owner asked for after step 6** (commit "Stronger explosions; fast props hurt monsters"):
   - `phys_blastforce` (3) multiplies the explosion throw (18 in/s per point of damage at the middle);
@@ -1196,7 +1208,7 @@ All in `phys_world.c` ("pushes") on three new `phys.h` calls: `Phys_Explode`, `P
   holds for corpses in the outer part of the blast and for what the blast itself kills without gibbing.
 - Known: a ragdoll lying against a standing player stays awake ("moving") while they touch. The numbers
   (6 in/s per damage point, 20 kg, 400 per bullet damage point, the 250 of `prop_physics`) are by eye.
-- Not checked: Visual C++, real Windows; rockets, satchels and tripmines (the same message); an explosion
+- Not checked (Visual C++ and real Windows have been since, in the Windows 10 test VM: section "A Windows 10 test VM"): rockets, satchels and tripmines (the same message); an explosion
   behind a closed door; monsters' own gunfire against props; many explosions in one frame.
 
 ### Physics plan: step 5, props, built (2026-11-14, branch `phys-5`)
@@ -1258,7 +1270,7 @@ All in `phys_world.c` ("pushes") on three new `phys.h` calls: `Phys_Explode`, `P
   into them; the player isn't carried by a prop that moves under them and their weight isn't felt; a
   jointed model (a character) used as a prop gets a box, not its solids; `ent:PhysicsInit`'s argument is
   a mass, not GMod's solid type; props make no impact sounds unless a script adds them in `PhysicsCollide`.
-- Not checked: Visual C++, real Windows; a `prop_physics` placed in a map (only spawned from Lua;
+- Not checked (Visual C++ and real Windows have been since, in the Windows 10 test VM: section "A Windows 10 test VM"): a `prop_physics` placed in a map (only spawned from Lua;
   the loading-time paths were exercised by save restores); props across a level change (they don't
   travel); monsters walking into props; props on lifts or pushed by doors (boxes were, in step 2).
 
@@ -1318,7 +1330,7 @@ All in `phys_world.c` ("pushes") on three new `phys.h` calls: `Phys_Explode`, `P
   draped on it or kneeling against it. The ragdoll starts at the edict's origin, not the smoothed
   (`r_steplerp`) one, so a walking monster can jump a few units as it goes limp. Ragdolls don't react to
   shots or explosions yet (step 6). Test scripts leave `phys_ragdolls` as they set it: it is archived.
-- Not checked: Visual C++, real Windows; a ragdoll gibbed or faded by `hl.dll` (removal was tested with
+- Not checked (Visual C++ and real Windows have been since, in the Windows 10 test VM: section "A Windows 10 test VM"): a ragdoll gibbed or faded by `hl.dll` (removal was tested with
   `ent:Remove()`); ragdolls on lifts and trains; models other than the Combine soldier, Kleiner and Barney
   (zombies, headcrabs, the seagull's shapeless solids); real fights, where the killing shot's push is missed.
 
@@ -1353,7 +1365,7 @@ All in `phys_world.c` ("pushes") on three new `phys.h` calls: `Phys_Explode`, `P
   with AddressSanitizer + UBSan read all 2747 `.phy` files of HL2, Episode One, Episode Two and Lost Coast
   (all read) and 1.1 million damaged copies (cut short, bytes and offsets overwritten): no memory error
   (it found one: `memset` on a NULL array for a piece with no triangles, fixed). c1a0 loads as before.
-- Not checked: Visual C++, real Windows; the old solid layout without the `VPHY` mark (the code accepts
+- Not checked (Visual C++ and real Windows have been since, in the Windows 10 test VM: section "A Windows 10 test VM"): the old solid layout without the `VPHY` mark (the code accepts
   it, none of the 2747 files has it); what the joint axes mean in Jolt's terms (step 4).
 
 ### Physics plan: step 2, the map and its brush entities, built (2026-11-13, branch `phys-2`)
@@ -1381,7 +1393,7 @@ All in `phys_world.c` ("pushes") on three new `phys.h` calls: `Phys_Explode`, `P
   c1a0 loads as before (no physics world unless something asks).
 - c1a0d's `freeman_locker` is a passable door (spawnflag 8, `SOLID_NOT`), so not in the physics world; the
   "step" there is the HEV suit's glass case.
-- Not checked: Visual C++, real Windows, AddressSanitizer (no file parsing; the hull walk checks node
+- Not checked: Visual C++ and real Windows (since checked: the world and props on c1a0d in the Windows 10 test VM), AddressSanitizer (no file parsing; the hull walk checks node
   ranges), trains (`func_tracktrain`) carrying boxes, a breakable brush breaking under a box.
 
 ### Physics plan: step 1, Jolt in the build, built (2026-11-13, branch `phys-1`, on `swep-5`)
@@ -1408,7 +1420,7 @@ The owner said "start physics" after SWEP step 5, which also confirms decision P
   100 in/s; 241 frames in 1-2 ms). c1a0 loads with the same 207 entities on both; a c1a0 screenshot against
   the 0.3.0 release exe: 16 pixels differ by 1 in one colour channel (rounding), nothing visible.
 - Not checked: Visual C++ (`build.bat`; Jolt's own scripts include a 32-bit VS build, so x86 MSVC is a
-  supported setup), real Windows, AddressSanitizer (this step reads no files and doesn't call `hl.dll`).
+  supported setup), real Windows (since checked on Windows 10 in the test VM, 2026-11-14: section "A Windows 10 test VM"), AddressSanitizer (this step reads no files and doesn't call `hl.dll`).
 
 ### SWEP plan: step 5, scripted entities, built (2026-11-13, branch `swep-5`)
 
@@ -1443,7 +1455,7 @@ Next in the brief's order after the Lua API plan (`docs/BRIEF_FOR_AGENTS.md`, se
 - 32-bit AddressSanitizer build (`build-asan/out`, recipe in "Source models" step 9 plus `-DOUT_DIR`): use,
   save/load with nested tables, vectors, angles, an entity reference and a table that contains itself (left
   out, the rest came back), `lua_reload`, game blast damage removing a Lua entity, a level change: no reports.
-- Not checked: real Windows, Visual C++, the screenshot regression (pixel compare) and
+- Not checked: real Windows, Visual C++ (since then `prop_physics`, a Lua scripted entity, runs on Windows 10 with both builds in the test VM), the screenshot regression (pixel compare) and
   `mdlinfo` sweep from the brief (no renderer or model code changed), a Lua entity on a moving platform,
   `MOVETYPE`s other than none/push for Lua entities.
 - Limits: a map trigger firing a Lua entity by name doesn't reach `ENT:Use` (the game calls the object's
@@ -1545,7 +1557,7 @@ asked for it to be built here rather than by ChatGPT.
   `env_explosion`; probe passes on **all 125** `valve/maps` (it first failed on maps without a live
   scientist, fixed by checking `BloodColor` on the player); c2a5 firefight with hitboxes on, no errors;
   AddressSanitizer session (bullets, kills, blasts on c1a0d and c1a1a, an HL2 Barney): no reports.
-- Not checked: real Windows / Visual C++; the feel of stock fights with head shots now counting (harder for
+- Not checked: real Windows / Visual C++ (since then `ent:TakeDamage` killing monsters runs on Windows 10 with both builds in the test VM); the feel of stock fights with head shots now counting (harder for
   the player too); Half-Life weapons' head shots seen in play (only Lua's were traced and logged).
 - The Linux build links SDL2 from `~/.local/share/Steam/ubuntu12_32/steam-runtime.old/...` now: Steam moved
   its runtime and the old path vanished. A system 32-bit SDL2 (`lib32-sdl2-compat`) would make it stable.
@@ -1580,7 +1592,7 @@ SWEP and physics work has not been built. See `docs/LUA_API_PLAN.md`, section 10
   inspected. Logs and images are in `bin/userdata/valve/luaapi_checks/` (ignored). Saved settings restored.
 - Memory: separate 32-bit AddressSanitizer build in `build-asan/out/`, c0a0 then c1a0d and the probes:
   no reports, with `detect_leaks=0:halt_on_error=1:alloc_dealloc_mismatch=0`. Normal `bin/newen` is intact.
-- Not checked: real Windows or Visual C++; client/HUD/menu interaction (these runs use `-noclientdll`;
+- Not checked: real Windows or Visual C++ (since then the probe passes on Windows 10 with the Windows `hl.dll`, both builds, in the test VM); client/HUD/menu interaction (these runs use `-noclientdll`;
   VGUI could not load in the baseline setup); deliberately crashing a constructor or cleanup callback.
   No damage API or gameplay interception is enabled by this step.
 

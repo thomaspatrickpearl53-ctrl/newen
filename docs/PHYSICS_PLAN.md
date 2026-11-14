@@ -185,3 +185,7 @@ Host frame ──> SV_Frame (hl.dll thinks, moves the player and monsters)
 - Section 7: there is no `phys_ragdoll.c`/`lua_phys.c` split by "props in C": bodies, the player's push and
   the Lua calls are all in `lua_phys.c`.
 - Section 9 still holds, with one more: fast props hurt monsters but not the player.
+- Windows: everything was first checked on Linux and with the MinGW exe under Wine only. On 2026-11-14 a
+  Windows 10 test VM ran it all on Windows itself, with the 0.4.1 release exe and a Visual C++ build, and
+  found that Visual C++ builds lost contacts (Jolt's `/fp:fast`); fixed in `CMakeLists.txt` (HANDOFF, "A
+  Windows 10 test VM").

@@ -75,6 +75,10 @@ cmake --build build-mingw --parallel
 Once C++ arrives (physics step 1), add `-DCMAKE_CXX_COMPILER=i686-w64-mingw32-g++`. Run the Windows build
 under Wine with `-basedir` and `-hl2dir` in quotes (the Half-Life 2 path has a space).
 
+**Real Windows (added 2026-11-14):** a Windows 10 VM in `~/newen-vm` builds with Visual C++
+(`./vcbuild.sh`) and runs any Windows build on Windows (`./test.sh <folder> [args]`, `./suite.sh <folder>`).
+HANDOFF, "A Windows 10 test VM", has the details. Use it before a release.
+
 **Run headless:** `bin/newen +map c1a0 +wait 60 +screenshot +wait 1 +quit`, then read
 `bin/userdata/valve/console.log` and convert `bin/userdata/valve/screenshots/*.tga` with ffmpeg to look at them.
 

@@ -123,7 +123,8 @@ that damage transaction needs the additional bridge described in section 10.
 
 ## 10. Implementation findings: damage-bridge decision needed
 
-Step 1 passed on the installed Steam Linux `hl.so` and Windows `hl.dll` under Wine. The public
+Step 1 passed on the installed Steam Linux `hl.so` and Windows `hl.dll` under Wine (and, since 2026-11-14,
+on Windows 10 itself in the test VM, with both the MinGW and the Visual C++ build). The public
 [CBaseEntity layout](https://github.com/ValveSoftware/halflife/blob/master/dlls/cbase.h) has no virtual
 destructor: Classify 8 and IsPlayer 40 are the same on both platforms. These give the expected player,
 world and scientist answers (1, 0, 3). Substituting Classify for IsPlayer deliberately produces 2 on the
