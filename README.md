@@ -458,8 +458,8 @@ becomes one too (a Lua class wins over the game's own class of the same name).
 A file `lua/weapons/<class>.lua` fills in a global `SWEP` table and becomes the weapon class `<class>` (or
 call `weapons.Register(SWEP, class)` yourself; `weapons.Get(class)`, `weapons.GetList()`). Give it with
 `ply:Give(class)`, or `sv_cheats 1` and `give <class>` in the console. **So far a Lua weapon shows in
-Half-Life's weapon menu with its icon, clip and ammo, and can be taken in hand and put away like any other
-weapon; firing and saving come next** (`docs/SWEP_PLAN.md`).
+Half-Life's weapon menu with its icon, clip and ammo, can be taken in hand and put away like any other
+weapon, and fires real bullets; saved games and level changes come next** (`docs/SWEP_PLAN.md`).
 
 - Fields, with Garry's Mod's names: `SWEP.PrintName`, `SWEP.Slot` (the menu column, from 0) and
   `SWEP.SlotPos` (the place in it; a taken place moves the weapon to the next free one),
@@ -473,6 +473,17 @@ weapon; firing and saving come next** (`docs/SWEP_PLAN.md`).
 - In hand: the weapon menu, `use <class>` and `lastinv` choose a Lua weapon like the game's own. Half-Life's
   weapon stays put away meanwhile: it doesn't fire, reload or animate, and comes back when chosen again.
   `self:SendWeaponAnim(sequence number or name)` plays an animation of `SWEP.ViewModel`.
+- Firing: while the weapon is in hand, `SWEP:Think()` runs every frame, and `SWEP:PrimaryAttack()`,
+  `SWEP:SecondaryAttack()` and `SWEP:Reload()` while their buttons are held (once per press unless
+  `SWEP.Primary.Automatic` / `SWEP.Secondary.Automatic` is true). `self:SetNextPrimaryFire(CurTime() + 0.1)`
+  (and `SetNextSecondaryFire`, `GetNextPrimaryFire`, `GetNextSecondaryFire`) sets when it may fire again.
+  `self:ShootBullet{ damage = 8, num = 1, spread = 0.01, tracer = 0, distance = 8192 }` fires from the
+  owner's eyes along their aim, with blood, bullet holes, hit groups and the game's own damage.
+  `self:TakePrimaryAmmo(n)` / `TakeSecondaryAmmo(n)` (from the clip, or the owner's ammo for a weapon
+  without one), `self:CanPrimaryAttack()` / `CanSecondaryAttack()` (false when empty: it clicks, and reloads
+  if it can), `self:DefaultReload(sequence, [seconds])` (true if a reload started; the clip fills when the
+  animation is over), `self:EmitSound(name, ...)` (from the owner), `ply:ViewPunch(Angle(-2, 0, 0))` (kicks
+  the view). A weapon without a `Reload` of its own reloads with the view model's `reload` sequence.
 - The weapon is a table of its own (`self.Shots = 0`), with `self.Owner` and the methods `IsValid`,
   `GetClass`, `GetOwner`, `GetPrintName`, `Clip1`/`SetClip1`, `Clip2`/`SetClip2`, `GetMaxClip1`/`2`, `Ammo1`/
   `Ammo2` (the owner's spare ammo), `GetPrimaryAmmoType`/`GetSecondaryAmmoType` (the type's name), `GetSlot`,

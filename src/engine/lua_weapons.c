@@ -15,8 +15,11 @@
 // view model draws (the game doesn't redeploy a weapon that is already its active one). If the game
 // changes weapon by itself, its view model changes, and that ends the Lua weapon's turn.
 //
-// So far (SWEP plan steps 1 and 2): the registry, the player's Lua weapons and ammo, the HUD, and choosing
-// a weapon. Firing and saving are the next steps.
+// Firing (step 3): each frame the weapon in hand gets Think, and PrimaryAttack / SecondaryAttack / Reload
+// while their buttons are held and its own next-fire times allow, as Garry's Mod calls them. ShootBullet
+// fires through the engine's bullets (sv_damage.c), which hurt through the game's own damage rules.
+//
+// So far (SWEP plan steps 1 to 3): everything but saved games and level changes.
 //
 // The weapon a player holds is a Lua table of its own (one per class, as the game has one weapon of a
 // kind per player); its metatable leads to the class's SWEP table, then SWEP.Base's, then the methods
@@ -55,6 +58,8 @@ typedef struct {
 	int      sent_clip;  // the clip the HUD has; -2 = tell it
 	qboolean popup;      // show the pickup icon once it's listed
 	char    *viewmodel;  // SWEP.ViewModel, read when it's taken in hand; NULL for none
+	double   next_primary, next_secondary;   // on the map's clock (sv.time)
+	double   reload_end;                     // 0 when not reloading
 	qboolean warned;
 } lweapon_t;
 
@@ -81,6 +86,7 @@ static qboolean game_cur_known;
 static int      game_anim_body;     // the body of the game's last view-model animation
 static int      held_buttons;       // the weapon buttons taken out of the input this frame
 static qboolean holster_asked;      // Holster already ran for the command the game is working on
+static int      last_buttons;       // last frame's, to tell a press from a hold
 
 static ammo_t *FindAmmo(const char *name)
 {
@@ -477,6 +483,7 @@ static void Wake(edict_t *pl, qboolean replay)
 {
 	if (active < 0)
 		return;
+	weps[active].reload_end = 0;   // a reload that wasn't finished is lost
 	active = -1;
 	held_buttons = 0;
 	game_vm = pl->v.viewmodel;
@@ -516,6 +523,7 @@ static qboolean Select(lua_State *L, edict_t *pl, int i)
 		if (!CallHolster(L, &weps[active], w))
 			return false;
 		weps[active].sent_clip = -2;   // the HUD hears it's no longer the one in hand
+		weps[active].reload_end = 0;
 		previous = active;
 	} else {
 		game_vm = pl->v.viewmodel;   // the game's weapon goes to sleep
@@ -533,6 +541,10 @@ static qboolean Select(lua_State *L, edict_t *pl, int i)
 	lua_settop(L, top);
 	int seq = DrawSequence(w->viewmodel);
 	QueueWeaponAnim(seq >= 0 ? seq : 0, 0);
+	// not while it's being drawn, as Half-Life's weapons wait half a second
+	w->reload_end = 0;
+	w->next_primary = w->next_secondary = sv.time + 0.5;
+	last_buttons = WEAPON_BUTTONS;   // a button still down from before isn't a new press
 	CallWeapon(L, w, "Deploy");
 	return true;
 }
@@ -563,6 +575,77 @@ static int GameWeaponId(edict_t *pl, const char *cls)
 		if (game_names[i] && !stricmp(game_names[i], cls) && (pl->v.weapons & (1 << i)))
 			return i;
 	return 0;
+}
+
+// ---------------------------------------------------------------- firing
+
+// a sequence of the weapon's view model by number or name (argument idx); -1 if there's no such one
+static int ViewSequence(lua_State *L, lweapon_t *w, int idx)
+{
+	const model_t *m = w->viewmodel ? Mod_ForName(w->viewmodel, false) : NULL;
+	if (lua_type(L, idx) == LUA_TSTRING)
+		return m ? R_StudioLookupSequence(m, lua_tostring(L, idx)) : -1;
+	return lua_isnumber(L, idx) ? (int)lua_tointeger(L, idx) : -1;
+}
+
+static void FinishReload(lua_State *L, lweapon_t *w)
+{
+	w->reload_end = 0;
+	ammo_t *a = ClassAmmo(L, w->cls, "Primary");
+	int size = ClassInt(L, w->cls, "Primary", "ClipSize", -1);
+	if (size <= 0 || !a)
+		return;
+	int take = size - (w->clip1 > 0 ? w->clip1 : 0);
+	if (take > a->count)
+		take = a->count;
+	if (take > 0) {
+		w->clip1 = (w->clip1 > 0 ? w->clip1 : 0) + take;
+		a->count -= take;
+	}
+}
+
+// weapon:name() for a held button, if the class has that function
+static void CallAttack(lua_State *L, int index, const char *name)
+{
+	CallWeapon(L, &weps[index], name);
+}
+
+// once a frame for the Lua weapon in hand, with this frame's buttons and view angles
+void LuaW_PlayerThink(edict_t *pl)
+{
+	lua_State *L = Lua_GetState();
+	if (active < 0 || !L || pl != SV_LocalPlayer())
+		return;
+	int buttons = held_buttons, pressed = buttons & ~last_buttons;
+	last_buttons = buttons;
+	if (pl->v.health <= 0)
+		return;
+	// each call may strip the weapon or change the one in hand; "mine" says it is still this one
+	int mine = active;
+#define STILL_MINE (active == mine && weps[mine].owned)
+	CallWeapon(L, &weps[mine], "Think");
+	if (STILL_MINE && weps[mine].reload_end && sv.time >= weps[mine].reload_end)
+		FinishReload(L, &weps[mine]);
+	if (STILL_MINE && (buttons & IN_RELOAD) && !weps[mine].reload_end)
+		CallAttack(L, mine, "Reload");
+	// a weapon that isn't automatic fires once per press
+	if (STILL_MINE && (buttons & IN_ATTACK) && !weps[mine].reload_end && sv.time >= weps[mine].next_primary) {
+		int top = lua_gettop(L);
+		qboolean automatic = PushClass(L, weps[mine].cls) && lua_getfield(L, -1, "Primary") == LUA_TTABLE
+			&& lua_getfield(L, -1, "Automatic") != LUA_TNIL && lua_toboolean(L, -1);
+		lua_settop(L, top);
+		if (automatic || (pressed & IN_ATTACK))
+			CallAttack(L, mine, "PrimaryAttack");
+	}
+	if (STILL_MINE && (buttons & IN_ATTACK2) && !weps[mine].reload_end && sv.time >= weps[mine].next_secondary) {
+		int top = lua_gettop(L);
+		qboolean automatic = PushClass(L, weps[mine].cls) && lua_getfield(L, -1, "Secondary") == LUA_TTABLE
+			&& lua_getfield(L, -1, "Automatic") != LUA_TNIL && lua_toboolean(L, -1);
+		lua_settop(L, top);
+		if (automatic || (pressed & IN_ATTACK2))
+			CallAttack(L, mine, "SecondaryAttack");
+	}
+#undef STILL_MINE
 }
 
 // ---------------------------------------------------------------- the player's weapons
@@ -997,6 +1080,209 @@ static int w_SendWeaponAnim(lua_State *L)
 	return 0;
 }
 
+// self:SetNextPrimaryFire(CurTime() + delay), as in GMod: CurTime is newen's clock, the weapon waits on the
+// map's (which stops while paused), so only the delay is kept
+static int w_SetNextPrimaryFire(lua_State *L)
+{
+	SelfWeapon(L, true)->next_primary = sv.time + (luaL_checknumber(L, 2) - host_realtime);
+	return 0;
+}
+
+static int w_SetNextSecondaryFire(lua_State *L)
+{
+	SelfWeapon(L, true)->next_secondary = sv.time + (luaL_checknumber(L, 2) - host_realtime);
+	return 0;
+}
+
+static int w_GetNextPrimaryFire(lua_State *L)
+{
+	lua_pushnumber(L, host_realtime + (SelfWeapon(L, true)->next_primary - sv.time));
+	return 1;
+}
+
+static int w_GetNextSecondaryFire(lua_State *L)
+{
+	lua_pushnumber(L, host_realtime + (SelfWeapon(L, true)->next_secondary - sv.time));
+	return 1;
+}
+
+// takes n from the clip, or from the player's ammo for a weapon without a clip
+static void TakeAmmo(lua_State *L, lweapon_t *w, const char *sub, int *clip, int n)
+{
+	if (*clip >= 0) {
+		*clip = *clip > n ? *clip - n : 0;
+		return;
+	}
+	ammo_t *a = ClassAmmo(L, w->cls, sub);
+	if (a)
+		AddAmmo(a, -n);
+}
+
+static int w_TakePrimaryAmmo(lua_State *L)
+{
+	lweapon_t *w = SelfWeapon(L, true);
+	TakeAmmo(L, w, "Primary", &w->clip1, (int)luaL_optinteger(L, 2, 1));
+	return 0;
+}
+
+static int w_TakeSecondaryAmmo(lua_State *L)
+{
+	lweapon_t *w = SelfWeapon(L, true);
+	TakeAmmo(L, w, "Secondary", &w->clip2, (int)luaL_optinteger(L, 2, 1));
+	return 0;
+}
+
+static void OwnerSound(const char *name)
+{
+	edict_t *pl = SV_LocalPlayer();
+	if (pl)
+		S_StartSound(NUM_FOR_EDICT(pl), 1 /* CHAN_WEAPON */, name, NULL, 0.8f, 0.8f, 0, 100);
+}
+
+static int w_DefaultReload(lua_State *L);
+
+// true if there's something to fire. If not: the empty click, a wait, and a reload when there's ammo for one.
+static int CanAttack(lua_State *L, const char *sub, int clip, double *next)
+{
+	lweapon_t *w = SelfWeapon(L, true);
+	ammo_t *a = ClassAmmo(L, w->cls, sub);
+	qboolean ok = clip >= 0 ? clip > 0 : (!a || a->count > 0);
+	if (!ok) {
+		OwnerSound("weapons/357_cock1.wav");   // Half-Life's empty click
+		*next = sv.time + 0.2;
+		if (clip == 0 && a && a->count > 0 && !strcmp(sub, "Primary")) {
+			lua_settop(L, 1);
+			w_DefaultReload(L);
+		}
+	}
+	lua_pushboolean(L, ok);
+	return 1;
+}
+
+static int w_CanPrimaryAttack(lua_State *L)
+{
+	lweapon_t *w = SelfWeapon(L, true);
+	return CanAttack(L, "Primary", w->clip1, &w->next_primary);
+}
+
+static int w_CanSecondaryAttack(lua_State *L)
+{
+	lweapon_t *w = SelfWeapon(L, true);
+	return CanAttack(L, "Secondary", w->clip2, &w->next_secondary);
+}
+
+// self:DefaultReload(sequence number or name, seconds): starts a reload if the clip isn't full and there is
+// ammo. The clip is filled when the animation (or the given time) is over. True if it started.
+static int w_DefaultReload(lua_State *L)
+{
+	lweapon_t *w = SelfWeapon(L, true);
+	ammo_t *a = ClassAmmo(L, w->cls, "Primary");
+	int size = ClassInt(L, w->cls, "Primary", "ClipSize", -1);
+	if ((int)(w - weps) != active || w->reload_end || size <= 0 || w->clip1 >= size || !a || a->count <= 0) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+	const model_t *m = w->viewmodel ? Mod_ForName(w->viewmodel, false) : NULL;
+	int seq = ViewSequence(L, w, 2);
+	if (seq < 0 && m)
+		seq = R_StudioLookupSequence(m, "reload");
+	float t = (float)luaL_optnumber(L, 3, 0);
+	if (t <= 0)
+		t = m && seq >= 0 ? R_StudioSequenceDuration(m, seq) : 0;
+	if (t <= 0)
+		t = 1.5f;
+	if (seq >= 0)
+		QueueWeaponAnim(seq, 0);
+	w->reload_end = sv.time + t;
+	w->next_primary = w->next_secondary = w->reload_end;
+	lua_pushboolean(L, true);
+	return 1;
+}
+
+static void NumField(lua_State *L, int t, const char *a, const char *b, float *out)
+{
+	if (lua_getfield(L, t, a) == LUA_TNUMBER || (lua_pop(L, 1), lua_getfield(L, t, b)) == LUA_TNUMBER)
+		*out = (float)lua_tonumber(L, -1);
+	lua_pop(L, 1);
+}
+
+// self:ShootBullet{ damage = 8, num = 1, spread = 0.01, tracer = 0, distance = 8192 } (or GMod's order:
+// damage, num, spread): bullets from the owner's eyes along their aim, as Half-Life's weapons fire them
+static int w_ShootBullet(lua_State *L)
+{
+	lweapon_t *w = SelfWeapon(L, true);
+	edict_t *pl = SV_LocalPlayer();
+	(void)w;
+	if (!pl)
+		return 0;
+	float damage = 8, num = 1, spread = 0, tracer = 0, distance = 8192;
+	if (lua_istable(L, 2)) {
+		NumField(L, 2, "damage", "Damage", &damage);
+		NumField(L, 2, "num", "Num", &num);
+		NumField(L, 2, "spread", "Spread", &spread);
+		NumField(L, 2, "tracer", "Tracer", &tracer);
+		NumField(L, 2, "distance", "Distance", &distance);
+	} else {
+		damage = (float)luaL_optnumber(L, 2, 8);
+		num = (float)luaL_optnumber(L, 3, 1);
+		spread = (float)luaL_optnumber(L, 4, 0);
+	}
+	svbullets_t b;
+	memset(&b, 0, sizeof(b));
+	b.attacker = pl;
+	VectorAdd(pl->v.origin, pl->v.view_ofs, b.src);
+	vec3_t ang;
+	VectorAdd(pl->v.v_angle, pl->v.punchangle, ang);   // the kick of the last shots throws the aim off
+	AngleVectors(ang, b.dir, NULL, NULL);
+	b.spread_x = b.spread_y = spread;
+	b.num = num < 1 ? 1 : num > 256 ? 256 : (int)num;
+	b.damage = damage;
+	b.distance = distance;
+	b.tracer_every = (int)tracer;
+	pl->v.effects |= EF_MUZZLEFLASH;   // the light of the shot
+	gGlobals.time = (float)sv.time;
+	SV_FireBullets(&b, NULL, NULL);
+	return 0;
+}
+
+// self:EmitSound(name, [level], [pitch], [volume], [channel]): from the owner, on the weapon channel
+static int w_EmitSound(lua_State *L)
+{
+	SelfWeapon(L, true);
+	int n = lua_gettop(L);
+	LuaG_PushEntity(L, SV_LocalPlayer());
+	lua_getfield(L, -1, "EmitSound");
+	lua_insert(L, -2);
+	for (int i = 2; i <= 5; i++) {
+		if (i <= n)
+			lua_pushvalue(L, i);
+		else
+			lua_pushnil(L);
+	}
+	if (n >= 6)
+		lua_pushvalue(L, 6);
+	else
+		lua_pushinteger(L, 1);   // CHAN_WEAPON
+	lua_call(L, 6, 0);
+	return 0;
+}
+
+// the Reload every weapon has unless it brings its own
+static int w_Reload(lua_State *L)
+{
+	lua_settop(L, 1);
+	return w_DefaultReload(L);
+}
+
+// ply:ViewPunch(Angle): kicks the view; it settles back by itself
+static int p_ViewPunch(lua_State *L)
+{
+	edict_t *pl = LuaG_CheckEdict(L, 1);
+	const float *a = LuaG_CheckVec(L, 2);
+	VectorAdd(pl->v.punchangle, a, pl->v.punchangle);
+	return 0;
+}
+
 static int w_Remove(lua_State *L)
 {
 	lweapon_t *w = SelfWeapon(L, false);
@@ -1011,7 +1297,12 @@ static const luaL_Reg weapon_methods[] = {
 	{ "GetMaxClip2", w_GetMaxClip2 }, { "GetSlot", w_GetSlot }, { "GetSlotPos", w_GetSlotPos },
 	{ "GetPrimaryAmmoType", w_GetPrimaryAmmoType }, { "GetSecondaryAmmoType", w_GetSecondaryAmmoType },
 	{ "Ammo1", w_Ammo1 }, { "Ammo2", w_Ammo2 }, { "GetPrintName", w_GetPrintName }, { "Remove", w_Remove },
-	{ "SendWeaponAnim", w_SendWeaponAnim },
+	{ "SendWeaponAnim", w_SendWeaponAnim }, { "SetNextPrimaryFire", w_SetNextPrimaryFire },
+	{ "SetNextSecondaryFire", w_SetNextSecondaryFire }, { "GetNextPrimaryFire", w_GetNextPrimaryFire },
+	{ "GetNextSecondaryFire", w_GetNextSecondaryFire }, { "TakePrimaryAmmo", w_TakePrimaryAmmo },
+	{ "TakeSecondaryAmmo", w_TakeSecondaryAmmo }, { "CanPrimaryAttack", w_CanPrimaryAttack },
+	{ "CanSecondaryAttack", w_CanSecondaryAttack }, { "DefaultReload", w_DefaultReload },
+	{ "ShootBullet", w_ShootBullet }, { "EmitSound", w_EmitSound }, { "Reload", w_Reload },
 	{ NULL, NULL }
 };
 
@@ -1272,7 +1563,8 @@ void LuaW_Open(lua_State *L)
 
 	static const luaL_Reg methods[] = {
 		{ "HasWeapon", p_HasWeapon }, { "GetWeapon", p_GetWeapon }, { "GetWeapons", p_GetWeapons },
-		{ "StripWeapon", p_StripWeapon }, { "GetActiveWeapon", p_GetActiveWeapon }, { "SelectWeapon", p_SelectWeapon }, { "GiveAmmo", p_GiveAmmo }, { "GetAmmoCount", p_GetAmmoCount },
+		{ "StripWeapon", p_StripWeapon }, { "GetActiveWeapon", p_GetActiveWeapon }, { "SelectWeapon", p_SelectWeapon },
+		{ "ViewPunch", p_ViewPunch }, { "GiveAmmo", p_GiveAmmo }, { "GetAmmoCount", p_GetAmmoCount },
 		{ "SetAmmo", p_SetAmmo }, { "RemoveAmmo", p_RemoveAmmo }, { NULL, NULL }
 	};
 	LuaG_AddEntityMethods(L, methods);

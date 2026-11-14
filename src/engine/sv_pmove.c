@@ -558,6 +558,7 @@ void SV_RunPlayerCmd(edict_t *pl, usercmd_t *cmd)
 	pl->v.button = cmd->buttons;
 	if (cmd->impulse)
 		pl->v.impulse = cmd->impulse;
+	LuaW_PlayerThink(pl);   // a Lua weapon fires with this frame's view angles
 	vec3_t light;
 	R_LightPoint(pl->v.origin, light);
 	pl->v.light_level = (int)((light[0] + light[1] + light[2]) * (255.0f / 3.0f));

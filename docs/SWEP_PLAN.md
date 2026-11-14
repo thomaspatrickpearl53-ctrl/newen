@@ -1,7 +1,7 @@
 # Lua weapons (SWEPs) and scripted entities: plan
 
-Design written 2026-11-12 from newen at commit c9a8232. **Steps 5 (2026-11-13, branch `swep-5`), 1 and 2
-(2026-11-14, branches `swep-1`, `swep-2`) are built; see "Built" at the end.** The rest isn't. Implementation starts
+Design written 2026-11-12 from newen at commit c9a8232. **Steps 5 (2026-11-13, branch `swep-5`), 1, 2 and 3
+(2026-11-14, branches `swep-1` to `swep-3`) are built; see "Built" at the end.** The rest isn't. Implementation starts
 only when the owner says "go". It needs `docs/LUA_API_PLAN.md` first (damage, sound, effects), and is the
 second of the three plans the owner asked for together.
 
@@ -152,3 +152,8 @@ can't be checked by a harmless probe. Recommended only if A shows a problem it c
   game switching weapon by itself is noticed); a woken weapon gets its HUD state back and plays its drawing
   sequence; `lastinv` works across Lua and game weapons; `Holster` refuses only by returning `false`. Not
   done: the third-person weapon model, undoing a sleeping weapon's zoom or laser dot.
+- **Step 3 (2026-11-14, `swep-3`)**: in `lua_weapons.c`; the example pistol fires. As planned, with these
+  differences: `ShootBullet` has no `force` (bullets push ragdolls by their damage); next-fire times count on
+  the map's clock though they are set with `CurTime()`; `CanPrimaryAttack`, `DefaultReload` and a default
+  `Reload` were added as Garry's Mod has them. The check ran on c2a5 against a soldier the test script
+  spawned in front of the player, because the map's own soldiers there are out of sight.

@@ -305,6 +305,7 @@ float    R_StudioFrame(const rentity_t *e);             // current frame of the 
 float    R_StudioViewModelFov(const model_t *m);        // Source view models: their own field of view; else 0
 void     R_StudioInitControllers(const model_t *m, rentity_t *e);   // every controller to 0 degrees
 int      R_StudioLookupSequence(const model_t *m, const char *label);   // -1 if none
+float    R_StudioSequenceDuration(const model_t *m, int seq);           // seconds for one play; 0 if unknown
 qboolean R_StudioCull(const rentity_t *e);
 // sets up the bone matrices (3x4, model space to world) for e; returns the bone count
 int      R_StudioSetupBones(const rentity_t *e, float (**bones)[3][4]);

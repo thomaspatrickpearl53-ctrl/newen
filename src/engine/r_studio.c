@@ -516,6 +516,15 @@ int R_StudioLookupSequence(const model_t *m, const char *label)
 	return -1;
 }
 
+float R_StudioSequenceDuration(const model_t *m, int s)
+{
+	const studiohdr_t *h = Mod_StudioHeader(m);
+	if (!h || s < 0 || s >= h->numseq)
+		return 0;
+	const mstudioseqdesc_t *seq = STUDIO_PTR(h, h->seqindex, mstudioseqdesc_t) + s;
+	return seq->fps > 0 && seq->numframes > 1 ? (float)(seq->numframes - 1) / seq->fps : 0;
+}
+
 // ---------------------------------------------------------------- drawing
 
 qboolean R_StudioCull(const rentity_t *e)

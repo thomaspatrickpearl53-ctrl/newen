@@ -203,6 +203,7 @@ const char *LuaW_SpriteList(const char *path);        // the icon list for a Lua
 int         LuaW_ClientCommand(edict_t *pl);          // 1: done here; 2: the game gets it, then LuaW_GameCommandDone; 0: not ours
 void        LuaW_GameCommandDone(edict_t *pl);
 void        LuaW_PlayerCmd(edict_t *pl, usercmd_t *cmd);   // a sleeping game weapon doesn't get its buttons
+void        LuaW_PlayerThink(edict_t *pl);            // the Lua weapon in hand: Think, attacks, reload
 const char *LuaW_ViewModel(void);                     // the Lua weapon's view model while one is in hand, else NULL
 void        LuaW_PlayerDied(edict_t *pl);
 void        LuaW_Frame(void);

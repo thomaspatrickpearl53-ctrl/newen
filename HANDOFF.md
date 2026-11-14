@@ -246,7 +246,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
 | `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
-| `lua_weapons.c` | 1279 | Lua weapons (SWEP plan steps 1-2): `weapons.Register` (classes in the registry, per-class metatables, `SWEP.Base`, the weapon methods as the last fallback), the local player's Lua weapons (`lweapon_t`: weapon number, menu slot and place, clip; the weapon's own table in the registry by class) and Lua ammo types (`ammo_t`, `game.AddAmmoType`), what the client's HUD is told (`WeaponList`, `CurWeapon` with state 0, `AmmoX`, `WeapPickup`, `AmmoPickup`, queued straight to the client in `LuaW_Frame`), the weapon bits added for the client (`LuaW_WeaponBits`), learning the game's own weapon numbers, ammo numbers and menu places from its `WeaponList` messages (`LuaW_GameMessage`), the generic icon for a weapon without `sprites/<class>.txt` (`LuaW_SpriteList`), `give <Lua weapon>`, `lua_weapons`; taking one in hand (`Select`/`Wake`, `active`): the game's weapon sleeps (`LuaW_PlayerCmd` takes its buttons out of the input, `LuaW_GameMessage` holds back its `SVC_WEAPONANIM` and `CurWeapon`), `LuaW_ViewModel` gives the client the Lua view model, `GameSwitched` notices the game changing weapon by its view model, `LuaW_ClientCommand`/`LuaW_GameCommandDone` handle the menu's commands and `lastinv` |
+| `lua_weapons.c` | 1571 | Lua weapons (SWEP plan steps 1-3): `weapons.Register` (classes in the registry, per-class metatables, `SWEP.Base`, the weapon methods as the last fallback), the local player's Lua weapons (`lweapon_t`: weapon number, menu slot and place, clip; the weapon's own table in the registry by class) and Lua ammo types (`ammo_t`, `game.AddAmmoType`), what the client's HUD is told (`WeaponList`, `CurWeapon` with state 0, `AmmoX`, `WeapPickup`, `AmmoPickup`, queued straight to the client in `LuaW_Frame`), the weapon bits added for the client (`LuaW_WeaponBits`), learning the game's own weapon numbers, ammo numbers and menu places from its `WeaponList` messages (`LuaW_GameMessage`), the generic icon for a weapon without `sprites/<class>.txt` (`LuaW_SpriteList`), `give <Lua weapon>`, `lua_weapons`; taking one in hand (`Select`/`Wake`, `active`): the game's weapon sleeps (`LuaW_PlayerCmd` takes its buttons out of the input, `LuaW_GameMessage` holds back its `SVC_WEAPONANIM` and `CurWeapon`), `LuaW_ViewModel` gives the client the Lua view model, `GameSwitched` notices the game changing weapon by its view model, `LuaW_ClientCommand`/`LuaW_GameCommandDone` handle the menu's commands and `lastinv`; firing (`LuaW_PlayerThink` from `SV_RunPlayerCmd`: `Think`, `Reload`, `PrimaryAttack`, `SecondaryAttack` by the held buttons and the weapon's next-fire times on the map's clock; `ShootBullet` through `SV_FireBullets`; `DefaultReload` and `FinishReload`; `CanPrimaryAttack`'s empty click and reload) |
 | `phys.h` | 122 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
 | `phys_jolt.cpp` | 843 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
 | `phys_ragdoll.c` | 776 | Ragdolls (physics plan steps 4 and 7): `SkelFor` gives a model's bones, rest pose, solids and joints (a Source model's `.phy`, or made from a Half-Life model's hitboxes by `HitboxPhys` when `phys_ragdoll_hl` is on); `Ragdoll_Frame` before each physics step watches every edict whose model has them (two snapshots of its last living frames), makes a ragdoll when `deadflag` is set (`MakeRagdoll`: a body per solid at its bone, joints from the rest pose, the file's collision pairs), removes it when the edict goes; `Ragdoll_AfterStep` copies the bodies into bone matrices and enforces `phys_ragdoll_max`/`phys_ragdoll_time`; `Ragdoll_ForEdict`/`Ragdoll_Bones` give them to the renderer (`rentity_t::ragdoll`, `SrcSetupBones`); `phys_ragdolls_list` |
@@ -1026,10 +1026,53 @@ recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
 
+### SWEP plan: step 3, firing, built (2026-11-14, branch `swep-3`, on `swep-2`)
+
+The owner's "Go: step 3". Next: step 4 (saved games and level changes), proposed, not started.
+
+- **The frame**: `LuaW_PlayerThink` runs in `SV_RunPlayerCmd` once this frame's view angles and buttons are
+  in (before the game's `PlayerPreThink`), for the Lua weapon in hand and a living player: `Think`; a
+  reload whose time is up fills the clip from the player's ammo; `Reload` while its button is held;
+  `PrimaryAttack` / `SecondaryAttack` while theirs are held, the weapon isn't reloading and its next-fire
+  time has come. `SWEP.Primary.Automatic = false` fires once per press. The buttons are the ones step 2 takes
+  away from the sleeping game weapon. After each call the weapon is checked to be still the one in hand
+  (a function may strip or switch it).
+- **Times**: `SetNextPrimaryFire(CurTime() + d)` keeps only the delay and counts on the map's clock
+  (`sv.time`), like `ENT:NextThink`, so a pause doesn't use it up. Taking a weapon in hand sets both
+  next-fire times half a second ahead (Half-Life's own draw delay) and a button already down isn't a new press.
+- **`ShootBullet`** (a table `{ damage, num, spread, tracer, distance }` or GMod's `damage, num, spread`)
+  is `SV_FireBullets` from the owner's eyes along `v_angle + punchangle`, with `EF_MUZZLEFLASH` on the player:
+  blood, decals, hit groups and the game's own `TakeDamage` as `ent:FireBullets` has them. `force` from the
+  plan isn't a parameter (the bullets push ragdolls by their damage already). `TakePrimaryAmmo` takes from
+  the clip, or from the player's ammo for a weapon without one. `CanPrimaryAttack` on an empty weapon plays
+  Half-Life's empty click, waits 0.2 s and starts a reload if there's ammo. `DefaultReload(sequence, seconds)`
+  plays the view model's `reload` (or the given sequence) and fills the clip when its length (from the
+  model: new `R_StudioSequenceDuration`) is over; leaving the weapon cancels it. Every weapon has a `Reload`
+  that calls it. `self:EmitSound` is the owner's `EmitSound` on the weapon channel. `ply:ViewPunch(Angle)`
+  adds to `pev->punchangle`, which the movement code settles as for the game's weapons.
+- **The example** (`weapon_lua_pistol.lua`) now fires: 12 damage, the pistol's sound, `shoot` /
+  `shoot_empty`, a 2 degree kick, a quarter second between shots, `reload` with the clip sound.
+- **Checked on Linux** (c2a5; the soldiers near the usual test spot are below the ledge and out of sight, so
+  the script spawns a `monster_human_grunt` 220 units in front of the player): three shots took it 50 > 38
+  > 2 > dead (a body hit, a head hit at three times the damage, the last), with blood at each hit, the
+  death animation and the dropped rifle in the screenshots, and `OnNPCKilled`. The HUD counted 12 | 24 down
+  to 0 | 24; the next press clicked and reloaded (the animation in the screenshot), then 12 | 12 and firing
+  again at 11 | 12. The first press, inside the half second after drawing, did nothing.
+- **Checked on Windows**: the MinGW exe under Wine with the Windows libraries: two hits (50 > 14 > 2), the
+  soldier ran off as they do, was killed later; clip, reload and HUD as on Linux. A Visual C++ build of
+  this branch on Windows 10 in the test VM (18 warnings as before, none in the changed files): the first
+  shot hit (50 > 38), then the slower VM let the map's own soldiers reach the player and the fight moved
+  about, so no kill by the pistol was seen there; the clip counted down, the empty press reloaded, and it
+  fired again at 11 | 12.
+- **Known gaps**: `OnNPCKilled`'s attacker is NULL for these kills, as for `ent:FireBullets` (the engine's
+  bullets have always been so; not looked into here). No shell casings or bullet-hole sounds beyond what
+  `SV_FireBullets` does. No idle animation unless the weapon's `Think` plays one. No autoaim. Secondary
+  attack, an automatic weapon, a weapon without a clip and `tracer` were not run. The view model's own
+  muzzle-flash events weren't looked at closely in the screenshots. Not checked: AddressSanitizer.
+
 ### SWEP plan: step 2, choosing a Lua weapon and going back, built (2026-11-14, branch `swep-2`, on `swep-1`)
 
-The owner's "Go: step 2". Decision S1 (option A, "alongside") as planned. Next: step 3 (firing), proposed,
-not started.
+The owner's "Go: step 2". Decision S1 (option A, "alongside") as planned. Step 3 followed (above).
 
 - **Choosing**: every client command passes `ClientCommandFallback` (`sv_main.c`), which asks
   `LuaW_ClientCommand` before the game: a held Lua weapon's class name (what the menu sends), or

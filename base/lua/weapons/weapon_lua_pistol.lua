@@ -2,8 +2,8 @@
 -- Get it with "sv_cheats 1; give weapon_lua_pistol" in the console, or from Lua:
 --   player.GetByID(1):Give("weapon_lua_pistol")
 --
--- So far it appears in the weapon menu (slot 2, under the pistol and the .357) with its clip and ammo,
--- and can be taken in hand. Firing it is the next step of docs/SWEP_PLAN.md.
+-- It appears in the weapon menu (slot 2, under the pistol and the .357), fires, kicks and reloads.
+-- It doesn't survive a level change or a saved game yet (docs/SWEP_PLAN.md, step 4).
 
 game.AddAmmoType{ name = "lua_pistol", max = 120 }
 
@@ -23,4 +23,22 @@ SWEP.Secondary.Ammo = "none"
 
 function SWEP:Initialize()
 	self.Shots = 0   -- plain values in the weapon's own table will be saved with the game (step 4)
+end
+
+-- called while the fire button is held and the weapon is ready (once per press: Automatic is false)
+function SWEP:PrimaryAttack()
+	if not self:CanPrimaryAttack() then return end   -- empty: clicks, and reloads if there's spare ammo
+	self:ShootBullet{ damage = 12, num = 1, spread = 0.01 }
+	self:TakePrimaryAmmo(1)
+	self:EmitSound("weapons/pl_gun3.wav")
+	self:SendWeaponAnim(self:Clip1() > 0 and "shoot" or "shoot_empty")   -- sequences of the view model
+	self.Owner:ViewPunch(Angle(-2, 0, 0))
+	self:SetNextPrimaryFire(CurTime() + 0.25)
+	self.Shots = self.Shots + 1
+end
+
+function SWEP:Reload()
+	if self:DefaultReload("reload") then   -- true if a reload started; the clip fills when the animation ends
+		self:EmitSound("items/9mmclip1.wav")
+	end
 end
