@@ -9,7 +9,7 @@
 #include <stddef.h>
 
 #define ENGINE_NAME    "newen"
-#define ENGINE_VERSION "0.3.0"
+#define ENGINE_VERSION "0.4.0"
 
 typedef int qboolean;
 #ifndef true

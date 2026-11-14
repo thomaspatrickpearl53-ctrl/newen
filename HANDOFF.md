@@ -964,6 +964,10 @@ GoldSrc header for the DLLs. Written fresh (NewenSource couldn't be found on the
     -Wconversion` and use nothing outside C11 and the engine's own helpers (no POSIX calls), but MSVC hasn't
     seen them. First thing on the Windows machine: `build.bat`, then the `mdlview hl2:...` and `mdl_replace`
     checks from README. `bin\basedir_hl2.txt` caches where Half-Life 2 was found.
+- **Release 0.4.0 (2026-11-14):** the finished physics plan (`docs/PHYSICS_PLAN.md`, steps 1-7 and the
+  two extras) and scripted entities (SWEP plan step 5), built with `tools/make_release.sh` as 0.3.0 was
+  (MinGW Windows build, not run on real Windows). Both packaged builds were unpacked and checked before
+  publishing: `phys_test`, c1a0, and props on c1a0d (the Windows one under Wine).
 - **Release 0.3.0 (2026-11-13):** the finished Lua API plan (steps 1-7), built with `tools/make_release.sh` as
   0.2.0 was (MinGW Windows build, not run on real Windows). Linux build checked on c1a0 before publishing.
 - **Release 0.2.0 and the MinGW Windows build (2026-11-12):** `tools/make_release.sh` builds both archives
@@ -1018,7 +1022,7 @@ Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later:
 
 **The plan is built, steps 1-7, each on its own branch from the one before (`phys-1` ... `phys-7`, on
 `swep-5`). `master` was fast-forwarded to `phys-7` on 2026-11-14 at the owner's word (so it also has
-`swep-5`); nothing is pushed or released. Next in the brief's order (`docs/BRIEF_FOR_AGENTS.md`
+`swep-5`), pushed, and released as 0.4.0. Next in the brief's order (`docs/BRIEF_FOR_AGENTS.md`
 section 4): `docs/SWEP_PLAN.md` steps 1-4 and 6. Nothing in the physics work has been built with Visual
 C++ or run on real Windows: Linux and the MinGW exe under Wine only.**
 
