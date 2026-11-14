@@ -964,6 +964,8 @@ GoldSrc header for the DLLs. Written fresh (NewenSource couldn't be found on the
     -Wconversion` and use nothing outside C11 and the engine's own helpers (no POSIX calls), but MSVC hasn't
     seen them. First thing on the Windows machine: `build.bat`, then the `mdlview hl2:...` and `mdl_replace`
     checks from README. `bin\basedir_hl2.txt` caches where Half-Life 2 was found.
+- **Release 0.4.1 (2026-11-14):** the two input fixes and prop carrying of branch `post-0.4.0` (merged into
+  `master`), built and checked the same way as 0.4.0.
 - **Release 0.4.0 (2026-11-14):** the finished physics plan (`docs/PHYSICS_PLAN.md`, steps 1-7 and the
   two extras) and scripted entities (SWEP plan step 5), built with `tools/make_release.sh` as 0.3.0 was
   (MinGW Windows build, not run on real Windows). Both packaged builds were unpacked and checked before
@@ -1018,7 +1020,7 @@ recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
 
-### After 0.4.0: two input fixes and carrying props (2026-11-14, branch `post-0.4.0`)
+### After 0.4.0: two input fixes and carrying props (2026-11-14, branch `post-0.4.0`, released as 0.4.1)
 
 Reported by the owner playing 0.4.0.
 
