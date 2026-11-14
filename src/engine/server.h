@@ -197,10 +197,13 @@ void        LuaE_RestoreData(const unsigned char *data, int size, edict_t **byin
 
 // lua_weapons.c: Lua weapons (SWEPs), the player's Lua ammo, and what the client's HUD is told of them
 void        CL_QueueMessage(int type, const unsigned char *data, int len);   // cl_main.c
-void        LuaW_GameMessage(const char *name, const unsigned char *data, int len);   // a game message on its way to the client
+qboolean    LuaW_GameMessage(int type, const char *name, const unsigned char *data, int len);   // a game message on its way to the client; true holds it back
 int         LuaW_WeaponBits(void);                    // added to the weapon bits the client sees
 const char *LuaW_SpriteList(const char *path);        // the icon list for a Lua weapon without its own, else NULL
-qboolean    LuaW_ClientCommand(edict_t *pl);          // "give <Lua weapon>"
+int         LuaW_ClientCommand(edict_t *pl);          // 1: done here; 2: the game gets it, then LuaW_GameCommandDone; 0: not ours
+void        LuaW_GameCommandDone(edict_t *pl);
+void        LuaW_PlayerCmd(edict_t *pl, usercmd_t *cmd);   // a sleeping game weapon doesn't get its buttons
+const char *LuaW_ViewModel(void);                     // the Lua weapon's view model while one is in hand, else NULL
 void        LuaW_PlayerDied(edict_t *pl);
 void        LuaW_Frame(void);
 void        LuaW_ServerStarted(void);

@@ -774,8 +774,10 @@ static void PF_MessageEnd(void)
 		float damage = (float)msg_buf[15] / 0.6f + 50.0f;
 		Phys_ServerExplosion(pos, damage * 2.5f, damage);
 	}
-	if (deliver && msg_type >= 64)
-		LuaW_GameMessage(SV_UserMsgName(msg_type), msg_buf, msg_len);   // Lua weapons keep clear of the game's
+	// Lua weapons keep clear of the game's, and hold back what a sleeping game weapon says
+	if (deliver && (msg_type >= 64 || msg_type == SVC_WEAPONANIM) && (msg_dest != MSG_ONE || msg_ent == pl)
+		&& LuaW_GameMessage(msg_type, SV_UserMsgName(msg_type), msg_buf, msg_len))
+		deliver = false;
 	if (deliver)
 		CL_QueueMessage(msg_type, msg_buf, msg_len);
 }

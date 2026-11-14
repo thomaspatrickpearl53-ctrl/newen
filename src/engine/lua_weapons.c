@@ -8,8 +8,15 @@
 // its own WeaponList with a weapon number the game doesn't use, its bit added to the bits the client
 // sees, and CurWeapon / AmmoX as its clip and ammo change.
 //
-// So far (SWEP plan step 1): the registry, the player's Lua weapons and ammo, and the HUD. Choosing a
-// Lua weapon, firing it and saving it are the next steps.
+// Taking a Lua weapon in hand (step 2): the game's own weapon stays the active one inside the game DLL
+// but is put to sleep. Its fire, alt-fire and reload buttons are taken out of the input, and its
+// view-model animations and CurWeapon messages are held back; the client is shown the Lua weapon's view
+// model instead of the game's. Going back, the game's weapon is woken: its CurWeapon is sent again and its
+// view model draws (the game doesn't redeploy a weapon that is already its active one). If the game
+// changes weapon by itself, its view model changes, and that ends the Lua weapon's turn.
+//
+// So far (SWEP plan steps 1 and 2): the registry, the player's Lua weapons and ammo, the HUD, and choosing
+// a weapon. Firing and saving are the next steps.
 //
 // The weapon a player holds is a Lua table of its own (one per class, as the game has one weapon of a
 // kind per player); its metatable leads to the class's SWEP table, then SWEP.Base's, then the methods
@@ -47,6 +54,7 @@ typedef struct {
 	qboolean listed;     // the HUD has its WeaponList
 	int      sent_clip;  // the clip the HUD has; -2 = tell it
 	qboolean popup;      // show the pickup icon once it's listed
+	char    *viewmodel;  // SWEP.ViewModel, read when it's taken in hand; NULL for none
 	qboolean warned;
 } lweapon_t;
 
@@ -62,6 +70,17 @@ static char        *game_names[HUD_WEAPONS];
 static qboolean     game_taken[HUD_SLOTS][HUD_POSITIONS];
 static qboolean     game_listed;   // seen this session
 static int          last_game_bits;
+
+// the Lua weapon in hand (an index into weps), and the game's weapon asleep behind it
+#define WEAPON_BUTTONS (IN_ATTACK | IN_ATTACK2 | IN_RELOAD)
+static int      active = -1;
+static int      previous = -1;      // what "lastinv" goes to: a Lua weapon, or -1 for the game's own
+static int      game_vm;            // the game's view model (a string number) when it went to sleep, or last seen awake
+static int      game_cur[3];        // the game's last CurWeapon for a weapon in hand: state, number, clip
+static qboolean game_cur_known;
+static int      game_anim_body;     // the body of the game's last view-model animation
+static int      held_buttons;       // the weapon buttons taken out of the input this frame
+static qboolean holster_asked;      // Holster already ran for the command the game is working on
 
 static ammo_t *FindAmmo(const char *name)
 {
@@ -211,7 +230,7 @@ static void SendWeaponList(lua_State *L, lweapon_t *w)
 		w->slot + 1, w->pos + 1, (signed char)buf[len + 1], (signed char)buf[len + 3]);
 }
 
-// state 0: the weapon isn't the one in hand; the HUD only takes its clip
+// state 0: the weapon isn't the one in hand, and the HUD only takes its clip; 1: it is
 static void SendCurWeapon(lweapon_t *w, int state)
 {
 	int msg = SV_UserMsgIndex("CurWeapon");
@@ -321,27 +340,48 @@ static void ResendAll(void)
 		ammo[i].sent = -1;
 }
 
-// a message from the game DLL on its way to the client
-void LuaW_GameMessage(const char *name, const unsigned char *data, int len)
+static void GameSwitched(edict_t *pl);
+
+// a message from the game DLL on its way to the local player's client; true holds it back
+qboolean LuaW_GameMessage(int type, const char *name, const unsigned char *data, int len)
 {
+	edict_t *pl = SV_LocalPlayer();
+	if (type == SVC_WEAPONANIM && len >= 2) {
+		game_anim_body = data[1];
+		if (active >= 0 && pl)
+			GameSwitched(pl);   // a new weapon's deploy isn't the sleeping weapon's
+		return active >= 0;
+	}
 	if (!name)
-		return;
+		return false;
+	if (!strcmp(name, "CurWeapon") && len >= 3) {
+		// state 0 with a weapon number only brings a clip; anything else says what is in hand
+		if (data[0] == 0 && (signed char)data[1] >= 1)
+			return false;
+		game_cur[0] = data[0];
+		game_cur[1] = (signed char)data[1];
+		game_cur[2] = (signed char)data[2];
+		game_cur_known = true;
+		if (active >= 0 && pl)
+			GameSwitched(pl);
+		return active >= 0;
+	}
 	if (!strcmp(name, "InitHUD") || !strcmp(name, "ResetHUD")) {
 		ResendAll();
-		return;
+		return false;
 	}
 	if (strcmp(name, "WeaponList"))
-		return;
+		return false;
 	// name, then: ammo 1, its maximum, ammo 2, its maximum, slot, place, number, flags
 	int n = 0;
 	while (n < len && data[n])
 		n++;
 	if (n + 9 > len)
-		return;
+		return false;
 	const signed char *f = (const signed char *)data + n + 1;
 	int slot = f[4], pos = f[5], id = f[6];
 	if (id < 1 || id >= HUD_WEAPONS)
-		return;
+		return false;
 	game_listed = true;
 	game_ids |= 1u << id;
 	if (f[0] > 0 && f[0] < HUD_AMMO)
@@ -354,6 +394,7 @@ void LuaW_GameMessage(const char *name, const unsigned char *data, int len)
 		Mem_Free(game_names[id]);
 		game_names[id] = Mem_Strdup((const char *)data);
 	}
+	return false;
 }
 
 // the weapon bits the client's HUD should see on top of the game's own
@@ -379,12 +420,168 @@ const char *LuaW_SpriteList(const char *path)
 	return FindWeapon(cls) ? "sprites/weapon_lua_generic.txt" : NULL;
 }
 
+// ---------------------------------------------------------------- taking a weapon in hand
+
+static void QueueWeaponAnim(int seq, int body)
+{
+	unsigned char buf[2] = { (unsigned char)seq, (unsigned char)body };
+	CL_QueueMessage(SVC_WEAPONANIM, buf, 2);
+}
+
+// the sequence a view model draws itself with; Half-Life's models name it one of these. -1 if none.
+static int DrawSequence(const char *model)
+{
+	static const char *names[] = { "draw", "deploy", "draw1", "up" };
+	const model_t *m = model && *model ? Mod_ForName(model, false) : NULL;
+	for (size_t i = 0; m && i < sizeof(names) / sizeof(names[0]); i++) {
+		int seq = R_StudioLookupSequence(m, names[i]);
+		if (seq >= 0)
+			return seq;
+	}
+	return -1;
+}
+
+// the view model the client should show instead of the game's; NULL when the game's weapon is in hand,
+// "" for a Lua weapon without one
+const char *LuaW_ViewModel(void)
+{
+	if (active < 0)
+		return NULL;
+	return weps[active].viewmodel ? weps[active].viewmodel : "";
+}
+
+// weapon:Holster(next); false only if the function says so (GMod's weapons return true to allow it)
+static qboolean CallHolster(lua_State *L, lweapon_t *w, lweapon_t *next)
+{
+	int top = lua_gettop(L);
+	qboolean ok = true;
+	PushWeapon(L, w);
+	lua_getfield(L, -1, "Holster");
+	if (lua_isfunction(L, -1)) {
+		lua_insert(L, -2);
+		if (next)
+			PushWeapon(L, next);
+		else
+			lua_pushnil(L);
+		gGlobals.time = (float)sv.time;
+		if (Lua_Call(2, 1, va("%s:Holster", w->cls)) && lua_isboolean(L, -1) && !lua_toboolean(L, -1))
+			ok = false;
+	}
+	lua_settop(L, top);
+	return ok;
+}
+
+// the game's weapon is in hand again. replay: it's the same weapon as before, which the game won't
+// deploy again, so its HUD state and a drawing animation are put back here.
+static void Wake(edict_t *pl, qboolean replay)
+{
+	if (active < 0)
+		return;
+	active = -1;
+	held_buttons = 0;
+	game_vm = pl->v.viewmodel;
+	if (!replay)
+		return;
+	if (game_cur_known) {
+		int msg = SV_UserMsgIndex("CurWeapon");
+		unsigned char buf[3] = { (unsigned char)game_cur[0], (unsigned char)game_cur[1], (unsigned char)game_cur[2] };
+		if (msg)
+			CL_QueueMessage(msg, buf, 3);
+	}
+	int seq = pl->v.viewmodel ? DrawSequence(SV_String(pl->v.viewmodel)) : -1;
+	QueueWeaponAnim(seq >= 0 ? seq : 0, game_anim_body);
+}
+
+// the game changed weapon by itself while a Lua weapon was in hand (it picked a new one up, or the
+// player's command made it switch): its view model isn't the sleeping one's any more
+static void GameSwitched(edict_t *pl)
+{
+	if (active < 0 || pl->v.viewmodel == game_vm)
+		return;
+	lua_State *L = Lua_GetState();
+	lweapon_t *w = &weps[active];
+	previous = active;
+	Wake(pl, false);
+	if (L && !holster_asked)
+		CallHolster(L, w, NULL);   // it can't refuse
+}
+
+// takes the Lua weapon in hand; false if the one in hand refuses to be put away
+static qboolean Select(lua_State *L, edict_t *pl, int i)
+{
+	if (i == active)
+		return true;
+	lweapon_t *w = &weps[i];
+	if (active >= 0) {
+		if (!CallHolster(L, &weps[active], w))
+			return false;
+		weps[active].sent_clip = -2;   // the HUD hears it's no longer the one in hand
+		previous = active;
+	} else {
+		game_vm = pl->v.viewmodel;   // the game's weapon goes to sleep
+		previous = -1;
+	}
+	active = i;
+	held_buttons = 0;
+	w->sent_clip = -2;
+	// SWEP.ViewModel, read now so a file run again takes effect
+	Mem_Free(w->viewmodel);
+	w->viewmodel = NULL;
+	int top = lua_gettop(L);
+	if (PushClass(L, w->cls) && lua_getfield(L, -1, "ViewModel") == LUA_TSTRING && *lua_tostring(L, -1))
+		w->viewmodel = Mem_Strdup(lua_tostring(L, -1));
+	lua_settop(L, top);
+	int seq = DrawSequence(w->viewmodel);
+	QueueWeaponAnim(seq >= 0 ? seq : 0, 0);
+	CallWeapon(L, w, "Deploy");
+	return true;
+}
+
+// the input on its way to the game: a sleeping weapon doesn't get its buttons
+void LuaW_PlayerCmd(edict_t *pl, usercmd_t *cmd)
+{
+	if (pl != SV_LocalPlayer())
+		return;
+	if (active < 0) {
+		if (pl->v.viewmodel != game_vm) {
+			game_vm = pl->v.viewmodel;
+			previous = -1;   // the game moved on to another weapon of its own
+		}
+		return;
+	}
+	GameSwitched(pl);
+	if (active < 0)
+		return;
+	held_buttons = cmd->buttons & WEAPON_BUTTONS;
+	cmd->buttons &= (unsigned short)~WEAPON_BUTTONS;
+}
+
+// the game weapon the player has by that name (as the game listed it), or 0
+static int GameWeaponId(edict_t *pl, const char *cls)
+{
+	for (int i = 1; i < HUD_WEAPONS - 1; i++)
+		if (game_names[i] && !stricmp(game_names[i], cls) && (pl->v.weapons & (1 << i)))
+			return i;
+	return 0;
+}
+
 // ---------------------------------------------------------------- the player's weapons
 
 static void Strip(lua_State *L, lweapon_t *w)
 {
 	if (!w->owned)
 		return;
+	int i = (int)(w - weps);
+	if (previous == i)
+		previous = -1;
+	if (active == i) {
+		edict_t *pl = SV_LocalPlayer();
+		if (L)
+			CallHolster(L, w, NULL);
+		if (pl)
+			Wake(pl, pl->v.health > 0);
+		active = -1;
+	}
 	if (L) {
 		CallWeapon(L, w, "OnRemove");
 		PushRegTable(L, WDATA_KEY);
@@ -475,26 +672,78 @@ qboolean LuaW_Give(lua_State *L, edict_t *pl, const char *cls)
 	return true;
 }
 
-// "give weapon_lua_x" in the console, under the same rule as the game's give (sv_cheats)
-qboolean LuaW_ClientCommand(edict_t *pl)
+// A command on its way to the game DLL. 1: it was for a Lua weapon and is done. 2: it chooses one of the
+// game's weapons while a Lua weapon is in hand; the game gets it, then LuaW_GameCommandDone. 0: not ours.
+int LuaW_ClientCommand(edict_t *pl)
 {
 	lua_State *L = Lua_GetState();
-	if (!L || Cmd_Argc() < 2 || stricmp(Cmd_Argv(0), "give") || !IsRegistered(L, Cmd_Argv(1)))
-		return false;
-	if (Cvar_VariableValue("sv_cheats") == 0) {
-		Con_Printf("give needs sv_cheats 1\n");
-		return true;
+	if (!L || pl != SV_LocalPlayer())
+		return 0;
+	const char *cmd = Cmd_Argv(0);
+	// "give weapon_lua_x" in the console, under the same rule as the game's give (sv_cheats)
+	if (Cmd_Argc() >= 2 && !stricmp(cmd, "give") && IsRegistered(L, Cmd_Argv(1))) {
+		if (Cvar_VariableValue("sv_cheats") == 0) {
+			Con_Printf("give needs sv_cheats 1\n");
+			return 1;
+		}
+		int top = lua_gettop(L);
+		LuaW_Give(L, pl, Cmd_Argv(1));
+		lua_settop(L, top);
+		return 1;
 	}
-	int top = lua_gettop(L);
-	LuaW_Give(L, pl, Cmd_Argv(1));
-	lua_settop(L, top);
-	return true;
+	// the weapon menu sends the weapon's name; "use <name>" does the same from the console
+	const char *cls = !stricmp(cmd, "use") && Cmd_Argc() >= 2 ? Cmd_Argv(1) : cmd;
+	lweapon_t *w = FindWeapon(cls);
+	if (w && w->owned) {
+		if (pl->v.health > 0)
+			Select(L, pl, (int)(w - weps));
+		return 1;
+	}
+	if (!stricmp(cmd, "lastinv")) {
+		if (previous >= 0 && weps[previous].owned) {
+			Select(L, pl, previous);
+			return 1;
+		}
+		if (active < 0)
+			return 0;   // between two of the game's weapons: the game's business
+		if (CallHolster(L, &weps[active], NULL)) {
+			previous = active;
+			Wake(pl, true);
+		}
+		return 1;
+	}
+	if (active >= 0 && GameWeaponId(pl, cls)) {
+		if (!CallHolster(L, &weps[active], NULL))
+			return 1;
+		holster_asked = true;
+		return 2;
+	}
+	return 0;
+}
+
+// after the game had a command that chose one of its weapons: if it switched to another, its messages
+// already ended the Lua weapon's turn; if it was the sleeping weapon, the game did nothing and it is woken
+void LuaW_GameCommandDone(edict_t *pl)
+{
+	holster_asked = false;
+	if (active < 0)
+		return;
+	if (pl->v.viewmodel != game_vm) {
+		GameSwitched(pl);
+		return;
+	}
+	previous = active;
+	weps[active].sent_clip = -2;
+	Wake(pl, true);
 }
 
 void LuaW_PlayerDied(edict_t *pl)
 {
-	if (IsLocalPlayer(pl))
-		StripAll(true);   // the game takes its own weapons and ammo from a dead player too
+	if (!IsLocalPlayer(pl))
+		return;
+	active = previous = -1;   // nothing to wake: the game put its weapon away itself
+	held_buttons = 0;
+	StripAll(true);   // the game takes its own weapons and ammo from a dead player too
 }
 
 // once a server frame: follow the game taking the player's weapons, and bring the HUD up to date
@@ -534,7 +783,7 @@ void LuaW_Frame(void)
 			w->sent_clip = -2;
 		}
 		if (w->sent_clip != w->clip1) {
-			SendCurWeapon(w, 0);
+			SendCurWeapon(w, i == active);
 			w->sent_clip = w->clip1;
 		}
 		if (w->popup) {
@@ -561,6 +810,10 @@ void LuaW_ServerStarted(void)
 		lua_setfield(L, LUA_REGISTRYINDEX, WDATA_KEY);
 	}
 	last_game_bits = 0;
+	active = previous = -1;
+	held_buttons = 0;
+	game_vm = 0;
+	game_cur_known = false;
 	ResendAll();
 }
 
@@ -725,6 +978,25 @@ static int w_GetPrintName(lua_State *L)
 	return 1;
 }
 
+// self:SendWeaponAnim(sequence number or name): the view model's animation, while the weapon is in hand
+static int w_SendWeaponAnim(lua_State *L)
+{
+	lweapon_t *w = SelfWeapon(L, true);
+	if ((int)(w - weps) != active)
+		return 0;
+	int seq;
+	if (lua_type(L, 2) == LUA_TSTRING) {
+		const model_t *m = w->viewmodel ? Mod_ForName(w->viewmodel, false) : NULL;
+		seq = m ? R_StudioLookupSequence(m, lua_tostring(L, 2)) : -1;
+		if (seq < 0)
+			return luaL_error(L, "%s has no sequence named %s", w->viewmodel ? w->viewmodel : "the weapon (no view model)", lua_tostring(L, 2));
+	} else {
+		seq = (int)luaL_checkinteger(L, 2);
+	}
+	QueueWeaponAnim(seq, (int)luaL_optinteger(L, 3, 0));
+	return 0;
+}
+
 static int w_Remove(lua_State *L)
 {
 	lweapon_t *w = SelfWeapon(L, false);
@@ -739,6 +1011,7 @@ static const luaL_Reg weapon_methods[] = {
 	{ "GetMaxClip2", w_GetMaxClip2 }, { "GetSlot", w_GetSlot }, { "GetSlotPos", w_GetSlotPos },
 	{ "GetPrimaryAmmoType", w_GetPrimaryAmmoType }, { "GetSecondaryAmmoType", w_GetSecondaryAmmoType },
 	{ "Ammo1", w_Ammo1 }, { "Ammo2", w_Ammo2 }, { "GetPrintName", w_GetPrintName }, { "Remove", w_Remove },
+	{ "SendWeaponAnim", w_SendWeaponAnim },
 	{ NULL, NULL }
 };
 
@@ -790,6 +1063,27 @@ static int p_GetWeapons(lua_State *L)
 			lua_rawseti(L, -2, ++n);
 		}
 	return 1;
+}
+
+// ply:GetActiveWeapon(): the Lua weapon in hand, or nil while it's one of the game's
+static int p_GetActiveWeapon(lua_State *L)
+{
+	edict_t *pl = CheckPlayer(L);
+	if (IsLocalPlayer(pl) && active >= 0)
+		PushWeapon(L, &weps[active]);
+	else
+		lua_pushnil(L);
+	return 1;
+}
+
+// ply:SelectWeapon(class): a Lua weapon, or one of the game's
+static int p_SelectWeapon(lua_State *L)
+{
+	edict_t *pl = CheckPlayer(L);
+	const char *cls = luaL_checkstring(L, 2);
+	if (IsLocalPlayer(pl) && sv.active)
+		Cbuf_AddText(va("%s\n", cls));   // the same road as the weapon menu's choice
+	return 0;
 }
 
 static int p_StripWeapon(lua_State *L)
@@ -906,7 +1200,8 @@ static void LuaWeapons_f(void)
 		if (!w->id)
 			Con_Printf("  %-24s %s, not in the menu yet\n", w->cls, w->owned ? "held" : "not held");
 		else
-			Con_Printf("  %-24s %s, number %d, slot %d place %d, clip %d\n", w->cls, w->owned ? "held" : "not held",
+			Con_Printf("  %-24s %s, number %d, slot %d place %d, clip %d\n", w->cls,
+				i == active ? "in hand" : w->owned ? "held" : "not held",
 				w->id, w->slot + 1, w->pos + 1, w->clip1);
 	}
 	Con_Printf("%d Lua ammo type%s:\n", ammo_count, ammo_count == 1 ? "" : "s");
@@ -936,8 +1231,14 @@ void LuaW_StateStarted(void)
 	// lua_reload: the player keeps their weapons (clip and ammo are here), unless the class is gone.
 	// What was in the weapons' own tables is lost.
 	for (int i = 0; i < weps_count; i++) {
-		if (weps[i].owned && !IsRegistered(L, weps[i].cls))
+		if (weps[i].owned && !IsRegistered(L, weps[i].cls)) {
+			edict_t *pl = SV_LocalPlayer();
+			if (active == i && pl)
+				Wake(pl, true);
+			if (previous == i)
+				previous = -1;
 			weps[i].owned = false;
+		}
 		weps[i].listed = false;
 	}
 }
@@ -971,7 +1272,7 @@ void LuaW_Open(lua_State *L)
 
 	static const luaL_Reg methods[] = {
 		{ "HasWeapon", p_HasWeapon }, { "GetWeapon", p_GetWeapon }, { "GetWeapons", p_GetWeapons },
-		{ "StripWeapon", p_StripWeapon }, { "GiveAmmo", p_GiveAmmo }, { "GetAmmoCount", p_GetAmmoCount },
+		{ "StripWeapon", p_StripWeapon }, { "GetActiveWeapon", p_GetActiveWeapon }, { "SelectWeapon", p_SelectWeapon }, { "GiveAmmo", p_GiveAmmo }, { "GetAmmoCount", p_GetAmmoCount },
 		{ "SetAmmo", p_SetAmmo }, { "RemoveAmmo", p_RemoveAmmo }, { NULL, NULL }
 	};
 	LuaG_AddEntityMethods(L, methods);

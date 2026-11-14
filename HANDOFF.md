@@ -246,7 +246,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
 | `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
-| `lua_weapons.c` | 978 | Lua weapons (SWEP plan step 1): `weapons.Register` (classes in the registry, per-class metatables, `SWEP.Base`, the weapon methods as the last fallback), the local player's Lua weapons (`lweapon_t`: weapon number, menu slot and place, clip; the weapon's own table in the registry by class) and Lua ammo types (`ammo_t`, `game.AddAmmoType`), what the client's HUD is told (`WeaponList`, `CurWeapon` with state 0, `AmmoX`, `WeapPickup`, `AmmoPickup`, queued straight to the client in `LuaW_Frame`), the weapon bits added for the client (`LuaW_WeaponBits`), learning the game's own weapon numbers, ammo numbers and menu places from its `WeaponList` messages (`LuaW_GameMessage`), the generic icon for a weapon without `sprites/<class>.txt` (`LuaW_SpriteList`), `give <Lua weapon>`, `lua_weapons` |
+| `lua_weapons.c` | 1279 | Lua weapons (SWEP plan steps 1-2): `weapons.Register` (classes in the registry, per-class metatables, `SWEP.Base`, the weapon methods as the last fallback), the local player's Lua weapons (`lweapon_t`: weapon number, menu slot and place, clip; the weapon's own table in the registry by class) and Lua ammo types (`ammo_t`, `game.AddAmmoType`), what the client's HUD is told (`WeaponList`, `CurWeapon` with state 0, `AmmoX`, `WeapPickup`, `AmmoPickup`, queued straight to the client in `LuaW_Frame`), the weapon bits added for the client (`LuaW_WeaponBits`), learning the game's own weapon numbers, ammo numbers and menu places from its `WeaponList` messages (`LuaW_GameMessage`), the generic icon for a weapon without `sprites/<class>.txt` (`LuaW_SpriteList`), `give <Lua weapon>`, `lua_weapons`; taking one in hand (`Select`/`Wake`, `active`): the game's weapon sleeps (`LuaW_PlayerCmd` takes its buttons out of the input, `LuaW_GameMessage` holds back its `SVC_WEAPONANIM` and `CurWeapon`), `LuaW_ViewModel` gives the client the Lua view model, `GameSwitched` notices the game changing weapon by its view model, `LuaW_ClientCommand`/`LuaW_GameCommandDone` handle the menu's commands and `lastinv` |
 | `phys.h` | 122 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
 | `phys_jolt.cpp` | 843 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
 | `phys_ragdoll.c` | 776 | Ragdolls (physics plan steps 4 and 7): `SkelFor` gives a model's bones, rest pose, solids and joints (a Source model's `.phy`, or made from a Half-Life model's hitboxes by `HitboxPhys` when `phys_ragdoll_hl` is on); `Ragdoll_Frame` before each physics step watches every edict whose model has them (two snapshots of its last living frames), makes a ragdoll when `deadflag` is set (`MakeRagdoll`: a body per solid at its bone, joints from the rest pose, the file's collision pairs), removes it when the edict goes; `Ragdoll_AfterStep` copies the bodies into bone matrices and enforces `phys_ragdoll_max`/`phys_ragdoll_time`; `Ragdoll_ForEdict`/`Ragdoll_Bones` give them to the renderer (`rentity_t::ragdoll`, `SrcSetupBones`); `phys_ragdolls_list` |
@@ -1026,10 +1026,53 @@ recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
 
+### SWEP plan: step 2, choosing a Lua weapon and going back, built (2026-11-14, branch `swep-2`, on `swep-1`)
+
+The owner's "Go: step 2". Decision S1 (option A, "alongside") as planned. Next: step 3 (firing), proposed,
+not started.
+
+- **Choosing**: every client command passes `ClientCommandFallback` (`sv_main.c`), which asks
+  `LuaW_ClientCommand` before the game: a held Lua weapon's class name (what the menu sends), or
+  `use <class>`, takes it in hand (`Select`). The game's weapon stays the game DLL's active one but sleeps:
+  `LuaW_PlayerCmd` (in `SV_RunPlayerCmd`, after the `StartCommand` hook) removes `IN_ATTACK`, `IN_ATTACK2`
+  and `IN_RELOAD` from the input (kept in `held_buttons` for step 3); `LuaW_GameMessage` (now asked for
+  `SVC_WEAPONANIM` too, and able to hold a message back) holds its view-model animations and any `CurWeapon`
+  that says what is in hand. The client's view model comes from `LuaW_ViewModel()` (`SWEP.ViewModel`) in
+  `cl_main.c` instead of `pev->viewmodel`, which is never changed. The HUD gets `CurWeapon` state 1 for the
+  Lua weapon. `Deploy` runs after a drawing sequence was started (the first of `draw`, `deploy`, `draw1`,
+  `up` the model has).
+- **Going back**: a game weapon's name while a Lua weapon is in hand: `Holster` is asked (only an explicit
+  `false` refuses), the game gets the command, then `LuaW_GameCommandDone` looks at `pev->viewmodel`. Changed:
+  the game switched weapon, and its own deploy animation and `CurWeapon` already went through (the message
+  hook calls `GameSwitched` before holding anything). Unchanged: it was the sleeping weapon, the game did
+  nothing, and `Wake` sends the game's last `CurWeapon` again and starts the view model's drawing sequence.
+  The same view-model check each frame and at each held message ends the Lua weapon's turn when the game
+  switches by itself (picking up a better weapon). `lastinv` goes between the last two, Lua or not
+  (`previous`); between two game weapons it is left to the game.
+- **Lua**: `SWEP:Deploy()`, `SWEP:Holster(nextWeapon)`, `self:SendWeaponAnim(number or name, body)`,
+  `ply:GetActiveWeapon()` (nil while a game weapon is in hand), `ply:SelectWeapon(class)`.
+- **Checked on Linux** (c1a0d, `impulse 101`; scripts printing `Deploy`/`Holster` and the active weapon):
+  crowbar > Lua pistol > crowbar > MP5 > Lua pistol > MP5, a screenshot each: the view model and the HUD's
+  ammo corner follow every time (crowbar: none; Lua: 12 | 24; MP5: 25 | 67), the woken weapon draws itself.
+  A held attack with the Lua pistol in hand and the MP5 asleep left the MP5 at 25 | 67. `lastinv` twice went
+  MP5 > Lua > MP5. With the MP5 asleep, choosing the crowbar switched the game's weapon with one `Holster`
+  call. `ply:Give("weapon_rpg")` with the Lua pistol in hand (the game switches to the launcher itself)
+  ended the Lua weapon's turn and the HUD showed the launcher. `StripWeapon` of the weapon in hand woke the
+  game's. No errors in the logs.
+- **Checked on Windows**: the MinGW exe under Wine with the Windows libraries: the same log and
+  screenshots. And a Visual C++ build of this branch on Windows 10 in the test VM
+  (`vcbuild.sh`, 18 warnings as before, none in `lua_weapons.c`; `test.sh`): the same log and screenshots.
+- **Not done or not checked**: the third-person weapon model (`SWEP.WorldModel` isn't used: `pev->weaponmodel`
+  stays the sleeping weapon's); a weapon put to sleep while zoomed keeps its zoom, and the rocket
+  launcher's laser dot stays on; a hand grenade being held back is thrown when its button goes; Source
+  (`hl2:`) view models; `SWEP.ViewModel` names a model the map must already have loaded or that loads on
+  demand (not looked into for models the game didn't precache); a `Holster` that refuses; mods. A Lua weapon
+  can't fire yet: its buttons are only collected.
+
 ### SWEP plan: step 1, the registry and the HUD, built (2026-11-14, branch `swep-1`)
 
 The owner said "start doing the swep part of the plan". Code: `lua_weapons.c`; decisions S1-S4 as the brief
-has them. Next: step 2 (choosing a Lua weapon and going back), proposed, not started.
+has them. Step 2 followed the same day (above).
 
 - **What works**: `lua/weapons/<class>.lua` fills in a global `SWEP` (loaded before `lua/entities`), or
   `weapons.Register(SWEP, class)`. `ply:Give(class)` (or `sv_cheats 1; give <class>`) makes the weapon: a

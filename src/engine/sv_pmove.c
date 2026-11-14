@@ -551,6 +551,7 @@ void SV_RunPlayerCmd(edict_t *pl, usercmd_t *cmd)
 
 	LuaG_StartCommand(pl, cmd);   // Lua may change the input
 	LuaE_PlayerUse(pl, cmd);
+	LuaW_PlayerCmd(pl, cmd);
 	gEntityInterface.pfnCmdStart(pl, cmd, random_seed++);
 	if (!pl->v.fixangle)
 		VectorCopy(cmd->viewangles, pl->v.v_angle);

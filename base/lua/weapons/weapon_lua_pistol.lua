@@ -2,8 +2,8 @@
 -- Get it with "sv_cheats 1; give weapon_lua_pistol" in the console, or from Lua:
 --   player.GetByID(1):Give("weapon_lua_pistol")
 --
--- So far it appears in the weapon menu (slot 2, under the pistol and the .357) with its clip and ammo.
--- Choosing and firing it are the next steps of docs/SWEP_PLAN.md.
+-- So far it appears in the weapon menu (slot 2, under the pistol and the .357) with its clip and ammo,
+-- and can be taken in hand. Firing it is the next step of docs/SWEP_PLAN.md.
 
 game.AddAmmoType{ name = "lua_pistol", max = 120 }
 

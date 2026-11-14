@@ -1051,8 +1051,9 @@ static void UpdateEntities(void)
 
 	// the view model follows the player's weapon
 	edict_t *pl = SV_LocalPlayer();
-	model_t *vm = pl ? Mod_ForName(SV_String(pl->v.viewmodel), false) : NULL;
-	if (pl && !pl->v.viewmodel)
+	const char *lua_vm = LuaW_ViewModel();   // a Lua weapon in hand shows its own
+	model_t *vm = pl ? Mod_ForName(lua_vm ? lua_vm : SV_String(pl->v.viewmodel), false) : NULL;
+	if (pl && (lua_vm ? !*lua_vm : !pl->v.viewmodel))
 		vm = NULL;
 	if (vm != cl_viewent.model) {
 		cl_viewent.model = vm;

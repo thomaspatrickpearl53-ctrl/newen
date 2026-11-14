@@ -1,7 +1,7 @@
 # Lua weapons (SWEPs) and scripted entities: plan
 
-Design written 2026-11-12 from newen at commit c9a8232. **Steps 5 (2026-11-13, branch `swep-5`) and 1
-(2026-11-14, branch `swep-1`) are built; see "Built" at the end.** The rest isn't. Implementation starts
+Design written 2026-11-12 from newen at commit c9a8232. **Steps 5 (2026-11-13, branch `swep-5`), 1 and 2
+(2026-11-14, branches `swep-1`, `swep-2`) are built; see "Built" at the end.** The rest isn't. Implementation starts
 only when the owner says "go". It needs `docs/LUA_API_PLAN.md` first (damage, sound, effects), and is the
 second of the three plans the owner asked for together.
 
@@ -147,3 +147,8 @@ can't be checked by a harmless probe. Recommended only if A shows a problem it c
   places from its own `WeaponList` messages instead of assuming Half-Life's; a weapon is a Lua table, not an
   entity; ammo is asked for by name. A Lua weapon can be seen in the menu but not taken in hand until
   step 2, and is lost on a map change until step 4. Checks: HANDOFF section 9.
+- **Step 2 (2026-11-14, `swep-2`)**: in `lua_weapons.c`. As planned (option A). Details the plan left open:
+  the Lua view model is shown by the client side only (`pev->viewmodel` stays the game's, which is how the
+  game switching weapon by itself is noticed); a woken weapon gets its HUD state back and plays its drawing
+  sequence; `lastinv` works across Lua and game weapons; `Holster` refuses only by returning `false`. Not
+  done: the third-person weapon model, undoing a sleeping weapon's zoom or laser dot.

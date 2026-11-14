@@ -777,10 +777,15 @@ static qboolean ClientCommandFallback(void)
 	edict_t *pl = SV_LocalPlayer();
 	if (!pl)
 		return false;
-	if (LuaG_PlayerCommand(pl) || LuaW_ClientCommand(pl))
+	if (LuaG_PlayerCommand(pl))
+		return true;
+	int lua = LuaW_ClientCommand(pl);   // choosing a Lua weapon, or leaving one for the game's
+	if (lua == 1)
 		return true;
 	gGlobals.time = (float)sv.time;
 	gEntityInterface.pfnClientCommand(pl);
+	if (lua == 2)
+		LuaW_GameCommandDone(pl);
 	return true;
 }
 
