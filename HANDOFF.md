@@ -1020,6 +1020,46 @@ recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
 
+### A Windows 10 test VM, and the first Visual C++ build since physics (2026-11-14, branch `vm-testing`)
+
+**The VM** (owner's request: real Windows instead of Wine) lives in `~/newen-vm`, outside the project:
+Windows 10 Pro 22H2 from Microsoft's own ISO, unactivated (Microsoft's generic install key), installed hands
+off by `install.sh` + `unattend/autounattend.xml` (local admin `tester`, auto-logon; password in
+`ssh/vm-password`). `unattend/setup.ps1` turned on the SSH server with a key made for the VM
+(`ssh/id_ed25519`), and switched off sleep, automatic updates and consumer apps. Then added over SSH: the
+Visual Studio 2026 Build Tools (C++ workload, CMake, Ninja; Microsoft-signed installer) in
+`C:\Program Files\Microsoft Visual Studio\18\BuildTools`, `C:\Games\Half-Life` (the owner's Windows copy,
+`Half-Lifewin`) and `C:\Games\HL2\{hl2,platform}`. `clean.qcow2` is that state; every test runs on a
+throwaway overlay of it. QEMU here has no window of its own: the screen is VNC on 127.0.0.1:5905 and
+`screen.sh` grabs it.
+
+- `./vcbuild.sh [project]`: copies the project as it is (tracked and new files, uncommitted changes) to
+  `C:\src\newen`, runs `build.bat`, brings `newen.exe`, `SDL2.dll`, `base/` and `build.log` back to
+  `results/vc-<time>/`. About 1 min 40 s from a cold start.
+- `./test.sh <folder with newen.exe> [args]`: copies it to `C:\newen` with Mesa's 32-bit OpenGL beside it
+  (`downloads/mesa/x86`: `opengl32.dll`, `libgallium_wgl.dll`, `dxil.dll`; Mesa 26.2.5 from pal1000's
+  mesa-dist-win, because 26.2.6's 32-bit OpenGL is missing), runs newen on the logged-on desktop (a
+  scheduled task: programs started over SSH get no desktop) with `-basedir`/`-hl2dir` set, and brings back
+  `console.log`, screenshots as PNG and the exit code to `results/<time>/`. `USERDATA=<folder>` adds files
+  to `userdata/valve` (Lua scripts, cfgs). About a minute for a short run.
+- `run.sh [test]`, `stop.sh [test]`, `vm.sh <cmd>` / `vm.sh put|get` / `vm.sh ps <file.ps1|->`
+  (whole PowerShell scripts: quoted text in a one-line command gets mangled on the way in),
+  `snapshot.sh` (after changing the base: `./run.sh`, change, `./stop.sh`, `./snapshot.sh`).
+- OpenGL in the VM: Mesa picks its d3d12 driver on Microsoft's software device ("D3D12 (Microsoft Basic
+  Render Driver)", OpenGL 4.2 compatibility). Correct, slow; good for logic and screenshots, not speed.
+
+**Found with it: the Visual C++ build's physics was broken.** `phys_test` failed under Visual C++ (box
+sank to z -6.76 and never slept; the MinGW exe in the same VM passed): Jolt builds itself with `/fp:fast`
+under MSVC. With `CROSS_PLATFORM_DETERMINISTIC` (Jolt then uses `/fp:precise`), set for MSVC only in
+`CMakeLists.txt`, it passes, and a crate stack on c1a0d settles to the same positions as on Linux. Jolt's
+asserts (tried) said nothing. Releases so far were MinGW builds, so they weren't affected; anyone building
+with `build.bat` was. Also `build.bat` now uses the Build Tools folder when Visual Studio Community isn't
+installed (`VS` can be set beforehand). Visual C++ warnings: 18, none new in kind (C4152 function/data
+pointer casts, C4701, C4459).
+
+Not checked in the VM yet: sound, the menu with a mouse, a long play session, the Visual C++ build's
+ragdolls and explosions.
+
 ### The Windows build with Windows game libraries, under Wine (2026-11-14)
 
 The owner added a second Half-Life install, the Windows one, at

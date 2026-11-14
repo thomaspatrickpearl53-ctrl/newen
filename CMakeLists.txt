@@ -51,6 +51,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
 		string(APPEND CMAKE_CXX_FLAGS " -mstackrealign")
 	endif()
 endif()
+# Jolt builds itself with /fp:fast under Visual C++, and the 32-bit build then loses contacts: phys_test's
+# dropped box falls halfway into the floor and never sleeps (found in the Windows test VM, 2026-11-14;
+# gcc and MinGW are fine). Jolt's deterministic mode builds it with /fp:precise instead.
+if(MSVC)
+	set(CROSS_PLATFORM_DETERMINISTIC ON CACHE BOOL "" FORCE)
+endif()
 add_subdirectory(${CMAKE_SOURCE_DIR}/third_party/JoltPhysics/Build ${CMAKE_BINARY_DIR}/jolt EXCLUDE_FROM_ALL)
 # 32-bit Windows malloc gives 8-byte alignment, but MinGW's g++ says 16 (__STDCPP_DEFAULT_NEW_ALIGNMENT__),
 # and Jolt then stores SSE values to memory that isn't aligned for them (a crash building map meshes).

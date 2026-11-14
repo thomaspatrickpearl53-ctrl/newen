@@ -1,7 +1,9 @@
 @echo off
 rem Builds newen (32-bit) with Visual Studio 2026's compiler, CMake and Ninja. Output: bin\newen.exe
 setlocal
-set "VS=C:\Program Files\Microsoft Visual Studio\18\Community"
+rem VS can be set beforehand; else Community, or the Build Tools if that is what is installed
+if not defined VS set "VS=C:\Program Files\Microsoft Visual Studio\18\Community"
+if not exist "%VS%\VC\Auxiliary\Build\vcvars32.bat" if exist "C:\Program Files\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars32.bat" set "VS=C:\Program Files\Microsoft Visual Studio\18\BuildTools"
 set "CMAKE=%VS%\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 set "NINJA=%VS%\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe"
 call "%VS%\VC\Auxiliary\Build\vcvars32.bat" >nul || exit /b 1
