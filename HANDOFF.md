@@ -1020,6 +1020,23 @@ recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
 
+### The Windows build with Windows game libraries, under Wine (2026-11-14)
+
+The owner added a second Half-Life install, the Windows one, at
+`~/.local/share/Steam/steamapps/common/Half-Lifewin` (`hl.dll`, `cl_dlls/client.dll`, `vgui.dll`). Until
+now the MinGW exe under Wine was pointed at the Linux install, which has no Windows libraries, so it ran
+with **no client DLL at all** (no HUD, no view model, no client events) and whatever "Wine" checks say
+above covered only the engine and the Linux-independent game logic. Run it against the Windows install:
+`wine newen.exe -basedir "Z:\home\...\Half-Lifewin" -hl2dir "Z:\...\Half-Life 2"`.
+
+Checked that way with the 0.4.1 release exe: `client.dll` and `hl.dll` load; **the game-object probe
+passes on the Windows `hl.dll`** (the `thiscall` method table, first time it has run); HUD and view model
+draw; the weapon-menu click doesn't fire the pistol; the tau beam ends at the crosshair looking up and
+down; a crate is picked up, carried and thrown; Source ragdolls (c2a5), an `env_explosion` throwing
+crates, a blast-thrown crate and a Lua-thrown one each killing a soldier; Half-Life model ragdolls
+(`phys_ragdoll_hl 1`, 6 scientists on c1a0d) and save/load. No errors in the log.
+Still not checked: real Windows (Wine isn't it: drivers, input, sound), and Visual C++ (`build.bat`).
+
 ### After 0.4.0: two input fixes and carrying props (2026-11-14, branch `post-0.4.0`, released as 0.4.1)
 
 Reported by the owner playing 0.4.0.
