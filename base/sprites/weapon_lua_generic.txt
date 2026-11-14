@@ -1,0 +1,21 @@
+20
+weapon		2560 newen/lua_weapon_2560	0	0	510	135
+weapon_s	2560 newen/lua_weapon_2560	0	135	510	135
+ammo		2560 newen/lua_weapon_2560	0	270	72	72
+crosshair	2560 2560crosshairs	72	0	72	72
+autoaim		2560 2560crosshairs	0	216	72	72
+weapon		1280 newen/lua_weapon_1280	0	0	340	90
+weapon_s	1280 newen/lua_weapon_1280	0	90	340	90
+ammo		1280 newen/lua_weapon_1280	0	180	48	48
+crosshair	1280 1280crosshairs	48	0	48	48
+autoaim		1280 1280crosshairs	0	144	48	48
+weapon		640 newen/lua_weapon_640	0	0	170	45
+weapon_s	640 newen/lua_weapon_640	0	45	170	45
+ammo		640 newen/lua_weapon_640	0	90	24	24
+crosshair	640 crosshairs	24	0	24	24
+autoaim		640 crosshairs	0	72	24	24
+weapon		320 newen/lua_weapon_320	0	0	80	20
+weapon_s	320 newen/lua_weapon_320	0	20	80	20
+ammo		320 newen/lua_weapon_320	0	40	18	18
+crosshair	320 crosshairs	24	0	24	24
+autoaim		320 crosshairs	0	72	24	24

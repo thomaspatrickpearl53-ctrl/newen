@@ -599,8 +599,10 @@ void SV_Frame(double frametime)
 	LuaG_FlushPlayerHurt();
 	pl = SV_LocalPlayer();
 	if (pl) {
-		if (last_health > 0 && pl->v.health <= 0)
+		if (last_health > 0 && pl->v.health <= 0) {
 			LuaG_PlayerDied(pl);
+			LuaW_PlayerDied(pl);
+		}
 		last_health = pl->v.health;
 	}
 	LuaG_Tick();
@@ -775,7 +777,7 @@ static qboolean ClientCommandFallback(void)
 	edict_t *pl = SV_LocalPlayer();
 	if (!pl)
 		return false;
-	if (LuaG_PlayerCommand(pl))
+	if (LuaG_PlayerCommand(pl) || LuaW_ClientCommand(pl))
 		return true;
 	gGlobals.time = (float)sv.time;
 	gEntityInterface.pfnClientCommand(pl);

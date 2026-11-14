@@ -1,7 +1,7 @@
 # Lua weapons (SWEPs) and scripted entities: plan
 
-Design written 2026-11-12 from newen at commit c9a8232. **Step 5 is built (2026-11-13, branch `swep-5`);
-see "Built" at the end.** The rest isn't. Implementation starts
+Design written 2026-11-12 from newen at commit c9a8232. **Steps 5 (2026-11-13, branch `swep-5`) and 1
+(2026-11-14, branch `swep-1`) are built; see "Built" at the end.** The rest isn't. Implementation starts
 only when the owner says "go". It needs `docs/LUA_API_PLAN.md` first (damage, sound, effects), and is the
 second of the three plans the owner asked for together.
 
@@ -139,3 +139,11 @@ can't be checked by a harmless probe. Recommended only if A shows a problem it c
   every frame unless `NextThink` says otherwise; `ServerTime()` was added because `CurTime()` is the
   program's clock; save files went to version 2. A map trigger firing a Lua entity by name doesn't reach
   `ENT:Use` yet (the game calls the object directly). Checks and what wasn't checked: HANDOFF section 9.
+- **Step 1 (2026-11-14, `swep-1`)**: `src/engine/lua_weapons.c`, example `base/lua/weapons/weapon_lua_pistol.lua`,
+  the generic icon in `base/sprites/` (drawn by `tools/make_lua_weapon_icon.py`). As planned, with these
+  differences: the menu has room for **11** Lua weapon classes per session beside Half-Life's own, not 15
+  (it is 5 slots of 5 places and Half-Life fills 14; numbers and places are kept for the session); a taken
+  place moves the weapon to the next free one; newen learns the game's weapon numbers, ammo numbers and
+  places from its own `WeaponList` messages instead of assuming Half-Life's; a weapon is a Lua table, not an
+  entity; ammo is asked for by name. A Lua weapon can be seen in the menu but not taken in hand until
+  step 2, and is lost on a map change until step 4. Checks: HANDOFF section 9.

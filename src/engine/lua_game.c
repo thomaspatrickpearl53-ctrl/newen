@@ -800,6 +800,8 @@ static int m_Give(lua_State *L)
 	edict_t *pl = CheckEdict(L, 1);
 	if (!IsPlayerEdict(pl))
 		return luaL_error(L, "Give only works on players");
+	if (LuaW_Give(L, pl, luaL_checkstring(L, 2)))
+		return 1;   // a Lua weapon: no entity, the weapon's table
 	edict_t *item = SV_CreateNamedEntity(luaL_checkstring(L, 2));
 	if (!item) {
 		LuaG_PushEntity(L, NULL);
@@ -1228,6 +1230,7 @@ void LuaG_Open(lua_State *L)
 	LuaR_Open(L);
 	LuaX_Open(L);
 	LuaE_Open(L);
+	LuaW_Open(L);
 	LuaP_Open(L);
 }
 
@@ -1338,6 +1341,7 @@ void LuaG_ServerStarted(void)
 	}
 	memset(announced, 0, sizeof(int) * announced_cap);
 	LuaE_ServerStarted();
+	LuaW_ServerStarted();
 }
 
 // new entities since the last check (the game creates many itself, without telling the engine)
@@ -1390,6 +1394,7 @@ void LuaG_Tick(void)
 	if (!L)
 		return;
 	LuaE_Frame();   // OnTakeDamage for what the game's damage did this frame
+	LuaW_Frame();   // the HUD hears of Lua weapons and ammo
 	int top = lua_gettop(L);
 	Lua_Hook("Tick", 0, 0);
 	lua_settop(L, top);

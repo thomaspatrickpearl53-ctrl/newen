@@ -222,6 +222,8 @@ static client_sprite_t *SPR_GetList(const char *psz, int *count)
 {
 	*count = 0;
 	char *data = FS_LoadFile(psz, NULL);
+	if (!data && LuaW_SpriteList(psz))
+		data = FS_LoadFile(LuaW_SpriteList(psz), NULL);   // a Lua weapon without icons of its own
 	if (!data)
 		return NULL;
 	const char *p = COM_Parse(data);
@@ -1158,7 +1160,7 @@ static void UpdateClientData(void)
 	memset(&cd, 0, sizeof(cd));
 	VectorCopy(pl->v.origin, cd.origin);
 	VectorCopy(cl_viewangles, cd.viewangles);
-	cd.iWeaponBits = pl->v.weapons;
+	cd.iWeaponBits = pl->v.weapons | LuaW_WeaponBits();   // the game's weapons and Lua's
 	cd.fov = pl->v.fov ? pl->v.fov : Cvar_VariableValue("default_fov");
 	int changed = 0;
 	CLIENT_CALL("HUD_UpdateClientData", changed = cl.HUD_UpdateClientData(&cd, (float)cl_time));

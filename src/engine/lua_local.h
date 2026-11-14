@@ -34,6 +34,10 @@ qboolean        LuaE_PushTable(lua_State *L, struct edict_s *e);   // false (not
 void            LuaE_Draw(void);           // ENT:Draw, inside PostDrawOpaque
 void            LuaE_StateStopping(void);  // lua_reload: the tables are kept...
 void            LuaE_StateStarted(void);   // ...and put back after entities/*.lua ran
+// lua_weapons.c: weapons, game.AddAmmoType, the player's Lua weapons and ammo; opened by LuaG_Open
+void            LuaW_Open(lua_State *L);
+void            LuaW_StateStarted(void);   // after weapons/*.lua ran
+qboolean        LuaW_Give(lua_State *L, struct edict_s *pl, const char *cls);   // pushes the weapon; false if cls isn't a Lua weapon
 // lua_phys.c: physics objects, ent:PhysicsInit, the physics table; opened by LuaG_Open
 void            LuaP_Open(lua_State *L);
 // lua_ui.c: fonts and textured rectangles for surface.*; opened by the host after its surface table

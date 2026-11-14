@@ -195,6 +195,16 @@ void        LuaE_ServerStarted(void);
 unsigned char *LuaE_SaveData(int *size);              // the Lua entities' tables; NULL if none
 void        LuaE_RestoreData(const unsigned char *data, int size, edict_t **byindex, int count);
 
+// lua_weapons.c: Lua weapons (SWEPs), the player's Lua ammo, and what the client's HUD is told of them
+void        CL_QueueMessage(int type, const unsigned char *data, int len);   // cl_main.c
+void        LuaW_GameMessage(const char *name, const unsigned char *data, int len);   // a game message on its way to the client
+int         LuaW_WeaponBits(void);                    // added to the weapon bits the client sees
+const char *LuaW_SpriteList(const char *path);        // the icon list for a Lua weapon without its own, else NULL
+qboolean    LuaW_ClientCommand(edict_t *pl);          // "give <Lua weapon>"
+void        LuaW_PlayerDied(edict_t *pl);
+void        LuaW_Frame(void);
+void        LuaW_ServerStarted(void);
+
 // sv_pmove.c
 void        SV_InitPlayerMove(void);                      // after the game DLL loads
 playermove_t *SV_PlayerMove(void);                        // NULL before then

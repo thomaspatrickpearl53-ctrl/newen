@@ -879,11 +879,12 @@ static int RunHook(const char *name, int nargs, int nres)
 	return SafeCall(nargs + 1, nres, va("hook %s", name)) ? nres : -1;
 }
 
-// lua/entities/<class>.lua: each file fills in a global ENT, registered under the file's name
-static void LoadEntities(void)
+// lua/entities/<class>.lua and lua/weapons/<class>.lua: each file fills in a global (ENT, SWEP), registered
+// under the file's name
+static void LoadClasses(const char *folder, const char *global, const char *lib)
 {
 	char **list;
-	int n = ListScripts("entities", "*.lua", &list);
+	int n = ListScripts(folder, "*.lua", &list);
 	for (int i = 0; i < n; i++) {
 		char cls[64];
 		Q_strncpy(cls, list[i], sizeof(cls));
@@ -893,17 +894,24 @@ static void LoadEntities(void)
 		lua_newtable(L);
 		lua_pushstring(L, cls);
 		lua_setfield(L, -2, "ClassName");
-		lua_setglobal(L, "ENT");
-		if (RunScript(va("entities/%s", list[i]), true) >= 0) {
-			lua_getglobal(L, "scripted_ents");
+		if (!strcmp(global, "SWEP")) {
+			// GMod's weapons set fields of these without making them
+			lua_newtable(L);
+			lua_setfield(L, -2, "Primary");
+			lua_newtable(L);
+			lua_setfield(L, -2, "Secondary");
+		}
+		lua_setglobal(L, global);
+		if (RunScript(va("%s/%s", folder, list[i]), true) >= 0) {
+			lua_getglobal(L, lib);
 			lua_getfield(L, -1, "Register");
-			lua_getglobal(L, "ENT");
+			lua_getglobal(L, global);
 			lua_pushstring(L, cls);
-			SafeCall(2, 0, va("entities/%s", list[i]));
+			SafeCall(2, 0, va("%s/%s", folder, list[i]));
 		}
 		lua_settop(L, 0);
 		lua_pushnil(L);
-		lua_setglobal(L, "ENT");
+		lua_setglobal(L, global);
 	}
 	FreeList(list, n);
 }
@@ -928,7 +936,9 @@ static void StartState(void)
 		lua_settop(L, 0);
 	}
 	FreeList(list, n);
-	LoadEntities();
+	LoadClasses("weapons", "SWEP", "weapons");   // before the entities: a pickup may name its weapon
+	LuaW_StateStarted();
+	LoadClasses("entities", "ENT", "scripted_ents");
 	LuaE_StateStarted();
 
 	RunHook("Initialize", 0, 0);

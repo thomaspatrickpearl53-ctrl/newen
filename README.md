@@ -453,6 +453,38 @@ becomes one too (a Lua class wins over the game's own class of the same name).
 - Example: `base/lua/entities/lua_healthcharger.lua`, a health charger: `lua_run SpawnHealthCharger()` puts
   one on the floor in front of you; hold the use key on it.
 
+### Lua weapons (`SWEP`), in progress
+
+A file `lua/weapons/<class>.lua` fills in a global `SWEP` table and becomes the weapon class `<class>` (or
+call `weapons.Register(SWEP, class)` yourself; `weapons.Get(class)`, `weapons.GetList()`). Give it with
+`ply:Give(class)`, or `sv_cheats 1` and `give <class>` in the console. **So far a Lua weapon shows in
+Half-Life's weapon menu with its icon, clip and ammo; taking it in hand, firing and saving come next**
+(`docs/SWEP_PLAN.md`).
+
+- Fields, with Garry's Mod's names: `SWEP.PrintName`, `SWEP.Slot` (the menu column, from 0) and
+  `SWEP.SlotPos` (the place in it; a taken place moves the weapon to the next free one),
+  `SWEP.ViewModel`, `SWEP.WorldModel`, `SWEP.Primary.ClipSize` (-1: no clip), `.DefaultClip` (what a new
+  weapon comes with: one clip loaded, the rest as spare ammo), `.Automatic`, `.Ammo` (an ammo type's name,
+  or `"none"`), the same under `SWEP.Secondary`. `SWEP.Base = "other_class"` inherits from another weapon.
+- Functions so far: `SWEP:Initialize()` (when it's given), `SWEP:OnRemove()` (when it's taken away). The
+  `WeaponEquip(weapon, ply)` hook runs after a weapon is given.
+- The weapon is a table of its own (`self.Shots = 0`), with `self.Owner` and the methods `IsValid`,
+  `GetClass`, `GetOwner`, `GetPrintName`, `Clip1`/`SetClip1`, `Clip2`/`SetClip2`, `GetMaxClip1`/`2`, `Ammo1`/
+  `Ammo2` (the owner's spare ammo), `GetPrimaryAmmoType`/`GetSecondaryAmmoType` (the type's name), `GetSlot`,
+  `GetSlotPos`, `Remove`.
+- Ammo: Lua weapons use ammo types of their own. `game.AddAmmoType{ name = "pipe", max = 100 }`,
+  `game.GetAmmoMax(name)`, `game.GetAmmoTypes()`; `ply:GiveAmmo(amount, name, hidePopup)` (returns what
+  fitted), `ply:GetAmmoCount(name)`, `ply:SetAmmo(amount, name)`, `ply:RemoveAmmo(amount, name)`.
+- The player: `ply:Give(class)` returns the weapon (a second one only adds its ammo), `ply:HasWeapon(class)`
+  (Lua weapons and Half-Life's own), `ply:GetWeapon(class)` and `ply:GetWeapons()` (Lua weapons only),
+  `ply:StripWeapon(class)`.
+- Icons: ship `sprites/<class>.txt` in the same format as Half-Life's `sprites/weapon_*.txt`, or get
+  newen's generic "LUA" icon.
+- Limits: the menu has room for 11 different Lua weapons per session beside Half-Life's 14. A new map,
+  a level change, a loaded game or dying leaves the player without Lua weapons for now. `lua_reload` keeps
+  the weapons and their ammo but empties the weapons' own tables.
+- `lua_weapons` lists the Lua weapons and ammo types in use. Example: `base/lua/weapons/weapon_lua_pistol.lua`.
+
 ## Roadmap
 
 Phase 1, Half-Life runs:

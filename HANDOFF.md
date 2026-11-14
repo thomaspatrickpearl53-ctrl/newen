@@ -246,6 +246,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
 | `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
+| `lua_weapons.c` | 978 | Lua weapons (SWEP plan step 1): `weapons.Register` (classes in the registry, per-class metatables, `SWEP.Base`, the weapon methods as the last fallback), the local player's Lua weapons (`lweapon_t`: weapon number, menu slot and place, clip; the weapon's own table in the registry by class) and Lua ammo types (`ammo_t`, `game.AddAmmoType`), what the client's HUD is told (`WeaponList`, `CurWeapon` with state 0, `AmmoX`, `WeapPickup`, `AmmoPickup`, queued straight to the client in `LuaW_Frame`), the weapon bits added for the client (`LuaW_WeaponBits`), learning the game's own weapon numbers, ammo numbers and menu places from its `WeaponList` messages (`LuaW_GameMessage`), the generic icon for a weapon without `sprites/<class>.txt` (`LuaW_SpriteList`), `give <Lua weapon>`, `lua_weapons` |
 | `phys.h` | 122 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
 | `phys_jolt.cpp` | 843 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
 | `phys_ragdoll.c` | 776 | Ragdolls (physics plan steps 4 and 7): `SkelFor` gives a model's bones, rest pose, solids and joints (a Source model's `.phy`, or made from a Half-Life model's hitboxes by `HitboxPhys` when `phys_ragdoll_hl` is on); `Ragdoll_Frame` before each physics step watches every edict whose model has them (two snapshots of its last living frames), makes a ragdoll when `deadflag` is set (`MakeRagdoll`: a body per solid at its bone, joints from the rest pose, the file's collision pairs), removes it when the edict goes; `Ragdoll_AfterStep` copies the bodies into bone matrices and enforces `phys_ragdoll_max`/`phys_ragdoll_time`; `Ragdoll_ForEdict`/`Ragdoll_Bones` give them to the renderer (`rentity_t::ragdoll`, `SrcSetupBones`); `phys_ragdolls_list` |
@@ -1024,6 +1025,68 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### SWEP plan: step 1, the registry and the HUD, built (2026-11-14, branch `swep-1`)
+
+The owner said "start doing the swep part of the plan". Code: `lua_weapons.c`; decisions S1-S4 as the brief
+has them. Next: step 2 (choosing a Lua weapon and going back), proposed, not started.
+
+- **What works**: `lua/weapons/<class>.lua` fills in a global `SWEP` (loaded before `lua/entities`), or
+  `weapons.Register(SWEP, class)`. `ply:Give(class)` (or `sv_cheats 1; give <class>`) makes the weapon: a
+  Lua table of its own per class (not an edict), clip and ammo counts in C. The weapon shows in Half-Life's
+  own weapon menu with an icon and its ammo bar, the pickup icons slide in at the right, and it leaves the
+  menu when stripped. **It can't be taken in hand yet**: choosing it in the menu sends `weapon_lua_x` to
+  `hl.dll`, which doesn't know it and does nothing (step 2 claims that command).
+- **How the HUD is told**: nothing is sent while the game is listing its own weapons. `PF_MessageEnd` shows
+  every user message to `LuaW_GameMessage`, which reads the game's `WeaponList`s (weapon numbers, ammo
+  numbers and menu places in use, and the class names, so `ply:HasWeapon` also answers for the game's
+  weapons) and marks everything to be told again on `InitHUD`/`ResetHUD` (the client's HUD forgets ammo and
+  menu places then). `LuaW_Frame` (from `LuaG_Tick`) then gives a weapon the first free number from 16 up
+  and a menu place, and queues `WeaponList`, `CurWeapon` (state 0: only the clip is taken), `AmmoX`,
+  `WeapPickup` straight to the client (`CL_QueueMessage`). `cl_main.c` adds `LuaW_WeaponBits()` to the bits
+  in `HUD_UpdateClientData`; the client's own code then puts the weapon in the menu. Lua ammo types take HUD
+  ammo numbers from 31 down.
+- **Icons**: the client loads `sprites/<class>.txt` itself when it gets the `WeaponList`. `SPR_GetList`
+  falls back to `sprites/weapon_lua_generic.txt` for a class that was handed out and has no file.
+  `tools/make_lua_weapon_icon.py` draws that icon (a pistol outline and "LUA", newen's own drawing) into
+  `base/sprites/newen/lua_weapon_{320,640,1280,2560}.spr` and writes the list; the Steam client picks 320,
+  640, 1280 or 2560 by screen size, so all four are there. Crosshair lines name Half-Life's own crosshair
+  sprites.
+- **Differences from the plan**: the menu has **11 free places, not 15** with Half-Life's 14 weapons in it:
+  the client's menu is 5 slots of 5 places (the public SDK's array sizes; a place past that would write
+  outside the client's array), and a weapon's number and place are kept for the session once handed out, so
+  11 different Lua weapon classes can be handed out per session. Freeing places when a weapon is stripped
+  would raise that to 11 held at once; not done because the client drops and picks up menu places in
+  weapon-number order in one pass, and a reused place could be cleared after it was filled. Whether the
+  current client's arrays are bigger than the SDK's wasn't looked into. A wanted place that is taken moves
+  the weapon to the next free place in its slot, then to any slot. The inventory is the local player's
+  only. `GetPrimaryAmmoType` gives the ammo type's name, not a number.
+- **Lost for now**: a new map, a level change or a loaded game starts without Lua weapons and ammo (step 4
+  carries and saves them). Death strips them, as does the game clearing all its weapon bits
+  (`player_weaponstrip`); a strip while the player holds no game weapon at all isn't noticed. `lua_reload`
+  keeps the weapons, clips and ammo but not what was in the weapons' own tables (step 4's save format will
+  cover it).
+- **Checked on Linux** (c1a0d, `impulse 101`, then `give weapon_lua_pistol`): the log shows `AmmoX
+  lua_pistol: number 31, count 24`, `WeaponList weapon_lua_pistol: number 16, slot 2, place 3` and
+  `CurWeapon ... clip 12` (`developer 1`); the screenshot has the icon third in slot 2 under the pistol and
+  the .357, with its ammo bar and the pickup icon at the right. A test script: clip and ammo read back,
+  `SetClip1(7)` and `GiveAmmo(500)` (96 fitted of a 120 maximum) reached the HUD, a second `Give` only added
+  ammo, an unknown ammo name is a Lua error, a class registered from a script with `Base` and no ammo asking
+  for the crowbar's place got slot 1 place 2 and read its base's fields, `StripWeapon` took the icon out of
+  the menu, `kill` cleared weapons and ammo, `lua_reload` dropped the weapon whose class was gone. Choosing
+  the Lua weapon in the menu and clicking closes the menu and changes nothing (no shot from the weapon in
+  hand).
+- **Checked on Windows**: the MinGW exe under Wine with the Windows `client.dll`/`hl.dll` (`Half-Lifewin`):
+  the same script output and menu screenshot. And on Windows 10 in the test VM with a
+  Visual C++ build of this branch (`vcbuild.sh`, no warnings in `lua_weapons.c`; `test.sh`): the same again.
+- **Not checked**: a 1280 or 2560 HUD (the test window is 1280x720, which uses the 640 icons), the 320 one,
+  mods with their own weapon lists, more than two Lua weapons, a full menu, `player_weaponstrip` in a map,
+  the screenshot regression and `mdlinfo` sweep (no renderer or model code changed), AddressSanitizer.
+- **The Linux Half-Life install lost its game files on 2026-11-14 at 12:00** (`valve/` has only `cl_dlls`
+  with `gameui.so` and `SAVE`; Steam still calls it installed). Not touched. The Linux checks above ran with
+  `-basedir` on a folder of links in the session's scratch folder: the Linux install's libraries plus
+  `Half-Lifewin/valve` (it has `hl.so` and `client.so` too). **`-basedir` overwrites `bin/basedir.txt`**;
+  it was put back afterwards.
 
 ### A Windows 10 test VM, and the first Visual C++ build since physics (2026-11-14, branch `vm-testing`)
 
