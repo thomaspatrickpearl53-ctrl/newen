@@ -1018,6 +1018,36 @@ recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
 
+### After 0.4.0: two input fixes and carrying props (2026-11-14, branch `post-0.4.0`)
+
+Reported by the owner playing 0.4.0.
+
+- **Picking a weapon in the HUD menu fired the weapon in hand.** The client's HUD swallows that click
+  itself (`CHudAmmo::Think` inside `HUD_UpdateClientData` takes `IN_ATTACK` and lets go of the button),
+  but newen called `HUD_UpdateClientData` when drawing the HUD, after `CL_CreateMove` had already put the
+  click in the frame's command. `UpdateClientData` (`cl_main.c`) now runs once a frame at the start of
+  `CL_CreateCmd`, and from `CL_DrawHUD` only if no command was made that frame (paused). Checked on Linux
+  with the game's sounds logged: with the menu open on slot 4, `+attack` fired the pistol on the 0.4.0
+  code and doesn't now; a later `+attack` fires as usual.
+- **The tau cannon's beam went level instead of where the player looked** (and the egon's, which passes
+  the same thing). Those weapons give their client event the player entity's own angles, which are the
+  model's: pitch a third of the view's, the other way up. `CL_PlaybackEvent` now uses the player's
+  `v_angle` when the angles passed for a player's event equal its entity angles. Checked on Linux:
+  screenshots looking 35 degrees up and 30 down, the beam ends at the crosshair both times.
+- **Carrying props** (`base/lua/entities/prop_physics.lua`, all Lua): `ENT:Use` (`SIMPLE_USE`) picks the
+  prop up if it is `CarryMass` (60 kg) or lighter and nobody has it; a `Tick` hook steers it to a point in
+  front of the eyes by setting its velocity (15 x the distance, at most 400 in/s, plus the player's own)
+  and stops its spin, so it still collides on the way; it is dropped when more than 200 units from that
+  point. Use again (on it, or anywhere: `KeyPress`) drops it. `StartCommand` turns attack into a throw
+  (`ThrowSpeed` 700 in/s for 30 kg or less, slower in proportion above) and holds the attack button back
+  from the game until it is let go. New `PhysObj:GetAngleVelocity/SetAngleVelocity` (`Phys_SetSpin`).
+  Checked on Linux and the MinGW exe under Wine: a crate picked up with `+use` rises to eye height, follows
+  a turn of the view, and attack throws it 110 units without the gun firing.
+- Not checked: the two input fixes on Windows (the Wine setup has no Windows `client.dll`/`vgui.dll`, so
+  the client DLL doesn't run there at all); the weapon actually changing after the menu click in a scripted
+  run (the client's switch command queues behind the script's own `wait`s; the path is unchanged);
+  carrying in a real play session, through doors, or while standing on the carried prop.
+
 ### Physics plan: done (2026-11-14). Step 7 and two extras, branch `phys-7`
 
 **The plan is built, steps 1-7, each on its own branch from the one before (`phys-1` ... `phys-7`, on

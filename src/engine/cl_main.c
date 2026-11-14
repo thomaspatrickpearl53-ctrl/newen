@@ -1143,8 +1143,33 @@ void CL_DrawViewModel(void)
 
 // ---------------------------------------------------------------- per frame
 
+// The client's HUD sees the buttons before the game does: its weapon menu takes the attack click that
+// picks a weapon (and lets go of the button), so the click must not reach CL_CreateMove first and fire
+// the weapon in hand. Once a frame; the HUD drawing calls it too when no command was made (paused).
+static double clientdata_time = -1;
+
+static void UpdateClientData(void)
+{
+	edict_t *pl = SV_LocalPlayer();
+	if (!pl || !sv.active || !map_ready || clientdata_time == host_realtime)
+		return;
+	clientdata_time = host_realtime;
+	client_data_t cd;
+	memset(&cd, 0, sizeof(cd));
+	VectorCopy(pl->v.origin, cd.origin);
+	VectorCopy(cl_viewangles, cd.viewangles);
+	cd.iWeaponBits = pl->v.weapons;
+	cd.fov = pl->v.fov ? pl->v.fov : Cvar_VariableValue("default_fov");
+	int changed = 0;
+	CLIENT_CALL("HUD_UpdateClientData", changed = cl.HUD_UpdateClientData(&cd, (float)cl_time));
+	if (changed)
+		VectorCopy(cd.viewangles, cl_viewangles);
+}
+
 void CL_CreateCmd(float frametime, usercmd_t *cmd)
 {
+	if (client_ok && cl.CL_CreateMove && cl.HUD_UpdateClientData)
+		UpdateClientData();
 	if (!client_ok || !cl.CL_CreateMove) {
 		CL_CreateCmdEngine(frametime, cmd);
 		last_cmd = *cmd;
@@ -1189,19 +1214,7 @@ void CL_DrawHUD(void)
 	if (sv.active && map_ready)
 		CL_DrawScreenFade();
 	if (sv.active && map_ready && cl_drawhud->value) {
-		edict_t *pl = SV_LocalPlayer();
-		if (pl) {
-			client_data_t cd;
-			memset(&cd, 0, sizeof(cd));
-			VectorCopy(pl->v.origin, cd.origin);
-			VectorCopy(cl_viewangles, cd.viewangles);
-			cd.iWeaponBits = pl->v.weapons;
-			cd.fov = pl->v.fov ? pl->v.fov : Cvar_VariableValue("default_fov");
-			int changed = 0;
-			CLIENT_CALL("HUD_UpdateClientData", changed = cl.HUD_UpdateClientData(&cd, (float)cl_time));
-			if (changed)
-				VectorCopy(cd.viewangles, cl_viewangles);
-		}
+		UpdateClientData();
 		CLIENT_CALL("HUD_Redraw", cl.HUD_Redraw((float)cl_time, 0));
 		if (scissor_on)
 			SPR_DisableScissor();

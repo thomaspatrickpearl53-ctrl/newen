@@ -706,6 +706,11 @@ extern "C" void Phys_GetSpin(physworld_t *w, physbody_t b, float spin[3])
 		spin[i] = a[i] / DEG;
 }
 
+extern "C" void Phys_SetSpin(physworld_t *w, physbody_t b, const float spin[3])
+{
+	Bodies(w).SetAngularVelocity(BodyID(b), Vec3(spin[0] * DEG, spin[1] * DEG, spin[2] * DEG));
+}
+
 extern "C" void Phys_Wake(physworld_t *w, physbody_t b)
 {
 	Bodies(w).ActivateBody(BodyID(b));

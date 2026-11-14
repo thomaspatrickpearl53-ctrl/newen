@@ -293,6 +293,9 @@ only moves what it owns. A map that never uses physics never pays for it.
   ones don't move) and shoot them. Maps can place them: classname `prop_physics` with the keys `model`,
   `mass` (kilograms) and `health` (it breaks after that much damage). To Half-Life's own collision a prop
   is an upright box round its shape. They are saved with the game.
+- **Carrying props:** press use (E) on a prop of 60 kg or less to pick it up; it is held in front of you
+  and follows your view. Use again puts it down; attack throws it (a thrown crate is fast enough to hurt
+  monsters). It is dropped if something holds it back, such as a doorway it doesn't fit through.
 - Explosions (grenades, rockets, `env_explosion`, Lua's `util.BlastDamage`) send props and ragdolls that the
   map doesn't shelter flying; `phys_blastforce` (3) sets how hard (1 = gently, 0 = not at all). Shots push
   props; Lua bullets (`ent:FireBullets`) also push the ragdoll they hit; walking through a corpse shoves it.
@@ -302,7 +305,7 @@ only moves what it owns. A map that never uses physics never pays for it.
   crate at 450 does 60. What it kills goes limp and is carried on. The player isn't hurt by props.
 - Lua physics: `ent:PhysicsInit([mass])` or `ent:PhysicsInitBox(mins, maxs, [mass])` give any entity a
   body; `ent:GetPhysicsObject()` returns it, with `IsValid`, `ApplyForceCenter(vec)`, `ApplyForceOffset(vec,
-  pos)`, `SetVelocity`, `AddVelocity`, `GetVelocity`, `EnableMotion(bool)`, `Wake`, `Sleep`, `IsAsleep`,
+  pos)`, `SetVelocity`, `AddVelocity`, `GetVelocity`, `GetAngleVelocity`, `SetAngleVelocity`, `EnableMotion(bool)`, `Wake`, `Sleep`, `IsAsleep`,
   `GetMass`, `SetMass`, `GetPos`, `GetMassCenter`, `GetEntity`, `LastBlastTime` (when an explosion last threw it,
   as `ServerTime()`, or -1). `ent:PhysicsDestroy()` removes it.
   `ent:BecomeRagdoll()` makes a living Half-Life 2 character go limp. The hook `PhysicsCollide(ent, data)`

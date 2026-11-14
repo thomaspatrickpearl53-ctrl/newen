@@ -75,6 +75,11 @@ void CL_PlaybackEvent(int flags, const edict_t *invoker, unsigned short index, f
 		VectorCopy(origin, a.origin);
 	if (!IsNull(angles))
 		VectorCopy(angles, a.angles);
+	// Some weapons (the tau cannon, the egon) pass the player entity's own angles. Those are the model's:
+	// it leans a third as far as the player looks, the other way up. GoldSrc turns them back into the
+	// view; here the view itself is at hand.
+	if (invoker && !IsNull(angles) && a.entindex >= 1 && a.entindex <= sv.maxclients && VectorCompare(angles, invoker->v.angles))
+		VectorCopy(invoker->v.v_angle, a.angles);
 	a.fparam1 = f1;
 	a.fparam2 = f2;
 	a.iparam1 = i1;

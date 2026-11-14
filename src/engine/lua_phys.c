@@ -470,6 +470,27 @@ static int o_GetVelocity(lua_State *L)
 	return 1;
 }
 
+// how fast it turns: degrees a second about the world's x, y and z axes
+static int o_GetAngleVelocity(lua_State *L)
+{
+	prop_t *p = CheckObj(L, NULL);
+	vec3_t v = { 0, 0, 0 };
+	if (p->motion)
+		Phys_GetSpin(W, p->body, v);
+	LuaG_PushVector(L, v);
+	return 1;
+}
+
+static int o_SetAngleVelocity(lua_State *L)
+{
+	prop_t *p = CheckObj(L, NULL);
+	if (p->motion) {
+		Phys_SetSpin(W, p->body, LuaG_CheckVec(L, 2));
+		Phys_Wake(W, p->body);
+	}
+	return 0;
+}
+
 static int o_EnableMotion(lua_State *L)
 {
 	prop_t *p = CheckObj(L, NULL);
@@ -637,7 +658,8 @@ void LuaP_Open(lua_State *L)
 	static const luaL_Reg obj[] = {
 		{ "IsValid", o_IsValid }, { "GetEntity", o_GetEntity }, { "ApplyForceCenter", o_ApplyForceCenter },
 		{ "ApplyForceOffset", o_ApplyForceOffset }, { "SetVelocity", o_SetVelocity }, { "AddVelocity", o_AddVelocity },
-		{ "GetVelocity", o_GetVelocity }, { "EnableMotion", o_EnableMotion }, { "IsMotionEnabled", o_IsMotionEnabled },
+		{ "GetVelocity", o_GetVelocity }, { "GetAngleVelocity", o_GetAngleVelocity },
+		{ "SetAngleVelocity", o_SetAngleVelocity }, { "EnableMotion", o_EnableMotion }, { "IsMotionEnabled", o_IsMotionEnabled },
 		{ "Wake", o_Wake }, { "Sleep", o_Sleep }, { "IsAsleep", o_IsAsleep }, { "GetMass", o_GetMass },
 		{ "SetMass", o_SetMass }, { "GetPos", o_GetPos }, { "GetMassCenter", o_GetMassCenter },
 		{ "LastBlastTime", o_LastBlastTime }, { NULL, NULL }

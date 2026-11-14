@@ -81,6 +81,7 @@ void         Phys_GetBounds(physworld_t *w, physbody_t b, float mins[3], float m
 void         Phys_GetMassCenter(physworld_t *w, physbody_t b, float pos[3]);
 void         Phys_AddImpulseAt(physworld_t *w, physbody_t b, const float impulse[3], const float pos[3]);   // spins it too
 void         Phys_GetSpin(physworld_t *w, physbody_t b, float spin[3]);   // degrees/s about the world's axes
+void         Phys_SetSpin(physworld_t *w, physbody_t b, const float spin[3]);
 void         Phys_Wake(physworld_t *w, physbody_t b);
 void         Phys_EnableMotion(physworld_t *w, physbody_t b, int on);     // off: it stays where it is, solid
 float        Phys_GetMass(physworld_t *w, physbody_t b);
