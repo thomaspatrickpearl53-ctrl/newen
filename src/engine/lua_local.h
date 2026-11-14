@@ -34,9 +34,12 @@ qboolean        LuaE_PushTable(lua_State *L, struct edict_s *e);   // false (not
 void            LuaE_Draw(void);           // ENT:Draw, inside PostDrawOpaque
 void            LuaE_StateStopping(void);  // lua_reload: the tables are kept...
 void            LuaE_StateStarted(void);   // ...and put back after entities/*.lua ran
+unsigned char  *LuaE_PackTable(lua_State *L, int idx, int *size);   // one table in the save format
+qboolean        LuaE_UnpackTable(lua_State *L, const unsigned char *data, int size);   // pushes it; false if damaged
 // lua_weapons.c: weapons, game.AddAmmoType, the player's Lua weapons and ammo; opened by LuaG_Open
 void            LuaW_Open(lua_State *L);
-void            LuaW_StateStarted(void);   // after weapons/*.lua ran
+void            LuaW_StateStopping(void);  // lua_reload: the weapons' tables are kept...
+void            LuaW_StateStarted(void);   // ...and put back after weapons/*.lua ran
 qboolean        LuaW_Give(lua_State *L, struct edict_s *pl, const char *cls);   // pushes the weapon; false if cls isn't a Lua weapon
 // lua_phys.c: physics objects, ent:PhysicsInit, the physics table; opened by LuaG_Open
 void            LuaP_Open(lua_State *L);

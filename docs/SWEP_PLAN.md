@@ -1,7 +1,7 @@
 # Lua weapons (SWEPs) and scripted entities: plan
 
-Design written 2026-11-12 from newen at commit c9a8232. **Steps 5 (2026-11-13, branch `swep-5`), 1, 2 and 3
-(2026-11-14, branches `swep-1` to `swep-3`) are built; see "Built" at the end.** The rest isn't. Implementation starts
+Design written 2026-11-12 from newen at commit c9a8232. **Steps 5 (2026-11-13, branch `swep-5`) and 1 to 4
+(2026-11-14, branches `swep-1` to `swep-4`) are built; see "Built" at the end.** The rest isn't. Implementation starts
 only when the owner says "go". It needs `docs/LUA_API_PLAN.md` first (damage, sound, effects), and is the
 second of the three plans the owner asked for together.
 
@@ -157,3 +157,8 @@ can't be checked by a harmless probe. Recommended only if A shows a problem it c
   the map's clock though they are set with `CurTime()`; `CanPrimaryAttack`, `DefaultReload` and a default
   `Reload` were added as Garry's Mod has them. The check ran on c2a5 against a soldier the test script
   spawned in front of the player, because the map's own soldiers there are out of sight.
+- **Step 4 (2026-11-14, `swep-4`)**: in `lua_weapons.c`, `sv_save.c` (save files are version 3; older ones
+  load). As planned. Details: one block holds ammo, weapons, clips, the weapons' tables and the class in
+  hand, used for saved games, level changes and `lua_reload` alike; the weapon that was in hand is taken in
+  hand again at the player's first input; `OnRestore` and `OnReloaded` were added as scripted entities have
+  them. Next-fire times and a reload in progress aren't kept.

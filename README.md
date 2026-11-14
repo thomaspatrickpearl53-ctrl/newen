@@ -459,7 +459,8 @@ A file `lua/weapons/<class>.lua` fills in a global `SWEP` table and becomes the 
 call `weapons.Register(SWEP, class)` yourself; `weapons.Get(class)`, `weapons.GetList()`). Give it with
 `ply:Give(class)`, or `sv_cheats 1` and `give <class>` in the console. **So far a Lua weapon shows in
 Half-Life's weapon menu with its icon, clip and ammo, can be taken in hand and put away like any other
-weapon, and fires real bullets; saved games and level changes come next** (`docs/SWEP_PLAN.md`).
+weapon, fires real bullets, and is kept by saved games and level changes; weapon pickups for maps come
+next** (`docs/SWEP_PLAN.md`).
 
 - Fields, with Garry's Mod's names: `SWEP.PrintName`, `SWEP.Slot` (the menu column, from 0) and
   `SWEP.SlotPos` (the place in it; a taken place moves the weapon to the next free one),
@@ -497,9 +498,12 @@ weapon, and fires real bullets; saved games and level changes come next** (`docs
   Half-Life's), `ply:SelectWeapon(class)` (either kind).
 - Icons: ship `sprites/<class>.txt` in the same format as Half-Life's `sprites/weapon_*.txt`, or get
   newen's generic "LUA" icon.
-- Limits: the menu has room for 11 different Lua weapons per session beside Half-Life's 14. A new map,
-  a level change, a loaded game or dying leaves the player without Lua weapons for now. `lua_reload` keeps
-  the weapons and their ammo but empties the weapons' own tables.
+- Saved games, level changes and `lua_reload` keep the player's Lua weapons: clips, ammo, which one was in
+  hand, and the plain data in each weapon's own table (numbers, strings, booleans, vectors, angles, tables
+  of those; functions aren't kept, and entities other than `Owner` can't be relied on). `SWEP:OnRestore()`
+  runs after a load or level change, `SWEP:OnReloaded()` after `lua_reload`. A new game or dying takes the
+  Lua weapons away.
+- Limits: the menu has room for 11 different Lua weapons per session beside Half-Life's 14.
 - `lua_weapons` lists the Lua weapons and ammo types in use. Example: `base/lua/weapons/weapon_lua_pistol.lua`.
 
 ## Roadmap

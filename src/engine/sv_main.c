@@ -479,6 +479,7 @@ qboolean SV_SpawnServer(const char *mapname, const char *oldmap, const char *lan
 		e->free = i > 0;
 	}
 	sv.num_edicts = sv.maxclients + 1;
+	LuaW_MapChange(oldmap != NULL, loadgame);   // before the start clears the player's Lua weapons
 	LuaG_ServerStarted();
 
 	memset(&gGlobals, 0, sizeof(gGlobals));
@@ -540,6 +541,7 @@ qboolean SV_SpawnServer(const char *mapname, const char *oldmap, const char *lan
 		SV_Physics();
 	}
 	ConnectLocalClient(player);
+	LuaW_MapStarted();
 	SV_GameObjProbe();
 	sv.loading = false;
 	LuaG_CheckNewEntities();

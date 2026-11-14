@@ -402,7 +402,7 @@ qboolean SV_RestoreTransition(const char *oldmap, const char *landmark)
 // ---------------------------------------------------------------- saved games
 
 #define SAVE_MAGIC   "NEWENSAV"
-#define SAVE_VERSION 2   // 2: the Lua entities' data per level
+#define SAVE_VERSION 3   // 2: the Lua entities' data per level; 3: the player's Lua weapons and ammo
 
 static void WriteInt(FILE *f, int v) { fwrite(&v, 4, 1, f); }
 static void WriteBytes(FILE *f, const void *p, int n) { WriteInt(f, n); if (n > 0) fwrite(p, 1, (size_t)n, f); }
@@ -594,6 +594,10 @@ static qboolean SaveGame(const char *name, qboolean quiet)
 			WriteString(f, ls->styles[k]);
 		WriteBytes(f, ls->luadata, ls->luasize);
 	}
+	int wsize = 0;
+	unsigned char *wdata = LuaW_SaveData(&wsize);
+	WriteBytes(f, wdata, wsize);
+	Mem_Free(wdata);
 	fclose(f);
 	FreeSaveData(gd);
 	Q_strncpy(last_save, name, sizeof(last_save));
@@ -677,6 +681,10 @@ static qboolean LoadGame(const char *name)
 			}
 		}
 	}
+	unsigned char *wdata = NULL;
+	int wsize = 0;
+	if (version >= 3 && !rd.bad)
+		wdata = ReadBytes(r, &wsize);
 	Mem_Free(file);
 	qboolean found = false;
 	for (int i = 0; i < count; i++)
@@ -687,6 +695,7 @@ static qboolean LoadGame(const char *name)
 			FreeState(&loaded[i]);
 		Mem_Free(loaded);
 		Mem_Free(gdata);
+		Mem_Free(wdata);
 		FreeTokens(gtokens, gcount);
 		return false;
 	}
@@ -702,6 +711,8 @@ static qboolean LoadGame(const char *name)
 	global_tokencount = gcount;
 	Cvar_SetValue("skill", skill);
 	Q_strncpy(last_save, name, sizeof(last_save));
+	LuaW_SetPending(wdata, wsize);   // the player's Lua weapons, given back once the map is up
+	Mem_Free(wdata);
 	R_LoadMap(map, NULL, NULL, true);
 	return true;
 }

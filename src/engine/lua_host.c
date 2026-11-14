@@ -953,6 +953,7 @@ static void StopState(void)
 		return;
 	RunHook("ShutDown", 0, 0);
 	LuaE_StateStopping();
+	LuaW_StateStopping();
 	Cmd_RemoveFlagged(CMD_LUA);
 	lua_close(L);
 	L = NULL;

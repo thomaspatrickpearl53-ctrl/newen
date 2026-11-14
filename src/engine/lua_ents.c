@@ -710,6 +710,34 @@ static void Restore(const unsigned char *data, int size, edict_t **byindex, int 
 	}
 }
 
+// One table in the save format, for Lua weapons (lua_weapons.c). Entities in it are kept by edict number.
+unsigned char *LuaE_PackTable(lua_State *L, int idx, int *size)
+{
+	idx = lua_absindex(L, idx);
+	lua_newtable(L);
+	lua_setfield(L, LUA_REGISTRYINDEX, "newen.saving");
+	wbuf_t b = { NULL, 0, 0 };
+	PutTable(L, &b, idx, 0);
+	lua_pushnil(L);
+	lua_setfield(L, LUA_REGISTRYINDEX, "newen.saving");
+	*size = b.size;
+	return b.data;
+}
+
+// pushes the table; false (nothing pushed) if the data is damaged
+qboolean LuaE_UnpackTable(lua_State *L, const unsigned char *data, int size)
+{
+	int top = lua_gettop(L);
+	rbuf_t r = { data, data + size, false, NULL, 0 };
+	qboolean end;
+	GetValue(L, &r, &end, 0);
+	if (r.bad || lua_gettop(L) != top + 1 || !lua_istable(L, -1)) {
+		lua_settop(L, top);
+		return false;
+	}
+	return true;
+}
+
 void LuaE_RestoreData(const unsigned char *data, int size, edict_t **byindex, int count)
 {
 	Restore(data, size, byindex, count, "OnRestore");

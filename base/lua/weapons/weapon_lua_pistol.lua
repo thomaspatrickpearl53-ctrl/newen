@@ -2,8 +2,8 @@
 -- Get it with "sv_cheats 1; give weapon_lua_pistol" in the console, or from Lua:
 --   player.GetByID(1):Give("weapon_lua_pistol")
 --
--- It appears in the weapon menu (slot 2, under the pistol and the .357), fires, kicks and reloads.
--- It doesn't survive a level change or a saved game yet (docs/SWEP_PLAN.md, step 4).
+-- It appears in the weapon menu (slot 2, under the pistol and the .357), fires, kicks and reloads, and
+-- stays with you through level changes and saved games.
 
 game.AddAmmoType{ name = "lua_pistol", max = 120 }
 
@@ -22,7 +22,7 @@ SWEP.Primary.Ammo        = "lua_pistol"
 SWEP.Secondary.Ammo = "none"
 
 function SWEP:Initialize()
-	self.Shots = 0   -- plain values in the weapon's own table will be saved with the game (step 4)
+	self.Shots = 0   -- plain values in the weapon's own table are saved with the game
 end
 
 -- called while the fire button is held and the weapon is ready (once per press: Automatic is false)

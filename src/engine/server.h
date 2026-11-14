@@ -208,6 +208,10 @@ const char *LuaW_ViewModel(void);                     // the Lua weapon's view m
 void        LuaW_PlayerDied(edict_t *pl);
 void        LuaW_Frame(void);
 void        LuaW_ServerStarted(void);
+void        LuaW_MapChange(qboolean levelchange, qboolean loadgame);   // before a map starts: what the player takes along
+void        LuaW_MapStarted(void);                    // the player is in: they get it back
+unsigned char *LuaW_SaveData(int *size);              // the player's Lua weapons and ammo; NULL if none
+void        LuaW_SetPending(const unsigned char *data, int size);   // from a saved game, for the map about to start
 
 // sv_pmove.c
 void        SV_InitPlayerMove(void);                      // after the game DLL loads

@@ -19,7 +19,10 @@
 // while their buttons are held and its own next-fire times allow, as Garry's Mod calls them. ShootBullet
 // fires through the engine's bullets (sv_damage.c), which hurt through the game's own damage rules.
 //
-// So far (SWEP plan steps 1 to 3): everything but saved games and level changes.
+// Saved games and level changes (step 4): the player's Lua weapons, their clips, their own tables' plain
+// data, the ammo and which weapon was in hand are packed into one block (LuaW_SaveData). A saved game
+// carries it; a level change packs it before the new map starts and unpacks it once the player is in;
+// lua_reload does the same around the new Lua state.
 //
 // The weapon a player holds is a Lua table of its own (one per class, as the game has one weapon of a
 // kind per player); its metatable leads to the class's SWEP table, then SWEP.Base's, then the methods
@@ -80,13 +83,25 @@ static int          last_game_bits;
 #define WEAPON_BUTTONS (IN_ATTACK | IN_ATTACK2 | IN_RELOAD)
 static int      active = -1;
 static int      previous = -1;      // what "lastinv" goes to: a Lua weapon, or -1 for the game's own
-static int      game_vm;            // the game's view model (a string number) when it went to sleep, or last seen awake
+static char     game_vm[128];       // the game's view model when it went to sleep, or last seen awake (by name:
+                                    // a loaded game brings the same model back under another string number)
+static int      resume = -1;        // a weapon to take in hand again once the player's first input comes
 static int      game_cur[3];        // the game's last CurWeapon for a weapon in hand: state, number, clip
 static qboolean game_cur_known;
 static int      game_anim_body;     // the body of the game's last view-model animation
 static int      held_buttons;       // the weapon buttons taken out of the input this frame
 static qboolean holster_asked;      // Holster already ran for the command the game is working on
 static int      last_buttons;       // last frame's, to tell a press from a hold
+
+static qboolean GameVmChanged(const edict_t *pl)
+{
+	return strcmp(game_vm, pl->v.viewmodel ? SV_String(pl->v.viewmodel) : "") != 0;
+}
+
+static void RememberGameVm(const edict_t *pl)
+{
+	Q_strncpy(game_vm, pl->v.viewmodel ? SV_String(pl->v.viewmodel) : "", sizeof(game_vm));
+}
 
 static ammo_t *FindAmmo(const char *name)
 {
@@ -486,7 +501,7 @@ static void Wake(edict_t *pl, qboolean replay)
 	weps[active].reload_end = 0;   // a reload that wasn't finished is lost
 	active = -1;
 	held_buttons = 0;
-	game_vm = pl->v.viewmodel;
+	RememberGameVm(pl);
 	if (!replay)
 		return;
 	if (game_cur_known) {
@@ -503,7 +518,7 @@ static void Wake(edict_t *pl, qboolean replay)
 // player's command made it switch): its view model isn't the sleeping one's any more
 static void GameSwitched(edict_t *pl)
 {
-	if (active < 0 || pl->v.viewmodel == game_vm)
+	if (active < 0 || !GameVmChanged(pl))
 		return;
 	lua_State *L = Lua_GetState();
 	lweapon_t *w = &weps[active];
@@ -526,7 +541,7 @@ static qboolean Select(lua_State *L, edict_t *pl, int i)
 		weps[active].reload_end = 0;
 		previous = active;
 	} else {
-		game_vm = pl->v.viewmodel;   // the game's weapon goes to sleep
+		RememberGameVm(pl);   // the game's weapon goes to sleep
 		previous = -1;
 	}
 	active = i;
@@ -554,9 +569,18 @@ void LuaW_PlayerCmd(edict_t *pl, usercmd_t *cmd)
 {
 	if (pl != SV_LocalPlayer())
 		return;
+	if (resume >= 0) {
+		// after a loaded game or a level change: the game has its own weapon out again by now, and the
+		// Lua weapon that was in hand takes its place as when it was first chosen
+		lua_State *L = Lua_GetState();
+		int i = resume;
+		resume = -1;
+		if (L && active < 0 && i < weps_count && weps[i].owned && pl->v.health > 0)
+			Select(L, pl, i);
+	}
 	if (active < 0) {
-		if (pl->v.viewmodel != game_vm) {
-			game_vm = pl->v.viewmodel;
+		if (GameVmChanged(pl)) {
+			RememberGameVm(pl);
 			previous = -1;   // the game moved on to another weapon of its own
 		}
 		return;
@@ -811,7 +835,7 @@ void LuaW_GameCommandDone(edict_t *pl)
 	holster_asked = false;
 	if (active < 0)
 		return;
-	if (pl->v.viewmodel != game_vm) {
+	if (GameVmChanged(pl)) {
 		GameSwitched(pl);
 		return;
 	}
@@ -895,9 +919,253 @@ void LuaW_ServerStarted(void)
 	last_game_bits = 0;
 	active = previous = -1;
 	held_buttons = 0;
-	game_vm = 0;
+	game_vm[0] = 0;
+	resume = -1;
 	game_cur_known = false;
 	ResendAll();
+}
+
+// ---------------------------------------------------------------- saved games, level changes, lua_reload
+
+#define WSAVE_MAGIC 0x3157454e   // "NEW1"
+
+typedef struct { unsigned char *data; int size, cap; } wbuf_t;
+
+static void Put(wbuf_t *b, const void *p, int n)
+{
+	if (b->size + n > b->cap) {
+		b->cap = b->cap ? b->cap * 2 : 256;
+		while (b->cap < b->size + n)
+			b->cap *= 2;
+		b->data = Mem_Realloc(b->data, (size_t)b->cap);
+	}
+	if (n > 0)
+		memcpy(b->data + b->size, p, (size_t)n);
+	b->size += n;
+}
+
+static void PutInt(wbuf_t *b, int v) { Put(b, &v, 4); }
+static void PutStr(wbuf_t *b, const char *s) { int n = (int)strlen(s); PutInt(b, n); Put(b, s, n); }
+
+typedef struct { const unsigned char *p, *end; qboolean bad; } rbuf_t;
+
+static int GetInt(rbuf_t *r)
+{
+	int v = 0;
+	if (r->bad || r->end - r->p < 4) {
+		r->bad = true;
+		return 0;
+	}
+	memcpy(&v, r->p, 4);
+	r->p += 4;
+	return v;
+}
+
+// the next n bytes, or NULL
+static const unsigned char *GetBytes(rbuf_t *r, int n)
+{
+	if (r->bad || n < 0 || r->end - r->p < n) {
+		r->bad = true;
+		return NULL;
+	}
+	const unsigned char *p = r->p;
+	r->p += n;
+	return p;
+}
+
+static void GetStr(rbuf_t *r, char *out, size_t size)
+{
+	int n = GetInt(r);
+	const unsigned char *p = GetBytes(r, n);
+	out[0] = 0;
+	if (!p)
+		return;
+	size_t len = (size_t)n < size - 1 ? (size_t)n : size - 1;
+	memcpy(out, p, len);
+	out[len] = 0;
+}
+
+static unsigned char *pending;   // what the player gets back when the map that is starting is up
+static int            pending_size;
+
+// The player's Lua weapons and ammo as one block: for a saved game, a level change, lua_reload. NULL if
+// there's nothing to keep. The caller frees it.
+unsigned char *LuaW_SaveData(int *size)
+{
+	*size = 0;
+	if (pending) {
+		// asked while a map is starting (the autosave of a level change): what is on its way is the state
+		unsigned char *copy = Mem_Alloc((size_t)pending_size);
+		memcpy(copy, pending, (size_t)pending_size);
+		*size = pending_size;
+		return copy;
+	}
+	lua_State *L = Lua_GetState();
+	int held = 0, counts = 0;
+	for (int i = 0; i < weps_count; i++)
+		held += weps[i].owned;
+	for (int i = 0; i < ammo_count; i++)
+		counts += ammo[i].count > 0;
+	if (!L || (!held && !counts))
+		return NULL;
+	wbuf_t b = { NULL, 0, 0 };
+	PutInt(&b, WSAVE_MAGIC);
+	PutInt(&b, counts);
+	for (int i = 0; i < ammo_count; i++)
+		if (ammo[i].count > 0) {
+			PutStr(&b, ammo[i].name);
+			PutInt(&b, ammo[i].count);
+		}
+	PutInt(&b, held);
+	for (int i = 0; i < weps_count; i++) {
+		lweapon_t *w = &weps[i];
+		if (!w->owned)
+			continue;
+		PutStr(&b, w->cls);
+		PutInt(&b, w->clip1);
+		PutInt(&b, w->clip2);
+		int top = lua_gettop(L), tsize = 0;
+		PushWeapon(L, w);
+		unsigned char *t = LuaE_PackTable(L, -1, &tsize);
+		lua_settop(L, top);
+		PutInt(&b, tsize);
+		Put(&b, t, tsize);
+		Mem_Free(t);
+	}
+	int hand = active >= 0 ? active : resume;
+	PutStr(&b, hand >= 0 && weps[hand].owned ? weps[hand].cls : "");
+	*size = b.size;
+	return b.data;
+}
+
+// copies the saved table's fields into the weapon's own table (Owner is set anew: the saved one is an
+// edict number)
+static void FillTable(lua_State *L, lweapon_t *w, const unsigned char *t, int tsize)
+{
+	int top = lua_gettop(L);
+	PushWeapon(L, w);
+	if (t && tsize > 0 && LuaE_UnpackTable(L, t, tsize)) {
+		lua_pushnil(L);
+		while (lua_next(L, -2)) {
+			lua_pushvalue(L, -2);
+			lua_insert(L, -2);
+			lua_rawset(L, top + 1);
+		}
+	}
+	LuaG_PushEntity(L, SV_LocalPlayer());
+	lua_setfield(L, top + 1, "Owner");
+	lua_settop(L, top);
+}
+
+// Gives the block back. everything: the weapons, clips and ammo too (a saved game, a level change), then
+// OnRestore. Otherwise only the tables of the weapons the player still holds (lua_reload), then OnReloaded.
+static void Restore(const unsigned char *data, int size, qboolean everything)
+{
+	lua_State *L = Lua_GetState();
+	if (!L || !data || size < 12)
+		return;
+	rbuf_t r = { data, data + size, false };
+	if (GetInt(&r) != WSAVE_MAGIC)
+		return;
+	char name[128];
+	int n = GetInt(&r);
+	for (int i = 0; i < n && !r.bad; i++) {
+		GetStr(&r, name, sizeof(name));
+		int count = GetInt(&r);
+		ammo_t *a = FindAmmo(name);
+		if (everything && a && !r.bad) {
+			a->count = count < 0 ? 0 : count > a->max ? a->max : count;
+			a->sent = -1;
+		} else if (everything && !r.bad) {
+			Con_Warnf("[Lua] the saved ammo type %s isn't there any more; %d lost\n", name, count);
+		}
+	}
+	n = GetInt(&r);
+	for (int i = 0; i < n && !r.bad; i++) {
+		GetStr(&r, name, sizeof(name));
+		int clip1 = GetInt(&r), clip2 = GetInt(&r), tsize = GetInt(&r);
+		const unsigned char *t = GetBytes(&r, tsize);
+		if (r.bad)
+			break;
+		lweapon_t *w = FindWeapon(name);
+		if (everything) {
+			if (!IsRegistered(L, name)) {
+				Con_Warnf("[Lua] the saved weapon %s isn't there any more\n", name);
+				continue;
+			}
+			if (!w) {
+				weps = Mem_Realloc(weps, sizeof(*weps) * (size_t)(weps_count + 1));
+				w = &weps[weps_count++];
+				memset(w, 0, sizeof(*w));
+				w->cls = Mem_Strdup(name);
+			}
+			w->owned = true;
+			w->listed = false;
+			w->sent_clip = -2;
+			w->popup = false;
+			w->clip1 = clip1;
+			w->clip2 = clip2;
+			w->reload_end = 0;
+		} else if (!w || !w->owned) {
+			continue;
+		}
+		FillTable(L, w, t, tsize);
+		CallWeapon(L, w, everything ? "OnRestore" : "OnReloaded");
+	}
+	GetStr(&r, name, sizeof(name));
+	if (everything && !r.bad && name[0]) {
+		lweapon_t *w = FindWeapon(name);
+		if (w && w->owned)
+			resume = (int)(w - weps);
+	}
+	if (r.bad)
+		Con_Warnf("Lua weapons: saved data is damaged; some of it is lost\n");
+}
+
+// a saved game's block, for the map it is about to start
+void LuaW_SetPending(const unsigned char *data, int size)
+{
+	Mem_Free(pending);
+	pending = NULL;
+	pending_size = 0;
+	if (data && size > 0) {
+		pending = Mem_Alloc((size_t)size);
+		memcpy(pending, data, (size_t)size);
+		pending_size = size;
+	}
+}
+
+// A map is about to start. A level change takes the player's Lua weapons along as they are now; a loaded
+// game brings its own (LuaW_SetPending); a new game starts without any.
+void LuaW_MapChange(qboolean levelchange, qboolean loadgame)
+{
+	if (loadgame)
+		return;
+	LuaW_SetPending(NULL, 0);
+	if (levelchange)
+		pending = LuaW_SaveData(&pending_size);
+}
+
+// the player is in the new map
+void LuaW_MapStarted(void)
+{
+	if (!pending)
+		return;
+	unsigned char *data = pending;
+	int size = pending_size;
+	pending = NULL;
+	pending_size = 0;
+	Restore(data, size, true);
+	Mem_Free(data);
+}
+
+static unsigned char *reload_data;
+static int            reload_size;
+
+void LuaW_StateStopping(void)
+{
+	Mem_Free(reload_data);
+	reload_data = LuaW_SaveData(&reload_size);
 }
 
 // ---------------------------------------------------------------- Lua: weapons
@@ -1519,8 +1787,7 @@ void LuaW_StateStarted(void)
 		lua_pop(L, 1);
 	}
 	lua_settop(L, top);
-	// lua_reload: the player keeps their weapons (clip and ammo are here), unless the class is gone.
-	// What was in the weapons' own tables is lost.
+	// lua_reload: the player keeps their weapons (clip and ammo are here), unless the class is gone
 	for (int i = 0; i < weps_count; i++) {
 		if (weps[i].owned && !IsRegistered(L, weps[i].cls)) {
 			edict_t *pl = SV_LocalPlayer();
@@ -1532,6 +1799,11 @@ void LuaW_StateStarted(void)
 		}
 		weps[i].listed = false;
 	}
+	// what was in the weapons' own tables comes back
+	Restore(reload_data, reload_size, false);
+	Mem_Free(reload_data);
+	reload_data = NULL;
+	reload_size = 0;
 }
 
 void LuaW_Open(lua_State *L)
