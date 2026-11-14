@@ -3,6 +3,7 @@
 // Most functions are complete. Sound, networking (messages, deltas, events) and save/restore arrive
 // with the client in later steps; until then they are accepted and do nothing.
 #include "server.h"
+#include "phys.h"
 #include "lua_local.h"
 #include <sys/stat.h>
 #ifndef _WIN32
@@ -764,6 +765,15 @@ static void PF_MessageEnd(void)
 			memcpy(&bits, msg_buf + 2, sizeof(bits));
 			LuaG_QueuePlayerHurt(pl, bits);
 		}
+	}
+	// the game's explosions (grenades, rockets, env_explosion) throw props and ragdolls. The message has
+	// the fireball's size, which the game makes from the damage: (damage - 50) x 0.6; its blast reaches
+	// 2.5 units per point of damage.
+	if (msg_type == SVC_TEMPENTITY && msg_len >= 16 && msg_buf[0] == 3 /* TE_EXPLOSION */) {
+		vec3_t pos;
+		memcpy(pos, msg_buf + 1, sizeof(pos));
+		float damage = (float)msg_buf[15] / 0.6f + 50.0f;
+		Phys_ServerExplosion(pos, damage * 2.5f, damage);
 	}
 	if (deliver)
 		CL_QueueMessage(msg_type, msg_buf, msg_len);

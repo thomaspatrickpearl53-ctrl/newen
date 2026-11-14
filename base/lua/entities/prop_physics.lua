@@ -44,7 +44,9 @@ function ENT:OnTakeDamage(info)
 	local phys = self:GetPhysicsObject()
 	local attacker = info:GetAttacker()
 	if not IsValid(attacker) then attacker = LocalPlayer() end
-	if phys:IsValid() and IsValid(attacker) then
+	-- an explosion has thrown it already, the right way
+	local blast = phys:IsValid() and ServerTime() - phys:LastBlastTime() < 0.05
+	if phys:IsValid() and IsValid(attacker) and not blast then
 		local from = attacker:IsPlayer() and attacker:EyePos() or attacker:WorldSpaceCenter()
 		local hit = phys:GetMassCenter()
 		local dir = (hit - from):GetNormalized()

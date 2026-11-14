@@ -374,6 +374,7 @@ void Prop_Init(void);
 void Prop_BeforeStep(float dt);     // players push the props they walk into
 void Prop_AfterStep(void);          // edicts follow their bodies; Lua's PhysicsCollide
 void Prop_Clear(void);
+void Prop_Blasted(const float pos[3], float radius);   // an explosion pushed the props near pos
 struct edict_s;
 void Prop_EdictFreed(struct edict_s *e);
 void Prop_EdictMoved(struct edict_s *e);   // its origin or angles were set by hand: the body follows

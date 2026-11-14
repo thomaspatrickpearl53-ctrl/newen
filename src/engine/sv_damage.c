@@ -5,6 +5,7 @@
 // (TakeDamage): the trace (with hitboxes), the hit group's multiplier from the game's own skill cvars, blood,
 // decals and impact effects. Armor, god mode, pain, death and gibs are the game's, through TakeDamage.
 #include "cl_local.h"   // the effect functions: newen's game and client share one process
+#include "phys.h"
 
 static const vec3_t zero = { 0, 0, 0 };
 
@@ -90,6 +91,7 @@ void SV_FireBullets(const svbullets_t *b, svbullet_hit_t on_hit, void *ctx)
 			R_BulletImpactParticles(tr.endpos);
 			ImpactDecal(tr.endpos, shot, NULL, false, 0);
 		}
+		Phys_ServerBullet(b->src, tr.endpos, damage);   // a ragdoll in the way feels it
 		if (on_hit)
 			on_hit(&tr, damage, ctx);
 		if (hit && hit != sv.edicts && damage > 0)
@@ -130,9 +132,10 @@ int SV_BlastDamage(edict_t *inflictor, edict_t *attacker, const vec3_t pos, floa
 	if (radius <= 0 || damage <= 0)
 		return 0;
 	if (!SV_GameObjReady()) {
-		BlastWithExplosion(pos, damage);
+		BlastWithExplosion(pos, damage);   // its own explosion message pushes the physics
 		return -1;
 	}
+	Phys_ServerExplosion(pos, radius, damage);
 	// the victims first: damage can kill and free entities while the list is walked
 	int count = 0, cap = 0;
 	edict_t **victims = NULL;

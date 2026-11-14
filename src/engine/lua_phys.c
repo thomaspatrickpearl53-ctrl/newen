@@ -22,6 +22,7 @@ typedef struct {
 	physbody_t body;
 	qboolean   motion;          // false: held still (EnableMotion)
 	qboolean   wasawake;
+	double     blasted;         // the map's time when an explosion last threw it; 0 = never
 } prop_t;
 
 static prop_t *props;
@@ -290,6 +291,21 @@ void Prop_AfterStep(void)
 	}
 }
 
+void Prop_Blasted(const float pos[3], float radius)
+{
+	for (int i = 1; i < sv.num_edicts && i < props_cap; i++) {
+		edict_t *e = EDICT_NUM(i);
+		prop_t *p = PropFor(e);
+		if (!p)
+			continue;
+		vec3_t d;
+		for (int k = 0; k < 3; k++)
+			d[k] = (e->v.absmin[k] + e->v.absmax[k]) * 0.5f - pos[k];
+		if (VectorLength(d) < radius + 64)
+			p->blasted = sv.time > 0 ? sv.time : 0.001;
+	}
+}
+
 void Prop_EdictFreed(edict_t *e)
 {
 	if (!props || !sv.edicts)
@@ -469,6 +485,15 @@ static int o_GetMassCenter(lua_State *L)
 	return 1;
 }
 
+// the map's time (ServerTime) when an explosion last threw it, or -1: its damage in the same frame is
+// the blast's, not a shot's
+static int o_LastBlastTime(lua_State *L)
+{
+	prop_t *p = CheckObj(L, NULL);
+	lua_pushnumber(L, p->blasted > 0 ? p->blasted : -1);
+	return 1;
+}
+
 static int o_tostring(lua_State *L)
 {
 	physobj_t *o = luaL_checkudata(L, 1, PHYSOBJ_MT);
@@ -560,7 +585,8 @@ void LuaP_Open(lua_State *L)
 		{ "ApplyForceOffset", o_ApplyForceOffset }, { "SetVelocity", o_SetVelocity }, { "AddVelocity", o_AddVelocity },
 		{ "GetVelocity", o_GetVelocity }, { "EnableMotion", o_EnableMotion }, { "IsMotionEnabled", o_IsMotionEnabled },
 		{ "Wake", o_Wake }, { "Sleep", o_Sleep }, { "IsAsleep", o_IsAsleep }, { "GetMass", o_GetMass },
-		{ "SetMass", o_SetMass }, { "GetPos", o_GetPos }, { "GetMassCenter", o_GetMassCenter }, { NULL, NULL }
+		{ "SetMass", o_SetMass }, { "GetPos", o_GetPos }, { "GetMassCenter", o_GetMassCenter },
+		{ "LastBlastTime", o_LastBlastTime }, { NULL, NULL }
 	};
 	luaL_newmetatable(L, PHYSOBJ_MT);
 	lua_newtable(L);

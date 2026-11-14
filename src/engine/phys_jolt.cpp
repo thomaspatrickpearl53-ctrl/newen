@@ -18,6 +18,8 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLockMulti.h>
 #include <Jolt/Physics/Collision/GroupFilterTable.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 
 #include <cmath>
@@ -42,13 +44,18 @@ static const float DEG = 3.14159265358979f / 180.0f;
 namespace Layers {
 	static const ObjectLayer STILL = 0;
 	static const ObjectLayer MOVING = 1;
-	static const uint COUNT = 2;
+	static const ObjectLayer RAGDOLL = 2;   // as MOVING, and the players' bodies push it
+	static const ObjectLayer PLAYER = 3;    // meets ragdoll parts only
+	static const uint COUNT = 2;            // broad phase layers: still, everything else
 }
 
 class BroadPhaseLayers final : public BroadPhaseLayerInterface {
 public:
 	uint GetNumBroadPhaseLayers() const override { return Layers::COUNT; }
-	BroadPhaseLayer GetBroadPhaseLayer(ObjectLayer layer) const override { return BroadPhaseLayer((BroadPhaseLayer::Type)layer); }
+	BroadPhaseLayer GetBroadPhaseLayer(ObjectLayer layer) const override
+	{
+		return BroadPhaseLayer((BroadPhaseLayer::Type)(layer == Layers::STILL ? 0 : 1));
+	}
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
 	const char *GetBroadPhaseLayerName(BroadPhaseLayer layer) const override
 	{
@@ -61,7 +68,7 @@ class ObjectVsBroadPhase final : public ObjectVsBroadPhaseLayerFilter {
 public:
 	bool ShouldCollide(ObjectLayer a, BroadPhaseLayer b) const override
 	{
-		return a == Layers::MOVING || (BroadPhaseLayer::Type)b == Layers::MOVING;
+		return a != Layers::STILL || (BroadPhaseLayer::Type)b != 0;
 	}
 };
 
@@ -69,7 +76,9 @@ class ObjectPairs final : public ObjectLayerPairFilter {
 public:
 	bool ShouldCollide(ObjectLayer a, ObjectLayer b) const override
 	{
-		return a == Layers::MOVING || b == Layers::MOVING;
+		if (a == Layers::PLAYER || b == Layers::PLAYER)
+			return a == Layers::RAGDOLL || b == Layers::RAGDOLL;
+		return a != Layers::STILL || b != Layers::STILL;
 	}
 };
 
@@ -203,7 +212,7 @@ public:
 	void OnContactAdded(const Body &b1, const Body &b2, const ContactManifold &m, ContactSettings &) override
 	{
 		int t1 = (int)b1.GetUserData(), t2 = (int)b2.GetUserData();
-		if ((!t1 && !t2) || world->contacts.size() >= 256 || m.mRelativeContactPointsOn1.empty())
+		if ((t1 <= 0 && t2 <= 0) || world->contacts.size() >= 256 || m.mRelativeContactPointsOn1.empty())
 			return;
 		RVec3 p = m.GetWorldSpaceContactPointOn1(0);
 		Vec3 v1 = b1.IsStatic() ? Vec3::sZero() : b1.GetPointVelocity(p);
@@ -751,4 +760,83 @@ extern "C" int Phys_TakeContacts(physworld_t *w, physcontact_t *out, int max)
 		out[i] = w->contacts[(size_t)i];
 	w->contacts.clear();
 	return n;
+}
+
+// ---------------------------------------------------------------- pushes
+
+extern "C" void Phys_SetLayer(physworld_t *w, physbody_t b, physlayer_t layer)
+{
+	Bodies(w).SetObjectLayer(BodyID(b), layer == PHYS_LAYER_RAGDOLL ? Layers::RAGDOLL :
+		layer == PHYS_LAYER_PLAYER ? Layers::PLAYER : Layers::MOVING);
+}
+
+extern "C" int Phys_Explode(physworld_t *w, const float pos[3], float radius, float speed, float refmass)
+{
+	if (!w || radius <= 0 || speed <= 0)
+		return 0;
+	RVec3 centre = ToJolt(pos);
+	float r = radius * METRES;
+	BodyIDVector ids;
+	w->system.GetBodies(ids);
+	const NarrowPhaseQuery &query = w->system.GetNarrowPhaseQuery();
+	SpecifiedBroadPhaseLayerFilter still_bp(BroadPhaseLayer(0));
+	SpecifiedObjectLayerFilter still(Layers::STILL);
+	BodyInterface &bi = Bodies(w);
+	int pushed = 0;
+	for (BodyID id : ids) {
+		if (bi.GetMotionType(id) != EMotionType::Dynamic)
+			continue;
+		RVec3 com = bi.GetCenterOfMassPosition(id);
+		Vec3 d = Vec3(com - centre);
+		float dist = d.Length();
+		if (dist >= r)
+			continue;
+		// the map in between shelters it
+		if (dist > 0.05f) {
+			RRayCast ray(centre, d);
+			RayCastResult hit;
+			if (query.CastRay(ray, hit, still_bp, still) && hit.mFraction < 0.97f)
+				continue;
+		}
+		float mass;
+		{
+			BodyLockRead lock(w->system.GetBodyLockInterface(), id);
+			if (!lock.Succeeded())
+				continue;
+			float inv = lock.GetBody().GetMotionProperties()->GetInverseMass();
+			if (inv <= 0)
+				continue;
+			mass = 1.0f / inv;
+		}
+		// a body right at the middle goes up
+		Vec3 dir = dist > 0.05f ? d / dist : Vec3(0, 0, 1);
+		float dv = speed * METRES * (1.0f - dist / r);
+		if (mass > refmass && refmass > 0)
+			dv *= refmass / mass;
+		bi.AddImpulse(id, dir * (dv * mass));
+		pushed++;
+	}
+	return pushed;
+}
+
+extern "C" physbody_t Phys_CastRay(physworld_t *w, const float from[3], const float to[3], float hitpos[3], int *tag)
+{
+	if (!w)
+		return PHYS_NOBODY;
+	RVec3 a = ToJolt(from), b = ToJolt(to);
+	RRayCast ray(a, Vec3(b - a));
+	RayCastResult hit;
+	SpecifiedBroadPhaseLayerFilter moving_bp(BroadPhaseLayer(1));
+	// not the players' own bodies: a shot starts inside the shooter's
+	class NotPlayers final : public ObjectLayerFilter {
+	public:
+		bool ShouldCollide(ObjectLayer layer) const override { return layer != Layers::PLAYER; }
+	} not_players;
+	if (!w->system.GetNarrowPhaseQuery().CastRay(ray, hit, moving_bp, not_players))
+		return PHYS_NOBODY;
+	if (hitpos)
+		FromJolt(ray.GetPointOnRay(hit.mFraction), hitpos);
+	if (tag)
+		*tag = (int)(uint32)Bodies(w).GetUserData(hit.mBodyID);
+	return hit.mBodyID.GetIndexAndSequenceNumber();
 }

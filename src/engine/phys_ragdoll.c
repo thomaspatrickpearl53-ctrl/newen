@@ -278,6 +278,8 @@ static qboolean MakeRagdoll(int num, edict_t *e, track_t *t, model_t *m)
 			rd->rootbone = so->bone;
 		Phys_SetGroup(w, b, rd->group, i);
 		Phys_SetDamping(w, b, so->damping, so->rotdamping);
+		Phys_SetLayer(w, b, PHYS_LAYER_RAGDOLL);
+		Phys_SetTag(w, b, -1 - (int)(rd - ragdolls));   // negative: a ragdoll part, for bullets
 		// its speed from the last two frames; a jump (a teleport, a new sequence) isn't speed
 		vec3_t vel, spin = { 0, 0, 0 };
 		VectorCopy(e->v.velocity, vel);
@@ -292,6 +294,10 @@ static qboolean MakeRagdoll(int num, edict_t *e, track_t *t, model_t *m)
 					VectorClear(spin);
 			}
 		}
+		// what killed it may have been an explosion a moment ago
+		vec3_t at = { rd->bones[so->bone][0][3], rd->bones[so->bone][1][3], rd->bones[so->bone][2][3] }, blast;
+		Phys_BlastVelocity(at, so->mass, blast);
+		VectorAdd(vel, blast, vel);
 		Phys_SetMotion(w, b, vel, spin);
 		made++;
 	}

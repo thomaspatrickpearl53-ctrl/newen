@@ -375,6 +375,115 @@ static physworld_t *ServerWorld(void)
 	return svworld;
 }
 
+// ---------------------------------------------------------------- pushes
+
+#define BLAST_SPEED   6.0f     // inches/s a light body at the middle gets per point of the explosion's damage
+#define BLAST_REFMASS 20.0f    // kg; heavier bodies are thrown less
+#define BLAST_MEMORY  0.3      // seconds an explosion still throws a ragdoll made after it (what it killed)
+#define BULLET_PUSH   400.0f   // kg inches/s per point of a Lua bullet's damage, on the ragdoll part it hits
+
+typedef struct {
+	double time;
+	vec3_t pos;
+	float  radius, damage;
+} blast_t;
+static blast_t blasts[8];
+static int     blast_next;
+
+void Phys_ServerExplosion(const float pos[3], float radius, float damage)
+{
+	if (!sv.active || radius <= 0 || damage <= 0)
+		return;
+	blast_t *b = &blasts[blast_next++ % 8];
+	b->time = sv.time;
+	VectorCopy(pos, b->pos);
+	b->radius = radius;
+	b->damage = damage;
+	if (!svworld)
+		return;   // nothing to push
+	Phys_Explode(svworld, pos, radius, damage * BLAST_SPEED, BLAST_REFMASS);
+	Prop_Blasted(pos, radius);
+}
+
+void Phys_BlastVelocity(const float point[3], float mass, float addvel[3])
+{
+	VectorClear(addvel);
+	for (int i = 0; i < 8; i++) {
+		const blast_t *b = &blasts[i];
+		if (b->radius <= 0 || sv.time - b->time > BLAST_MEMORY || sv.time < b->time)
+			continue;
+		vec3_t d;
+		VectorSubtract(point, b->pos, d);
+		float dist = VectorNormalize(d);
+		if (dist >= b->radius)
+			continue;
+		float dv = b->damage * BLAST_SPEED * (1.0f - dist / b->radius);
+		if (mass > BLAST_REFMASS)
+			dv *= BLAST_REFMASS / mass;
+		VectorMA(addvel, dv, d, addvel);
+	}
+}
+
+void Phys_ServerBullet(const float from[3], const float to[3], float damage)
+{
+	if (!svworld || damage <= 0)
+		return;
+	vec3_t hit, dir;
+	int tag = 0;
+	physbody_t b = Phys_CastRay(svworld, from, to, hit, &tag);
+	if (b == PHYS_NOBODY || tag >= 0)
+		return;   // props hear of bullets through their damage; ragdoll parts have negative tags
+	VectorSubtract(to, from, dir);
+	VectorNormalize(dir);
+	VectorScale(dir, damage * BULLET_PUSH, dir);
+	Phys_AddImpulseAt(svworld, b, dir, hit);
+}
+
+// Each player as a body the ragdolls feel, so walking through a corpse shoves its limbs. A little
+// smaller than the player's hull: it only meets ragdoll parts (PHYS_LAYER_PLAYER).
+static physbody_t *playerbody;
+static qboolean   *playerduck;
+static int         playerbody_count;
+
+static void SyncPlayers(float dt)
+{
+	if (playerbody_count < sv.maxclients + 1) {
+		playerbody = Mem_Realloc(playerbody, sizeof(*playerbody) * (sv.maxclients + 1));
+		playerduck = Mem_Realloc(playerduck, sizeof(*playerduck) * (sv.maxclients + 1));
+		for (int i = playerbody_count; i <= sv.maxclients; i++)
+			playerbody[i] = PHYS_NOBODY;
+		playerbody_count = sv.maxclients + 1;
+	}
+	for (int c = 1; c <= sv.maxclients; c++) {
+		edict_t *pl = EDICT_NUM(c);
+		qboolean there = !pl->free && pl->v.health > 0 && pl->v.movetype != MOVETYPE_NOCLIP && pl->v.solid != SOLID_NOT;
+		qboolean duck = (pl->v.flags & FL_DUCKING) != 0;
+		if (playerbody[c] != PHYS_NOBODY && (!there || duck != playerduck[c])) {
+			Phys_RemoveBody(svworld, playerbody[c]);
+			playerbody[c] = PHYS_NOBODY;
+		}
+		if (!there)
+			continue;
+		if (playerbody[c] == PHYS_NOBODY) {
+			float half[3] = { 14, 14, duck ? 16.0f : 34.0f };
+			playerbody[c] = Phys_AddBox(svworld, half, pl->v.origin, NULL, PHYS_KINEMATIC, 0);
+			if (playerbody[c] == PHYS_NOBODY)
+				continue;
+			Phys_SetLayer(svworld, playerbody[c], PHYS_LAYER_PLAYER);
+			playerduck[c] = duck;
+			continue;
+		}
+		// a jump in place (a teleport, a level's start) isn't a shove
+		vec3_t at, d;
+		Phys_GetPose(svworld, playerbody[c], at, NULL);
+		VectorSubtract(pl->v.origin, at, d);
+		if (DotProduct(d, d) > 64.0f * 64.0f)
+			Phys_SetPose(svworld, playerbody[c], pl->v.origin, NULL);
+		else
+			Phys_MoveKinematic(svworld, playerbody[c], pl->v.origin, NULL, dt);
+	}
+}
+
 // after the server's frame: Half-Life has moved its doors and trains; Jolt follows and steps
 void Phys_ServerFrame(float dt)
 {
@@ -386,6 +495,7 @@ void Phys_ServerFrame(float dt)
 		return;
 	Phys_SetGravity(svworld, Cvar_VariableValue("sv_gravity"));
 	SyncBrushes(dt);
+	SyncPlayers(dt);
 	Prop_BeforeStep(dt);
 	Phys_Step(svworld, dt);
 	Ragdoll_AfterStep();
@@ -412,6 +522,9 @@ void Phys_ServerStopped(void)
 {
 	Ragdoll_Clear();
 	Prop_Clear();
+	for (int i = 0; i < playerbody_count; i++)
+		playerbody[i] = PHYS_NOBODY;
+	memset(blasts, 0, sizeof(blasts));
 	Phys_DestroyWorld(svworld);
 	svworld = NULL;
 	worldbody = PHYS_NOBODY;

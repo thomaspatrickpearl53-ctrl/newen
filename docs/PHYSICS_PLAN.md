@@ -1,7 +1,7 @@
 # Physics and ragdolls on Half-Life maps: plan
 
-Design written 2026-11-12 from newen at commit c9a8232. **Steps 1-5 are built (2026-11-14, branches `phys-1` to
-`phys-5`); the owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
+Design written 2026-11-12 from newen at commit c9a8232. **Steps 1-6 are built (2026-11-14, branches `phys-1` to
+`phys-6`); the owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
 owner asked for together; its Lua calls build on `docs/LUA_API_PLAN.md`, and its props become scripted
 entities from `docs/SWEP_PLAN.md`.
 
@@ -161,3 +161,8 @@ Host frame ──> SV_Frame (hl.dll thinks, moves the player and monsters)
   shove is a force along the way they walk (`phys_pushforce`), because Half-Life stops the player at the
   prop's box before a capsule could touch it; shots push along the player's aim (the game doesn't say who
   fired). The explosion pushes and ragdoll pushes of section 5 are step 6.
+- **Step 6 (2026-11-14, `phys-6`)**: the game's explosions (from their temp-entity message) and Lua's
+  `util.BlastDamage` throw props and ragdolls; Lua bullets push the ragdoll part they hit; each player has a
+  kinematic body that shoves ragdolls. On c2a5 a hand grenade scatters crates and the pistol pushes a
+  barrel. Found: Half-Life itself gibs corpses close to an explosion, so only ragdolls farther out, or
+  made by the blast, are thrown. The player's body meets ragdolls only; props keep step 5's force push.

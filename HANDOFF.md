@@ -246,12 +246,12 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
 | `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
-| `phys.h` | 103 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
-| `phys_jolt.cpp` | 754 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
-| `phys_ragdoll.c` | 533 | Ragdolls (physics plan step 4): `Ragdoll_Frame` before each physics step watches every edict whose Source model has a jointed `.phy` (two snapshots of its last living frames), makes a ragdoll when `deadflag` is set (`MakeRagdoll`: a body per solid at its bone, joints from the rest pose, the file's collision pairs), removes it when the edict goes; `Ragdoll_AfterStep` copies the bodies into bone matrices and enforces `phys_ragdoll_max`/`phys_ragdoll_time`; `Ragdoll_ForEdict`/`Ragdoll_Bones` give them to the renderer (`rentity_t::ragdoll`, `SrcSetupBones`); `phys_ragdolls_list` |
-| `lua_phys.c`, `base/lua/entities/prop_physics.lua` | 589 | Physics props (physics plan step 5): any entity can get a Jolt body (`CreateProp`: the model's one-solid `.phy`, else a box); `Prop_BeforeStep` is the player's push, `Prop_AfterStep` copies bodies into edicts (origin, angles with the pitch flipped as studio models are drawn, velocity, and the upright box round the shape via `SV_SetMinMaxSize`), removes props that left the map and runs `PhysicsCollide`; Lua: `ent:PhysicsInit/PhysicsInitBox/PhysicsDestroy/GetPhysicsObject/BecomeRagdoll/WorldSpaceCenter`, the `PhysObj` methods, `physics.SpawnProp`. The Lua file is the `prop_physics` class (damage pushes, breaking, `OnRestore`) |
+| `phys.h` | 121 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
+| `phys_jolt.cpp` | 842 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
+| `phys_ragdoll.c` | 539 | Ragdolls (physics plan step 4): `Ragdoll_Frame` before each physics step watches every edict whose Source model has a jointed `.phy` (two snapshots of its last living frames), makes a ragdoll when `deadflag` is set (`MakeRagdoll`: a body per solid at its bone, joints from the rest pose, the file's collision pairs), removes it when the edict goes; `Ragdoll_AfterStep` copies the bodies into bone matrices and enforces `phys_ragdoll_max`/`phys_ragdoll_time`; `Ragdoll_ForEdict`/`Ragdoll_Bones` give them to the renderer (`rentity_t::ragdoll`, `SrcSetupBones`); `phys_ragdolls_list` |
+| `lua_phys.c`, `base/lua/entities/prop_physics.lua` | 615 | Physics props (physics plan step 5): any entity can get a Jolt body (`CreateProp`: the model's one-solid `.phy`, else a box); `Prop_BeforeStep` is the player's push, `Prop_AfterStep` copies bodies into edicts (origin, angles with the pitch flipped as studio models are drawn, velocity, and the upright box round the shape via `SV_SetMinMaxSize`), removes props that left the map and runs `PhysicsCollide`; Lua: `ent:PhysicsInit/PhysicsInitBox/PhysicsDestroy/GetPhysicsObject/BecomeRagdoll/WorldSpaceCenter`, the `PhysObj` methods, `physics.SpawnProp`. The Lua file is the `prop_physics` class (damage pushes, breaking, `OnRestore`) |
 | `src_phys.c` | 530 | Source models' `.phy` files (physics plan step 3): `SrcPhys_Load`/`SrcPhys_Parse` give a `srcphys_t` (`src_local.h`): each solid's convex pieces as points + counts (the layout `Phys_AddConvexSet` takes), its bone name, mass, damping; the joints (`ragdollconstraint`: parent and child solid, min/max degrees per axis); which solid pairs collide. `phyinfo` |
-| `phys_world.c` | 552 | The map's physics world, made on first use (`ServerWorld`): the world model's faces as one static mesh (water left out), every `SOLID_BSP` brush entity as a kinematic body of convex pieces (the solid leaves of its hull-0 BSP tree, corners from plane triples), moved each frame to its edict (`SyncBrushes`, `Phys_ServerFrame` after `SV_Physics`), gone at `SV_Deactivate`; test boxes (`phys_dropbox/boxat/boxes/clear`, drawn after `R_DrawEntities`); `phys_test` |
+| `phys_world.c` | 665 | The map's physics world, made on first use (`ServerWorld`): the world model's faces as one static mesh (water left out), every `SOLID_BSP` brush entity as a kinematic body of convex pieces (the solid leaves of its hull-0 BSP tree, corners from plane triples), moved each frame to its edict (`SyncBrushes`, `Phys_ServerFrame` after `SV_Physics`), gone at `SV_Deactivate`; test boxes (`phys_dropbox/boxat/boxes/clear`, drawn after `R_DrawEntities`); `phys_test` |
 | `lua_ext.c` | 407 | Lua's smaller entity/player calls, `ents.FindInCone/FindAlongRay/FireTargets`, hooks `KeyPress`/`KeyRelease`, `OnNPCKilled`, `CalcView` |
 | `lua_ui.c` | 164 | Lua fonts (`surface.CreateFont/SetFont`) and textured rectangles |
 | `lua_game.c` | 1284 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
@@ -1013,6 +1013,47 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### Physics plan: step 6, pushes, built (2026-11-14, branch `phys-6`)
+
+All in `phys_world.c` ("pushes") on three new `phys.h` calls: `Phys_Explode`, `Phys_CastRay`, `Phys_SetLayer`.
+
+- **The game's explosions**: `PF_MessageEnd` sees every `SVC_TEMPENTITY` message of type `TE_EXPLOSION`
+  (grenades, rockets, satchels, `env_explosion`). Its byte 15 is the fireball's size, which `hl.dll` makes
+  from the damage ((damage - 50) x 0.6), so damage = size / 0.6 + 50 and the reach is the game's own 2.5
+  units per point. `Phys_ServerExplosion(pos, radius, damage)` calls `Phys_Explode`: every dynamic body
+  with its centre of mass inside the radius, not hidden by the map (a ray against the still layer only;
+  doors and other props don't shelter), gets a speed away from the blast of 6 in/s per point of damage x
+  (1 - distance / radius), less in proportion for bodies over 20 kg. Lua's `util.BlastDamage` calls it too.
+- **A ragdoll made just after an explosion** (what the blast killed) gets the same speed added as it is
+  made (`Phys_BlastVelocity`, the last 8 explosions, for 0.3 s), since it had no bodies when the blast went.
+- **Props and blast damage**: the game's blast also damages a prop, which `prop_physics` would push along
+  the player's aim; `PhysObj:LastBlastTime()` (new) lets it leave a prop the explosion has just thrown alone.
+- **Bullets**: the game's own bullets push props through their damage (step 5). Lua's `ent:FireBullets`
+  now also casts each bullet through the physics world (`Phys_ServerBullet` in `SV_FireBullets`): the
+  first ragdoll part on the line gets damage x 400 kg in/s at the hit point. Ragdoll bodies carry negative
+  tags (props positive) to tell them apart; the ray ignores players' bodies (a shot starts inside one).
+  As the plan says, the game's own bullets don't touch ragdolls.
+- **The player and ragdolls** (the plan's kinematic body): each living, non-noclip player has a kinematic
+  box 2 units inside their hull (`SyncPlayers`), in its own object layer that only meets ragdoll parts
+  (`PHYS_LAYER_PLAYER` / `PHYS_LAYER_RAGDOLL`; the broad phase still has two layers). Walking through a
+  corpse shoves its limbs. It doesn't meet props: Half-Life's collision keeps the player out of their
+  boxes, and the push there is step 5's force.
+- Checked, Linux and the MinGW exe under Wine, c2a5 (Combine soldiers for grunts, three crates and a
+  barrel from Lua by the gate), one scripted run: an `env_explosion` of magnitude 100 between the crates
+  throws them 80, 35 and 130 units and the barrel 90; the two corpses 220 units away move 2-4 units;
+  with the explosion under the floor nothing moves (hidden). **A thrown hand grenade** (the game's,
+  `+attack` with `weapon_handgrenade`) moves the nearest crate 79 units and two others. **The pistol**
+  moves the barrel 16 units. **A Lua bullet** of 30 damage moves a ragdoll's root 5-12 units. **Walking**
+  into a corpse moves its root 35-90 units. A living soldier 95 units from the explosion dies and its
+  ragdoll is 41 units away and 28 up 0.2 s later. AddressSanitizer build, same run: no reports.
+- **Half-Life gibs corpses a real explosion reaches hard enough** (a corpse has half the monster's
+  health; blast damage above that removes it, and its ragdoll with it), so "a grenade scatters ragdolls"
+  holds for corpses in the outer part of the blast and for what the blast itself kills without gibbing.
+- Known: a ragdoll lying against a standing player stays awake ("moving") while they touch. The numbers
+  (6 in/s per damage point, 20 kg, 400 per bullet damage point, the 250 of `prop_physics`) are by eye.
+- Not checked: Visual C++, real Windows; rockets, satchels and tripmines (the same message); an explosion
+  behind a closed door; monsters' own gunfire against props; many explosions in one frame.
 
 ### Physics plan: step 5, props, built (2026-11-14, branch `phys-5`)
 

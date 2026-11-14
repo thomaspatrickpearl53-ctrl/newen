@@ -95,8 +95,26 @@ typedef struct {
 void         Phys_SetTag(physworld_t *w, physbody_t b, int tag);
 int          Phys_TakeContacts(physworld_t *w, physcontact_t *out, int max);
 
+// ---- pushes
+// What a body collides with: ragdoll parts meet everything; a player's body meets only ragdoll parts
+// (Half-Life's own collision already keeps the player out of the map and the props).
+typedef enum { PHYS_LAYER_NORMAL, PHYS_LAYER_RAGDOLL, PHYS_LAYER_PLAYER } physlayer_t;
+void         Phys_SetLayer(physworld_t *w, physbody_t b, physlayer_t layer);
+// An explosion: every moving body within radius that the map doesn't hide from pos is thrown away from
+// it, hardest at the middle. speed: how fast a light body at the middle leaves (inches/s); bodies heavier
+// than refmass (kg) leave slower in proportion. Returns how many were pushed.
+int          Phys_Explode(physworld_t *w, const float pos[3], float radius, float speed, float refmass);
+// The first moving body a line meets, or PHYS_NOBODY: where, and the body's tag
+physbody_t   Phys_CastRay(physworld_t *w, const float from[3], const float to[3], float hitpos[3], int *tag);
+
 // phys_world.c: the running map's world; create = make it if the map has none yet. NULL without a map.
 physworld_t *Phys_ServerWorld(int create);
+// An explosion in the running map (the game's own, or Lua's): pushes props and ragdolls
+void         Phys_ServerExplosion(const float pos[3], float radius, float damage);
+// What recent explosions add to the speed of something of this mass at point (for a body made just after one)
+void         Phys_BlastVelocity(const float point[3], float mass, float addvel[3]);
+// A bullet's line from Lua's FireBullets: pushes the ragdoll part it meets
+void         Phys_ServerBullet(const float from[3], const float to[3], float damage);
 
 #ifdef __cplusplus
 }

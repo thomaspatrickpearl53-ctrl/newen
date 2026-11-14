@@ -292,10 +292,14 @@ Half-Life's own movement stays as it is. So far:
   ones don't move) and shoot them. Maps can place them: classname `prop_physics` with the keys `model`,
   `mass` (kilograms) and `health` (it breaks after that much damage). To Half-Life's own collision a prop
   is an upright box round its shape. They are saved with the game.
+- Explosions (grenades, rockets, `env_explosion`, Lua's `util.BlastDamage`) throw props and ragdolls that the
+  map doesn't shelter; shots push props; Lua bullets (`ent:FireBullets`) also push the ragdoll they hit; and
+  walking through a corpse shoves it. Half-Life itself gibs corpses close to an explosion.
 - Lua physics: `ent:PhysicsInit([mass])` or `ent:PhysicsInitBox(mins, maxs, [mass])` give any entity a
   body; `ent:GetPhysicsObject()` returns it, with `IsValid`, `ApplyForceCenter(vec)`, `ApplyForceOffset(vec,
   pos)`, `SetVelocity`, `AddVelocity`, `GetVelocity`, `EnableMotion(bool)`, `Wake`, `Sleep`, `IsAsleep`,
-  `GetMass`, `SetMass`, `GetPos`, `GetMassCenter`, `GetEntity`. `ent:PhysicsDestroy()` removes it.
+  `GetMass`, `SetMass`, `GetPos`, `GetMassCenter`, `GetEntity`, `LastBlastTime` (when an explosion last threw it,
+  as `ServerTime()`, or -1). `ent:PhysicsDestroy()` removes it.
   `ent:BecomeRagdoll()` makes a living Half-Life 2 character go limp. The hook `PhysicsCollide(ent, data)`
   (and `ENT:PhysicsCollide(data)`) runs when a prop hits something: `data.HitEntity`, `HitPos`,
   `HitNormal`, `Speed`. The prop class itself is `base/lua/entities/prop_physics.lua`.
