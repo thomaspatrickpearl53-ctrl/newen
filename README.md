@@ -453,58 +453,92 @@ becomes one too (a Lua class wins over the game's own class of the same name).
 - Example: `base/lua/entities/lua_healthcharger.lua`, a health charger: `lua_run SpawnHealthCharger()` puts
   one on the floor in front of you; hold the use key on it.
 
-### Lua weapons (`SWEP`), in progress
+### Lua weapons (`SWEP`)
 
-A file `lua/weapons/<class>.lua` fills in a global `SWEP` table and becomes the weapon class `<class>` (or
-call `weapons.Register(SWEP, class)` yourself; `weapons.Get(class)`, `weapons.GetList()`). Give it with
-`ply:Give(class)`, or `sv_cheats 1` and `give <class>` in the console. **So far a Lua weapon shows in
-Half-Life's weapon menu with its icon, clip and ammo, can be taken in hand and put away like any other
-weapon, fires real bullets, and is kept by saved games and level changes; weapon pickups for maps come
-next** (`docs/SWEP_PLAN.md`).
+A Lua file defines a weapon the way Garry's Mod does. The player can be given it, it sits in Half-Life's own
+weapon menu next to the crowbar and the MP5 with its icon, clip and ammo, it is taken in hand and put away
+like any other weapon, fires real bullets that hurt monsters, lies in maps as a pickup, and stays with the
+player through level changes and saved games. The example is `base/lua/weapons/weapon_lua_pistol.lua`:
+`sv_cheats 1; give weapon_lua_pistol`, or `lua_run SpawnLuaPistol()` to put one on the floor.
 
-- Fields, with Garry's Mod's names: `SWEP.PrintName`, `SWEP.Slot` (the menu column, from 0) and
-  `SWEP.SlotPos` (the place in it; a taken place moves the weapon to the next free one),
-  `SWEP.ViewModel`, `SWEP.WorldModel`, `SWEP.Primary.ClipSize` (-1: no clip), `.DefaultClip` (what a new
-  weapon comes with: one clip loaded, the rest as spare ammo), `.Automatic`, `.Ammo` (an ammo type's name,
-  or `"none"`), the same under `SWEP.Secondary`. `SWEP.Base = "other_class"` inherits from another weapon.
-- Functions so far: `SWEP:Initialize()` (when it's given), `SWEP:Deploy()` (taken in hand; the view model's
-  drawing animation has been started), `SWEP:Holster(nextWeapon)` (put away; `return false` refuses, unless
-  the game itself changed weapon), `SWEP:OnRemove()` (when it's taken away). The `WeaponEquip(weapon, ply)`
-  hook runs after a weapon is given.
-- In hand: the weapon menu, `use <class>` and `lastinv` choose a Lua weapon like the game's own. Half-Life's
-  weapon stays put away meanwhile: it doesn't fire, reload or animate, and comes back when chosen again.
-  `self:SendWeaponAnim(sequence number or name)` plays an animation of `SWEP.ViewModel`.
-- Firing: while the weapon is in hand, `SWEP:Think()` runs every frame, and `SWEP:PrimaryAttack()`,
-  `SWEP:SecondaryAttack()` and `SWEP:Reload()` while their buttons are held (once per press unless
-  `SWEP.Primary.Automatic` / `SWEP.Secondary.Automatic` is true). `self:SetNextPrimaryFire(CurTime() + 0.1)`
-  (and `SetNextSecondaryFire`, `GetNextPrimaryFire`, `GetNextSecondaryFire`) sets when it may fire again.
-  `self:ShootBullet{ damage = 8, num = 1, spread = 0.01, tracer = 0, distance = 8192 }` fires from the
-  owner's eyes along their aim, with blood, bullet holes, hit groups and the game's own damage.
-  `self:TakePrimaryAmmo(n)` / `TakeSecondaryAmmo(n)` (from the clip, or the owner's ammo for a weapon
-  without one), `self:CanPrimaryAttack()` / `CanSecondaryAttack()` (false when empty: it clicks, and reloads
-  if it can), `self:DefaultReload(sequence, [seconds])` (true if a reload started; the clip fills when the
-  animation is over), `self:EmitSound(name, ...)` (from the owner), `ply:ViewPunch(Angle(-2, 0, 0))` (kicks
-  the view). A weapon without a `Reload` of its own reloads with the view model's `reload` sequence.
-- The weapon is a table of its own (`self.Shots = 0`), with `self.Owner` and the methods `IsValid`,
-  `GetClass`, `GetOwner`, `GetPrintName`, `Clip1`/`SetClip1`, `Clip2`/`SetClip2`, `GetMaxClip1`/`2`, `Ammo1`/
-  `Ammo2` (the owner's spare ammo), `GetPrimaryAmmoType`/`GetSecondaryAmmoType` (the type's name), `GetSlot`,
-  `GetSlotPos`, `Remove`.
-- Ammo: Lua weapons use ammo types of their own. `game.AddAmmoType{ name = "pipe", max = 100 }`,
-  `game.GetAmmoMax(name)`, `game.GetAmmoTypes()`; `ply:GiveAmmo(amount, name, hidePopup)` (returns what
-  fitted), `ply:GetAmmoCount(name)`, `ply:SetAmmo(amount, name)`, `ply:RemoveAmmo(amount, name)`.
-- The player: `ply:Give(class)` returns the weapon (a second one only adds its ammo), `ply:HasWeapon(class)`
-  (Lua weapons and Half-Life's own), `ply:GetWeapon(class)` and `ply:GetWeapons()` (Lua weapons only),
-  `ply:StripWeapon(class)`, `ply:GetActiveWeapon()` (the Lua weapon in hand, or nil while it's one of
-  Half-Life's), `ply:SelectWeapon(class)` (either kind).
-- Icons: ship `sprites/<class>.txt` in the same format as Half-Life's `sprites/weapon_*.txt`, or get
-  newen's generic "LUA" icon.
-- Saved games, level changes and `lua_reload` keep the player's Lua weapons: clips, ammo, which one was in
-  hand, and the plain data in each weapon's own table (numbers, strings, booleans, vectors, angles, tables
-  of those; functions aren't kept, and entities other than `Owner` can't be relied on). `SWEP:OnRestore()`
-  runs after a load or level change, `SWEP:OnReloaded()` after `lua_reload`. A new game or dying takes the
-  Lua weapons away.
-- Limits: the menu has room for 11 different Lua weapons per session beside Half-Life's 14.
-- `lua_weapons` lists the Lua weapons and ammo types in use. Example: `base/lua/weapons/weapon_lua_pistol.lua`.
+**Making one.** A file `lua/weapons/<class>.lua` fills in a global `SWEP` table and becomes the weapon class
+`<class>` (or call `weapons.Register(SWEP, class)` yourself; `weapons.Get(class)`, `weapons.GetList()`).
+
+| Field | Meaning |
+|---|---|
+| `SWEP.PrintName` | its name |
+| `SWEP.Slot`, `SWEP.SlotPos` | the menu column (from 0: slot 1 is key 2) and the place in it; a taken place moves the weapon to the next free one |
+| `SWEP.ViewModel`, `SWEP.WorldModel` | the model in your hands, and the one lying in the world |
+| `SWEP.Primary.ClipSize` | rounds in a clip; -1 for a weapon without one |
+| `SWEP.Primary.DefaultClip` | what a new weapon comes with: one clip loaded, the rest as spare ammo |
+| `SWEP.Primary.Automatic` | true: fires as long as the button is held; false: once per press |
+| `SWEP.Primary.Ammo` | an ammo type's name, or `"none"` |
+| `SWEP.Secondary.*` | the same for the second fire button |
+| `SWEP.Base` | another weapon class to inherit from |
+
+| Function (all optional) | Called |
+|---|---|
+| `SWEP:Initialize()` | when the weapon is given |
+| `SWEP:Deploy()` | taken in hand; the view model's drawing animation has been started |
+| `SWEP:Holster(nextWeapon)` | put away; `return false` refuses, unless the game itself changed weapon |
+| `SWEP:Think()` | every frame while in hand |
+| `SWEP:PrimaryAttack()`, `SWEP:SecondaryAttack()` | while the fire button is held and the weapon may fire |
+| `SWEP:Reload()` | while the reload button is held; without one, the weapon reloads with the view model's `reload` |
+| `SWEP:OnRemove()` | when it's taken away |
+| `SWEP:OnRestore()`, `SWEP:OnReloaded()` | after a loaded game or level change; after `lua_reload` |
+
+**The weapon** (`self`) is a table of its own: `self.Shots = 0` is kept with it, and `self.Owner` is the
+player.
+
+- About it: `IsValid`, `GetClass`, `GetOwner`, `GetPrintName`, `GetSlot`, `GetSlotPos`, `Remove`.
+- Ammo: `Clip1`/`SetClip1`, `Clip2`/`SetClip2`, `GetMaxClip1`/`GetMaxClip2`, `Ammo1`/`Ammo2` (the owner's
+  spare ammo), `GetPrimaryAmmoType`/`GetSecondaryAmmoType` (the type's name), `TakePrimaryAmmo(n)`/
+  `TakeSecondaryAmmo(n)` (from the clip, or from the owner's ammo for a weapon without one).
+- Firing: `self:ShootBullet{ damage = 8, num = 1, spread = 0.01, tracer = 0, distance = 8192 }` fires from
+  the owner's eyes along their aim, with blood, bullet holes, hit groups and the game's own damage.
+  `self:SetNextPrimaryFire(CurTime() + 0.1)` (and `SetNextSecondaryFire`, `GetNextPrimaryFire`,
+  `GetNextSecondaryFire`) says when it may fire again. `self:CanPrimaryAttack()`/`CanSecondaryAttack()` are
+  false when empty: the weapon clicks, and reloads if it can. `self:DefaultReload(sequence, [seconds])`
+  starts a reload (true if it did); the clip fills when the animation is over.
+- Look and sound: `self:SendWeaponAnim(sequence number or name)` plays an animation of the view model,
+  `self:EmitSound(name, ...)` plays from the owner, `ply:ViewPunch(Angle(-2, 0, 0))` kicks the view.
+
+**The player.** `ply:Give(class)` returns the weapon (a second one only adds its ammo), `ply:HasWeapon(class)`
+(Lua weapons and Half-Life's own), `ply:GetWeapon(class)` and `ply:GetWeapons()` (Lua weapons only),
+`ply:GetActiveWeapon()` (the Lua weapon in hand, or nil while it's one of Half-Life's),
+`ply:SelectWeapon(class)` (either kind), `ply:StripWeapon(class)`, `ply:StripWeapons()` (everything). The
+`WeaponEquip(weapon, ply)` hook runs after a weapon is given. In the console: `give <class>` (with
+`sv_cheats 1`), `use <class>`, `lastinv`, and `lua_weapons`, which lists the Lua weapons and ammo in use.
+
+**Ammo.** Lua weapons use ammo types of their own: `game.AddAmmoType{ name = "pipe", max = 100 }`,
+`game.GetAmmoMax(name)`, `game.GetAmmoTypes()`; `ply:GiveAmmo(amount, name, hidePopup)` (returns what
+fitted), `ply:GetAmmoCount(name)`, `ply:SetAmmo(amount, name)`, `ply:RemoveAmmo(amount, name)`.
+
+**In maps.** Every Lua weapon is also an entity of its own class: put an entity with the weapon's classname
+in a map, or `ents.Create(class)`, `SetPos`, `Spawn` from Lua, and it lies there (as `SWEP.WorldModel`) until a
+player walks over it. A player who has the weapon gets its ammo; if none fits, it stays. The pickup itself
+is `base/lua/entities/lua_weapon_pickup.lua`; a weapon that wants its own ships
+`lua/entities/<its class>.lua`.
+
+**Icons.** Ship `sprites/<class>.txt` in the same format as Half-Life's `sprites/weapon_*.txt`, or get newen's
+generic "LUA" icon.
+
+**While a Lua weapon is in hand**, Half-Life's own weapon stays put away: it doesn't fire, reload or
+animate, and comes back when chosen again.
+
+**Saved games, level changes and `lua_reload`** keep the player's Lua weapons: clips, ammo, which one was in
+hand, and the plain data in each weapon's own table (numbers, strings, booleans, vectors, angles, tables of
+those; functions aren't kept, and entities other than `Owner` can't be relied on). A new game or dying takes
+the Lua weapons away.
+
+**Limits.**
+- The menu has room for 11 different Lua weapons per session beside Half-Life's 14.
+- Lua weapons can't use Half-Life's own ammo (9mm, buckshot...).
+- Other players don't see the weapon in your hands: the third-person model isn't set.
+- A Half-Life weapon put away while zoomed keeps its zoom, and the rocket launcher's laser dot stays on.
+- No shell casings or autoaim, and no prediction (Lua weapons fire on the server's frame, as Half-Life's do
+  in newen).
+- Single player only, like the rest of newen.
 
 ## Roadmap
 

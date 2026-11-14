@@ -157,6 +157,7 @@ static int m_GetViewModel(lua_State *L) { lua_pushstring(L, SV_String(LuaG_Check
 static int m_StripWeapons(lua_State *L)
 {
 	edict_t *pl = LuaG_CheckEdict(L, 1);
+	LuaW_StripPlayer(pl);
 	edict_t *s = SV_CreateNamedEntity("player_weaponstrip");
 	if (!s)
 		return 0;

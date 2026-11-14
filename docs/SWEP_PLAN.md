@@ -1,9 +1,10 @@
 # Lua weapons (SWEPs) and scripted entities: plan
 
-Design written 2026-11-12 from newen at commit c9a8232. **Steps 5 (2026-11-13, branch `swep-5`) and 1 to 4
-(2026-11-14, branches `swep-1` to `swep-4`) are built; see "Built" at the end.** The rest isn't. Implementation starts
-only when the owner says "go". It needs `docs/LUA_API_PLAN.md` first (damage, sound, effects), and is the
-second of the three plans the owner asked for together.
+Design written 2026-11-12 from newen at commit c9a8232. **All six steps are built: 5 on 2026-11-13 (branch `swep-5`), 1 to 4 and 6
+on 2026-11-14 (branches `swep-1` to `swep-6`); see "Built" at the end.** Step 6's check is the owner's review.
+It was built on `docs/LUA_API_PLAN.md` (damage, sound, effects), and is the second of the three plans the
+owner asked for together. The sections below are the design as written; where the build differs, "Built"
+says so.
 
 ## 1. In plain terms
 
@@ -162,3 +163,7 @@ can't be checked by a harmless probe. Recommended only if A shows a problem it c
   hand, used for saved games, level changes and `lua_reload` alike; the weapon that was in hand is taken in
   hand again at the player's first input; `OnRestore` and `OnReloaded` were added as scripted entities have
   them. Next-fire times and a reload in progress aren't kept.
+- **Step 6 (2026-11-14, `swep-6`)**: `base/lua/entities/lua_weapon_pickup.lua`; every registered weapon
+  gets a scripted entity of its own class built on it, so maps and `ents.Create` place weapons. The pistol
+  example gained idle animations and `SpawnLuaPistol()`; the README's weapon section is a full reference.
+  The example uses Half-Life's view model; a Source one wasn't tried.

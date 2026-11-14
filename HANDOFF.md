@@ -246,7 +246,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
 | `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
-| `lua_weapons.c` | 1843 | Lua weapons (SWEP plan steps 1-4): `weapons.Register` (classes in the registry, per-class metatables, `SWEP.Base`, the weapon methods as the last fallback), the local player's Lua weapons (`lweapon_t`: weapon number, menu slot and place, clip; the weapon's own table in the registry by class) and Lua ammo types (`ammo_t`, `game.AddAmmoType`), what the client's HUD is told (`WeaponList`, `CurWeapon` with state 0, `AmmoX`, `WeapPickup`, `AmmoPickup`, queued straight to the client in `LuaW_Frame`), the weapon bits added for the client (`LuaW_WeaponBits`), learning the game's own weapon numbers, ammo numbers and menu places from its `WeaponList` messages (`LuaW_GameMessage`), the generic icon for a weapon without `sprites/<class>.txt` (`LuaW_SpriteList`), `give <Lua weapon>`, `lua_weapons`; taking one in hand (`Select`/`Wake`, `active`): the game's weapon sleeps (`LuaW_PlayerCmd` takes its buttons out of the input, `LuaW_GameMessage` holds back its `SVC_WEAPONANIM` and `CurWeapon`), `LuaW_ViewModel` gives the client the Lua view model, `GameSwitched` notices the game changing weapon by its view model, `LuaW_ClientCommand`/`LuaW_GameCommandDone` handle the menu's commands and `lastinv`; firing (`LuaW_PlayerThink` from `SV_RunPlayerCmd`: `Think`, `Reload`, `PrimaryAttack`, `SecondaryAttack` by the held buttons and the weapon's next-fire times on the map's clock; `ShootBullet` through `SV_FireBullets`; `DefaultReload` and `FinishReload`; `CanPrimaryAttack`'s empty click and reload); saving (`LuaW_SaveData` packs ammo, weapons, clips, each weapon's own table through `LuaE_PackTable`, and the class in hand; `Restore`; `LuaW_MapChange`/`LuaW_MapStarted` around a map start with the block in `pending`; `LuaW_SetPending` from a saved game; `resume` takes the weapon in hand again at the player's first input; `LuaW_StateStopping`/`Started` for `lua_reload`) |
+| `lua_weapons.c` | 1863 | Lua weapons (SWEP plan steps 1-4 and 6): `weapons.Register` (classes in the registry, per-class metatables, `SWEP.Base`, the weapon methods as the last fallback), the local player's Lua weapons (`lweapon_t`: weapon number, menu slot and place, clip; the weapon's own table in the registry by class) and Lua ammo types (`ammo_t`, `game.AddAmmoType`), what the client's HUD is told (`WeaponList`, `CurWeapon` with state 0, `AmmoX`, `WeapPickup`, `AmmoPickup`, queued straight to the client in `LuaW_Frame`), the weapon bits added for the client (`LuaW_WeaponBits`), learning the game's own weapon numbers, ammo numbers and menu places from its `WeaponList` messages (`LuaW_GameMessage`), the generic icon for a weapon without `sprites/<class>.txt` (`LuaW_SpriteList`), `give <Lua weapon>`, `lua_weapons`; taking one in hand (`Select`/`Wake`, `active`): the game's weapon sleeps (`LuaW_PlayerCmd` takes its buttons out of the input, `LuaW_GameMessage` holds back its `SVC_WEAPONANIM` and `CurWeapon`), `LuaW_ViewModel` gives the client the Lua view model, `GameSwitched` notices the game changing weapon by its view model, `LuaW_ClientCommand`/`LuaW_GameCommandDone` handle the menu's commands and `lastinv`; firing (`LuaW_PlayerThink` from `SV_RunPlayerCmd`: `Think`, `Reload`, `PrimaryAttack`, `SecondaryAttack` by the held buttons and the weapon's next-fire times on the map's clock; `ShootBullet` through `SV_FireBullets`; `DefaultReload` and `FinishReload`; `CanPrimaryAttack`'s empty click and reload); saving (`LuaW_SaveData` packs ammo, weapons, clips, each weapon's own table through `LuaE_PackTable`, and the class in hand; `Restore`; `LuaW_MapChange`/`LuaW_MapStarted` around a map start with the block in `pending`; `LuaW_SetPending` from a saved game; `resume` takes the weapon in hand again at the player's first input; `LuaW_StateStopping`/`Started` for `lua_reload`); `weapons.Register` also registers a scripted entity of the weapon's class on `lua_weapon_pickup` (the weapon lying in the world) |
 | `phys.h` | 122 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
 | `phys_jolt.cpp` | 843 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
 | `phys_ragdoll.c` | 776 | Ragdolls (physics plan steps 4 and 7): `SkelFor` gives a model's bones, rest pose, solids and joints (a Source model's `.phy`, or made from a Half-Life model's hitboxes by `HitboxPhys` when `phys_ragdoll_hl` is on); `Ragdoll_Frame` before each physics step watches every edict whose model has them (two snapshots of its last living frames), makes a ragdoll when `deadflag` is set (`MakeRagdoll`: a body per solid at its bone, joints from the rest pose, the file's collision pairs), removes it when the edict goes; `Ragdoll_AfterStep` copies the bodies into bone matrices and enforces `phys_ragdoll_max`/`phys_ragdoll_time`; `Ragdoll_ForEdict`/`Ragdoll_Bones` give them to the renderer (`rentity_t::ragdoll`, `SrcSetupBones`); `phys_ragdolls_list` |
@@ -1026,10 +1026,53 @@ recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
 
+### SWEP plan: step 6, weapon pickups and the examples; the plan is built (2026-11-14, branch `swep-6`, on `swep-4`)
+
+The owner's "Go: step 6". **`docs/SWEP_PLAN.md` is built, steps 1-6, on branches `swep-1` ... `swep-6`
+(each from the one before, `swep-1` from `master`); none is merged or pushed. The plan's own check for this
+step is the owner's review.** With this the three plans handed over on 2026-11-12 are all built.
+
+- **Pickups**: `weapons.Register` also calls `scripted_ents.Register({ Base = "lua_weapon_pickup",
+  WeaponClass = class }, class)`, so the map loader, `ents.Create` and saved levels make a pickup for a
+  weapon's classname through step 5's machinery with nothing new in C. `base/lua/entities/
+  lua_weapon_pickup.lua`: `SWEP.WorldModel` (else the pistol's), `SOLID_TRIGGER`, `MOVETYPE_TOSS`, a 32-unit
+  box; `Touch` by a living player gives the weapon (a holder gets its ammo, with the ammo pickup icon; if
+  nothing was gained it stays), plays the pickup sound and removes itself. A file in `lua/entities` named
+  after the weapon replaces the pickup (entities load after weapons).
+- **Examples**: the pistol plays idle animations from `Think`, and has `SpawnLuaPistol()` (a pickup on the
+  floor in front of the player, 24 units clear of a wall). The health charger was left as it is.
+- `ply:StripWeapons()` now takes the Lua weapons too (the game's strip was only noticed when the player
+  held a game weapon).
+- README: the Lua weapons section rewritten as a reference (tables of fields and functions, the weapon's
+  methods, the player's, ammo, maps, icons, saves, limits) for the owner's review.
+- **Checked on Linux** (c1a0d): `SpawnLuaPistol()` put the world model on the floor (screenshot); walking
+  over it gave the weapon (clip 12, ammo 24, the menu icon sliding in) and removed the pickup; a second one
+  added 36 ammo; with ammo at its maximum a third stayed; a save made with a pickup on the floor brought it
+  back on load, and it could be picked up; `StripWeapons` took the weapon. **Map placement**: a test weapon
+  registered under the class `info_target` (c1a0d places four) made the map's four entities pickups with the
+  world model and `WeaponClass` set; two of them, placed in mid-air by the map, fell (`MOVETYPE_TOSS`).
+- **Checked on Windows**: the MinGW exe under Wine with the Windows libraries: the same. A Visual C++ build of
+  this branch on Windows 10 in the test VM (18 warnings as before, none new): the same, except the
+  "ammo already full" case, which didn't run there (the test's command line lost its quotes on Windows,
+  so the ammo wasn't filled and the third pickup was taken, as it should be then).
+- **Found on the way**: a pickup spawned with its box touching a wall wasn't there to be picked up under
+  Wine (on Linux the player happened to be touching it already); a toss entity that starts inside a wall
+  falls out of the map, as in GoldSrc. The helper now keeps 24 units clear. A mapper placing a pickup inside
+  a wall would see the same.
+- **Not done or not checked**: the pistol's world model stands upright on the floor instead of lying on
+  its side (not looked into; Half-Life's own pickups lie flat); a real map file with `weapon_lua_pistol` in
+  it (the test used a class the stock map already places); pickups that respawn; a Source (`hl2:`) view or
+  world model for a Lua weapon; the idle animations were not looked at in a screenshot; AddressSanitizer on
+  any SWEP step; the screenshot regression and `mdlinfo` sweep from the brief (step 3 added one function to
+  `r_studio.c`, nothing else in the renderer or model code changed).
+- **Left open across the plan** (each is in its step's entry): 11 menu places instead of 15; no third-person
+  weapon model; a sleeping weapon's zoom and laser dot; `OnNPCKilled` without an attacker for engine
+  bullets; next-fire times and a reload in progress aren't saved; decision S2 (sharing Half-Life's ammo)
+  stays "not at first".
+
 ### SWEP plan: step 4, saved games and level changes, built (2026-11-14, branch `swep-4`, on `swep-3`)
 
-The owner's "Go: step 4". Next: step 6 (weapon pickups as entities, the examples polished, README for
-review), proposed, not started.
+The owner's "Go: step 4". Step 6 followed (above).
 
 - **One block** (`LuaW_SaveData`): the Lua ammo counts by name, each held weapon's class, clips and own
   table (lua_ents.c's table format, now reachable as `LuaE_PackTable`/`LuaE_UnpackTable`), and the class in

@@ -745,8 +745,9 @@ qboolean LuaW_Give(lua_State *L, edict_t *pl, const char *cls)
 	ammo_t *a1 = ClassAmmo(L, cls, "Primary"), *a2 = ClassAmmo(L, cls, "Secondary");
 	if (w->owned) {
 		// a second one is only its ammo, as when the game's player walks over a weapon they have
-		if (a1 && give > 0)
-			AddAmmo(a1, give);
+		int got = a1 && give > 0 ? AddAmmo(a1, give) : 0;
+		if (got > 0 && a1->hud)
+			SendByteMsg("AmmoPickup", a1->hud, got);
 		if (a2 && give2 > 0)
 			AddAmmo(a2, give2);
 		PushWeapon(L, w);
@@ -842,6 +843,13 @@ void LuaW_GameCommandDone(edict_t *pl)
 	previous = active;
 	weps[active].sent_clip = -2;
 	Wake(pl, true);
+}
+
+// ply:StripWeapons() takes the Lua weapons too (the game's strip is only noticed when it had weapons to take)
+void LuaW_StripPlayer(edict_t *pl)
+{
+	if (IsLocalPlayer(pl))
+		StripAll(false);
 }
 
 void LuaW_PlayerDied(edict_t *pl)
@@ -1230,6 +1238,18 @@ static int l_Register(lua_State *L)
 	lweapon_t *w = FindWeapon(cls);
 	if (w)
 		w->listed = false;   // its slot or ammo type may have changed
+	// The weapon lying in the world is a scripted entity of the same class, so ents.Create(class) and a map
+	// entity of that class make a pickup. A file in lua/entities of that name replaces it (they load later).
+	lua_getglobal(L, "scripted_ents");
+	if (lua_istable(L, -1) && lua_getfield(L, -1, "Register") == LUA_TFUNCTION) {
+		lua_createtable(L, 0, 2);
+		lua_pushstring(L, "lua_weapon_pickup");
+		lua_setfield(L, -2, "Base");
+		lua_pushstring(L, cls);
+		lua_setfield(L, -2, "WeaponClass");
+		lua_pushstring(L, cls);
+		lua_call(L, 2, 0);
+	}
 	return 0;
 }
 

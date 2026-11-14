@@ -206,6 +206,7 @@ void        LuaW_PlayerCmd(edict_t *pl, usercmd_t *cmd);   // a sleeping game we
 void        LuaW_PlayerThink(edict_t *pl);            // the Lua weapon in hand: Think, attacks, reload
 const char *LuaW_ViewModel(void);                     // the Lua weapon's view model while one is in hand, else NULL
 void        LuaW_PlayerDied(edict_t *pl);
+void        LuaW_StripPlayer(edict_t *pl);            // ply:StripWeapons
 void        LuaW_Frame(void);
 void        LuaW_ServerStarted(void);
 void        LuaW_MapChange(qboolean levelchange, qboolean loadgame);   // before a map starts: what the player takes along
