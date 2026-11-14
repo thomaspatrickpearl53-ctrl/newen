@@ -276,10 +276,11 @@ for as long as the sound plays. Only sounds loud enough to hear where you stand 
 Ctrl+L clears it. Useful commands: `cmdlist`, `cvarlist`, `find <text>`, `path`, `screenshot`, `condump`,
 `vid_restart`, `cl_showfps 1`, `fps_max`.
 
-## Physics (in progress)
+## Physics
 
-newen is getting a physics engine, Jolt, for ragdolls and objects that tumble (`docs/PHYSICS_PLAN.md`).
-Half-Life's own movement stays as it is. So far:
+newen has a physics engine, Jolt, for ragdolls and objects that tumble (`docs/PHYSICS_PLAN.md`, built).
+Half-Life's own movement (the player, monsters, doors, grenades) stays as it is; Jolt runs beside it and
+only moves what it owns. A map that never uses physics never pays for it.
 
 - `phys_test` checks the library without a map: a box dropped onto a floor must land flat, stop and sleep;
   it prints PASS or FAIL.
@@ -292,9 +293,13 @@ Half-Life's own movement stays as it is. So far:
   ones don't move) and shoot them. Maps can place them: classname `prop_physics` with the keys `model`,
   `mass` (kilograms) and `health` (it breaks after that much damage). To Half-Life's own collision a prop
   is an upright box round its shape. They are saved with the game.
-- Explosions (grenades, rockets, `env_explosion`, Lua's `util.BlastDamage`) throw props and ragdolls that the
-  map doesn't shelter; shots push props; Lua bullets (`ent:FireBullets`) also push the ragdoll they hit; and
-  walking through a corpse shoves it. Half-Life itself gibs corpses close to an explosion.
+- Explosions (grenades, rockets, `env_explosion`, Lua's `util.BlastDamage`) send props and ragdolls that the
+  map doesn't shelter flying; `phys_blastforce` (3) sets how hard (1 = gently, 0 = not at all). Shots push
+  props; Lua bullets (`ent:FireBullets`) also push the ragdoll they hit; walking through a corpse shoves it.
+  A corpse that has a ragdoll can't be hurt or gibbed any more: an explosion throws it instead.
+- A prop moving faster than `phys_impactspeed` (250 units a second) hurts the living monsters it flies into:
+  its mass in kilograms for each 100 units a second over that, times `phys_impactdamage` (1; 0 = none). A 30 kg
+  crate at 450 does 60. What it kills goes limp and is carried on. The player isn't hurt by props.
 - Lua physics: `ent:PhysicsInit([mass])` or `ent:PhysicsInitBox(mins, maxs, [mass])` give any entity a
   body; `ent:GetPhysicsObject()` returns it, with `IsValid`, `ApplyForceCenter(vec)`, `ApplyForceOffset(vec,
   pos)`, `SetVelocity`, `AddVelocity`, `GetVelocity`, `EnableMotion(bool)`, `Wake`, `Sleep`, `IsAsleep`,
@@ -310,6 +315,9 @@ Half-Life's own movement stays as it is. So far:
   `phys_ragdoll_time` stops each after that many seconds (0 = never). `phys_ragdolls_list` lists them and
   `phys_showtime 1` prints what physics costs each frame. They aren't saved: after loading, a corpse falls
   again where it died.
+- `phys_ragdoll_hl 1` (off by default) makes Half-Life's own characters fall limp as well, in place of their
+  death animations. Their models have no physics data, so each hitbox becomes a body part and the joints'
+  limits are guessed from the bone names: bodies tend to fold up more than a real one would.
 - `phyinfo <model>` lists a Source model's physics file (`.phy`): its solids with their bones and masses, and
   its joints with how far each turns (`phyinfo hl2:models/combine_soldier.mdl`). With a pattern it reads every
   match and counts them (`phyinfo hl2:models/*.phy`).
@@ -459,7 +467,9 @@ Half-Life map to it (and can move it, for testing). The map compiler is a separa
 
 Closed captions are done too (see above).
 
-Then: Jolt physics, lights and shadows, particles, dev tools; Half-Life 2 maps (`docs/SOURCE_PLAN.md`, planned); the rest of
+Physics (Jolt: ragdolls, props, pushes) is done too (see above).
+
+Then: lights and shadows, particles, dev tools; Half-Life 2 maps (`docs/SOURCE_PLAN.md`, planned); the rest of
 VGUI2 (the main menu already runs on it); more games
 (Opposing Force, Blue Shift, CS 1.6, Cry of Fear); co-op, terrain, 64-bit, Linux.
 

@@ -1,7 +1,7 @@
 # Physics and ragdolls on Half-Life maps: plan
 
-Design written 2026-11-12 from newen at commit c9a8232. **Steps 1-6 are built (2026-11-14, branches `phys-1` to
-`phys-6`); the owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
+Design written 2026-11-12 from newen at commit c9a8232. **All seven steps are built (2026-11-13 and 14, branches `phys-1` to
+`phys-7`); the plan is done and waits for the owner's review. the owner's "start physics" confirmed P1 (Jolt).** See "Built" at the end. Third of the three plans the
 owner asked for together; its Lua calls build on `docs/LUA_API_PLAN.md`, and its props become scripted
 entities from `docs/SWEP_PLAN.md`.
 
@@ -166,3 +166,22 @@ Host frame ──> SV_Frame (hl.dll thinks, moves the player and monsters)
   kinematic body that shoves ragdolls. On c2a5 a hand grenade scatters crates and the pistol pushes a
   barrel. Found: Half-Life itself gibs corpses close to an explosion, so only ragdolls farther out, or
   made by the blast, are thrown. The player's body meets ragdolls only; props keep step 5's force push.
+- **After step 6, asked for by the owner (2026-11-14, `phys-7`)**: explosions throw about three times
+  harder and partly upwards (`phys_blastforce`); a corpse with a ragdoll takes no damage, so a blast throws
+  it instead of Half-Life gibbing it; a prop faster than `phys_impactspeed` hurts the monsters it flies
+  into (`phys_impactdamage`), and what it kills goes limp with part of its speed.
+- **Step 7 (2026-11-14, `phys-7`)**: decision P4 as recommended: `phys_ragdoll_hl` (off by default) gives
+  Half-Life's own models ragdolls from their hitboxes: a bone's hitboxes are one body, joined to the nearest
+  bone above that has one, limits guessed from the bone's name. Checked on scientists, Barney, grunts and
+  a headcrab. They fold up more than Half-Life 2's do.
+
+## Where the finished plan differs from sections 1-9
+
+- Section 3: a ragdoll over the limit keeps its pose (it isn't removed); nothing of a ragdoll is saved, and a
+  corpse falls again after loading; corpses with ragdolls can't be damaged.
+- Section 4: `prop_physics` is `base/lua/entities/prop_physics.lua` on top of `ent:PhysicsInit`, not C.
+- Section 5: the player pushes props with a force along their walk, and has a kinematic body only for
+  ragdolls. The game's bullets push props (along the player's aim), not ragdolls; Lua bullets push both.
+- Section 7: there is no `phys_ragdoll.c`/`lua_phys.c` split by "props in C": bodies, the player's push and
+  the Lua calls are all in `lua_phys.c`.
+- Section 9 still holds, with one more: fast props hurt monsters but not the player.

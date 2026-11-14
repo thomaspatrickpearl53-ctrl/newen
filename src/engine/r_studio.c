@@ -420,6 +420,9 @@ int R_StudioSetupBones(const rentity_t *e, float (**bones)[3][4])
 		return 0;
 	if (m->studio.source)
 		return SrcSetupBones(e);
+	// a Half-Life model gone limp (phys_ragdoll_hl)
+	if (e->ragdoll && Ragdoll_Bones(e->ragdoll, m, bonetransform, h->numbones))
+		return h->numbones;
 
 	float adjbuf[8], *adj = adjbuf;
 	float *adjheap = NULL;

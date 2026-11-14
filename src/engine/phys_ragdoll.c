@@ -9,12 +9,13 @@
 #include "server.h"
 #include "phys.h"
 #include "src_local.h"
+#include <ctype.h>
 
 // torque (newton metres) every joint resists turning with, so limbs don't swing like chains
 #define RAGDOLL_JOINT_FRICTION 3.0f
 #define RAGDOLL_SETTLE 3.0          // seconds a ragdoll over the limit gets to fall before it's stopped
 
-static cvar_t *phys_ragdolls, *phys_ragdoll_max, *phys_ragdoll_time;
+static cvar_t *phys_ragdolls, *phys_ragdoll_max, *phys_ragdoll_time, *phys_ragdoll_hl;
 
 // How an entity looked on one frame: enough to pose its bones again later
 typedef struct {
@@ -47,6 +48,7 @@ typedef struct {
 	float      (*bones)[3][4];  // every bone in the world, as the renderer wants them
 	float      (*local)[3][4];  // a bone with no body: where it is in its parent's space (or the root body's)
 	physbody_t  *body;          // per bone
+	const int   *parent;        // per bone, the model's (its ragskel_t's)
 	int          rootbone;      // the bone of the first body
 	int          numjoints;
 	physjoint_t *joints;
@@ -99,6 +101,218 @@ static void SpinBetween(const float from[3][4], const float to[3][4], float dt, 
 	float angle = atan2f(s, c) * (180.0f / M_PI_F);
 	for (int i = 0; i < 3; i++)
 		spin[i] = axis[i] / (2 * s) * angle / dt;
+}
+
+// ---------------------------------------------------------------- what a model's ragdoll is made of
+
+// A model's bones as the ragdoll code needs them, and its solids and joints: a Source model's own physics
+// file, or for a Half-Life model (phys_ragdoll_hl) ones made here from its hitboxes. Kept per model until
+// the map goes (the models go then too).
+typedef struct {
+	model_t         *model;
+	const srcphys_t *phys;       // NULL: this model can't be a ragdoll
+	srcphys_t       *made;       // phys when it was made here (ours to free)
+	int              numbones;
+	int             *parent;
+	float          (*rest)[3][4];   // each bone in the model's space in its rest pose: where joint angles are zero
+} ragskel_t;
+
+static ragskel_t *skels;
+static int        skels_count;
+
+// How far a joint turns, guessed from the child bone's name. Half-Life's characters were made with an
+// earlier version of the 3ds Max skeleton Half-Life 2 used: a bone's X runs along it and knees and elbows
+// bend about Z, so the ranges are Half-Life 2's own, rounded. Its names differ ("L Leg" is the thigh,
+// "L Leg1" the calf, "L Arm" the collar, "L Arm1" the upper arm, "L Arm2" the forearm) and its legs turn
+// the other way about Z (checked on scientist.mdl's rest pose: a calf turned +90 puts the foot in front).
+// The first word found wins, so the longer names come first. Anything else gets a modest cone.
+static void GuessLimits(const char *bone, srcphyjoint_t *j)
+{
+	static const struct { const char *word; float min[3], max[3]; } table[] = {
+		{ "leg1",     {   0,   0, -125 }, { 0,  0,  10 } },
+		{ "arm2",     {   0,   0, -120 }, { 0,  0,   5 } },
+		{ "arm1",     { -50, -90, -90 }, { 55, 90,  30 } },
+		{ "calf",     {   0,   0, -10 }, {  0,  0, 125 } },
+		{ "forearm",  {   0,   0, -120 }, { 0,  0,   5 } },
+		{ "thigh",    { -25, -45, -95 }, { 35, 45,  30 } },
+		{ "upperarm", { -50, -90, -90 }, { 55, 90,  30 } },
+		{ "clavicle", { -10, -10, -10 }, { 10, 10,  10 } },
+		{ "head",     { -20, -25, -15 }, { 20, 25,  30 } },
+		{ "neck",     { -15, -20, -15 }, { 15, 20,  25 } },
+		{ "spine",    { -30, -20, -20 }, { 30, 20,  40 } },
+		{ "foot",     {   0, -20, -15 }, {  0, 20,  35 } },
+		{ "toe",      {   0,   0, -20 }, {  0,  0,  20 } },
+		{ "hand",     { -60,   0, -55 }, { 60,  0,  70 } },
+		{ "finger",   {   0,   0, -60 }, {  0,  0,  10 } },
+		{ "leg",      { -25, -45, -30 }, { 35, 45,  95 } },
+		{ "arm",      { -10, -10, -10 }, { 10, 10,  10 } },
+	};
+	char name[64];
+	size_t n = 0;
+	for (; bone[n] && n < sizeof(name) - 1; n++)
+		name[n] = (char)tolower((unsigned char)bone[n]);
+	name[n] = 0;
+	for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
+		if (strstr(name, table[i].word)) {
+			VectorCopy(table[i].min, j->min);
+			VectorCopy(table[i].max, j->max);
+			return;
+		}
+	VectorSet(j->min, -35, -35, -35);
+	VectorSet(j->max, 35, 35, 35);
+}
+
+// A Half-Life model's solids and joints from its hitboxes: a bone's hitboxes are its solid, joined to the
+// nearest bone above it that has one. NULL if it has fewer than two such bones.
+static srcphys_t *HitboxPhys(const studiohdr_t *h, const ragskel_t *sk)
+{
+	const mstudiobbox_t *hb = STUDIO_PTR(h, h->hitboxindex, mstudiobbox_t);
+	const mstudiobone_t *bone = STUDIO_PTR(h, h->boneindex, mstudiobone_t);
+	int *solidof = Mem_Alloc(sizeof(int) * (h->numbones ? h->numbones : 1));
+	int numsolids = 0;
+	for (int i = 0; i < h->numbones; i++)
+		solidof[i] = -1;
+	for (int i = 0; i < h->numhitboxes; i++)
+		if (hb[i].bone >= 0 && hb[i].bone < h->numbones && solidof[hb[i].bone] < 0)
+			solidof[hb[i].bone] = numsolids++;
+	if (numsolids < 2) {
+		Mem_Free(solidof);
+		return NULL;
+	}
+	srcphys_t *ph = Mem_Alloc(sizeof(*ph));
+	ph->numsolids = numsolids;
+	ph->solids = Mem_Alloc(sizeof(*ph->solids) * numsolids);
+	ph->joints = Mem_Alloc(sizeof(*ph->joints) * numsolids);
+	ph->selfcollide = false;   // hitboxes overlap their neighbours generously
+	for (int b = 0; b < h->numbones; b++) {
+		if (solidof[b] < 0)
+			continue;
+		srcphysolid_t *so = &ph->solids[solidof[b]];
+		so->index = solidof[b];
+		so->bone = b;
+		Q_strncpy(so->name, bone[b].name, sizeof(so->name));
+		Q_strncpy(so->surfaceprop, "flesh", sizeof(so->surfaceprop));
+		so->described = true;
+		int n = 0;
+		for (int i = 0; i < h->numhitboxes; i++)
+			n += hb[i].bone == b;
+		so->counts = Mem_Alloc(sizeof(int) * n);
+		so->points = Mem_Alloc(sizeof(float) * 24 * n);
+		float volume = 0;
+		for (int i = 0; i < h->numhitboxes; i++) {
+			if (hb[i].bone != b)
+				continue;
+			vec3_t mins, maxs;
+			for (int k = 0; k < 3; k++) {
+				mins[k] = hb[i].bbmin[k] < hb[i].bbmax[k] ? hb[i].bbmin[k] : hb[i].bbmax[k];
+				maxs[k] = hb[i].bbmin[k] < hb[i].bbmax[k] ? hb[i].bbmax[k] : hb[i].bbmin[k];
+				if (!(mins[k] > -4096 && maxs[k] < 4096))
+					mins[k] = maxs[k] = 0;
+				if (maxs[k] - mins[k] < 1) {   // a flat box has no shape
+					mins[k] -= 0.5f;
+					maxs[k] += 0.5f;
+				}
+			}
+			float *pts = so->points + so->numpoints * 3;
+			for (int c = 0; c < 8; c++)
+				for (int k = 0; k < 3; k++)
+					pts[c * 3 + k] = c & (1 << k) ? maxs[k] : mins[k];
+			so->counts[so->numpieces++] = 8;
+			so->numpoints += 8;
+			volume += (maxs[0] - mins[0]) * (maxs[1] - mins[1]) * (maxs[2] - mins[2]);
+		}
+		// about half of a box that size is flesh, as heavy as water
+		so->volume = volume;
+		so->mass = volume * (0.0254f * 0.0254f * 0.0254f) * 500.0f;
+		if (so->mass < 0.5f)
+			so->mass = 0.5f;
+		so->damping = 0.05f;
+		so->rotdamping = 1.5f;
+		so->inertia = 3;
+		// joined to the nearest bone above that has a solid
+		int up = sk->parent[b];
+		while (up >= 0 && solidof[up] < 0)
+			up = sk->parent[up];
+		if (up >= 0) {
+			srcphyjoint_t *j = &ph->joints[ph->numjoints++];
+			j->parent = solidof[up];
+			j->child = solidof[b];
+			GuessLimits(bone[b].name, j);
+			Q_strncpy(so->parent, bone[up].name, sizeof(so->parent));
+		}
+	}
+	Mem_Free(solidof);
+	if (!ph->numjoints) {
+		SrcPhys_Free(ph);
+		return NULL;
+	}
+	return ph;
+}
+
+// rotations about X, then Y, then Z (radians) and a position: how Half-Life's models store a bone
+static void BoneMatrix(const float value[6], float m[3][4])
+{
+	float sx = sinf(value[3]), cx = cosf(value[3]), sy = sinf(value[4]), cy = cosf(value[4]);
+	float sz = sinf(value[5]), cz = cosf(value[5]);
+	m[0][0] = cz * cy;  m[0][1] = cz * sy * sx - sz * cx;  m[0][2] = cz * sy * cx + sz * sx;
+	m[1][0] = sz * cy;  m[1][1] = sz * sy * sx + cz * cx;  m[1][2] = sz * sy * cx - cz * sx;
+	m[2][0] = -sy;      m[2][1] = cy * sx;                 m[2][2] = cy * cx;
+	for (int k = 0; k < 3; k++)
+		m[k][3] = value[k];
+}
+
+static const ragskel_t *SkelFor(model_t *m)
+{
+	if (!m || m->type != mod_studio)
+		return NULL;
+	for (int i = 0; i < skels_count; i++)
+		if (skels[i].model == m)
+			return skels[i].phys ? &skels[i] : NULL;
+	const srcmodel_t *s = m->studio.source;
+	const studiohdr_t *h = m->studio.hdr;
+	// a Half-Life model is only looked at while the cvar is on (so turning it on later still works)
+	if (!s && (!phys_ragdoll_hl->value || !h || h->numbones < 2 || h->numhitboxes < 2))
+		return NULL;
+	skels = Mem_Realloc(skels, sizeof(*skels) * (skels_count + 1));
+	ragskel_t *sk = &skels[skels_count++];
+	memset(sk, 0, sizeof(*sk));
+	sk->model = m;
+	sk->numbones = s ? s->numbones : h->numbones;
+	sk->parent = Mem_Alloc(sizeof(int) * sk->numbones);
+	sk->rest = Mem_Alloc(sizeof(*sk->rest) * sk->numbones);
+	if (s) {
+		for (int i = 0; i < sk->numbones; i++) {
+			sk->parent[i] = s->bones[i].parent;
+			MatInvert(s->bones[i].posetobone, sk->rest[i]);
+		}
+		sk->phys = s->phys && s->phys->numjoints ? s->phys : NULL;
+	} else {
+		const mstudiobone_t *bone = STUDIO_PTR(h, h->boneindex, mstudiobone_t);
+		for (int i = 0; i < sk->numbones; i++) {
+			int parent = bone[i].parent;
+			sk->parent[i] = parent >= 0 && parent < i ? parent : -1;   // parents come first; anything else is a root
+			float local[3][4];
+			BoneMatrix(bone[i].value, local);
+			if (sk->parent[i] < 0)
+				memcpy(sk->rest[i], local, sizeof(local));
+			else
+				MatMul(sk->rest[sk->parent[i]], local, sk->rest[i]);
+		}
+		sk->phys = sk->made = HitboxPhys(h, sk);
+	}
+	return sk->phys ? sk : NULL;
+}
+
+static void FreeSkels(void)
+{
+	for (int i = 0; i < skels_count; i++) {
+		SrcPhys_Free(skels[i].made);
+		Mem_Free(skels[i].parent);
+		Mem_Free(skels[i].rest);
+	}
+	Mem_Free(skels);
+	skels = NULL;
+	skels_count = 0;
 }
 
 // ---------------------------------------------------------------- making and removing
@@ -175,14 +389,13 @@ static void TakeSnap(const edict_t *e, snap_t *sn)
 // every bone from the bodies: theirs straight, the others carried by their parents as they were at death
 static void UpdateBones(ragdoll_t *rd, physworld_t *w)
 {
-	const srcmodel_t *s = rd->model->studio.source;
 	for (int i = 0; i < rd->numbones; i++)
 		if (rd->body[i] != PHYS_NOBODY)
 			Phys_GetMatrix(w, rd->body[i], rd->bones[i]);
 	for (int i = 0; i < rd->numbones; i++) {
 		if (rd->body[i] != PHYS_NOBODY)
 			continue;
-		int parent = s->bones[i].parent;
+		int parent = rd->parent[i];
 		MatMul(rd->bones[parent < 0 ? rd->rootbone : parent], rd->local[i], rd->bones[i]);
 	}
 }
@@ -221,7 +434,9 @@ static void EnforceLimit(physworld_t *w)
 
 static qboolean MakeRagdoll(int num, edict_t *e, track_t *t, model_t *m)
 {
-	const srcmodel_t *s = m->studio.source;
+	const ragskel_t *s = SkelFor(m);
+	if (!s)
+		return false;
 	const srcphys_t *ph = s->phys;
 	physworld_t *w = Phys_ServerWorld(true);
 	if (!w)
@@ -242,6 +457,7 @@ static qboolean MakeRagdoll(int num, edict_t *e, track_t *t, model_t *m)
 	rd->modelindex = e->v.modelindex;
 	rd->born = sv.time;
 	rd->numbones = s->numbones;
+	rd->parent = s->parent;
 	rd->bones = Mem_Alloc(sizeof(*rd->bones) * s->numbones);
 	rd->local = Mem_Alloc(sizeof(*rd->local) * s->numbones);
 	rd->body = Mem_Alloc(sizeof(*rd->body) * s->numbones);
@@ -320,9 +536,9 @@ static qboolean MakeRagdoll(int num, edict_t *e, track_t *t, model_t *m)
 		int pb = ph->solids[j->parent].bone, cb = ph->solids[j->child].bone;
 		if (pb < 0 || cb < 0 || rd->body[pb] == PHYS_NOBODY || rd->body[cb] == PHYS_NOBODY)
 			continue;
-		float childtomodel[3][4], frame1[3][4];
-		MatInvert(s->bones[cb].posetobone, childtomodel);
-		MatMul(s->bones[pb].posetobone, childtomodel, frame1);
+		float modeltoparent[3][4], frame1[3][4];
+		MatInvert(s->rest[pb], modeltoparent);
+		MatMul(modeltoparent, s->rest[cb], frame1);
 		physjoint_t pj = Phys_AddJoint(w, rd->body[pb], rd->body[cb], frame1, identity, j->min, j->max, RAGDOLL_JOINT_FRICTION);
 		if (pj)
 			rd->joints[rd->numjoints++] = pj;
@@ -347,7 +563,7 @@ static qboolean MakeRagdoll(int num, edict_t *e, track_t *t, model_t *m)
 	for (int i = 0; i < s->numbones; i++) {
 		if (rd->body[i] != PHYS_NOBODY)
 			continue;
-		int parent = s->bones[i].parent;
+		int parent = s->parent[i];
 		float inv[3][4];
 		MatInvert(rd->bones[parent < 0 ? rd->rootbone : parent], inv);
 		MatMul(inv, rd->bones[i], rd->local[i]);
@@ -373,7 +589,8 @@ void Ragdoll_Frame(void)
 		track_t *t = &tracks[i];
 		ragdoll_t *rd = t->ragdoll ? &ragdolls[t->ragdoll - 1] : NULL;
 		model_t *m = e->free || !e->v.modelindex ? NULL : SV_ModelForIndex(e->v.modelindex);
-		const srcmodel_t *s = m && m->type == mod_studio ? m->studio.source : NULL;
+		// (the cvar is asked first: with it off, Half-Life models aren't even looked at)
+		const ragskel_t *s = m && m->type == mod_studio && (m->studio.source || phys_ragdoll_hl->value) ? SkelFor(m) : NULL;
 		if (e->free) {
 			t->forced = false;
 			t->kicktime = 0;
@@ -384,7 +601,7 @@ void Ragdoll_Frame(void)
 			RemoveRagdoll(rd);
 			rd = NULL;
 		}
-		if (!s || !s->phys || !s->phys->numjoints) {
+		if (!s) {
 			t->snap[0].valid = t->snap[1].valid = false;
 			t->dead = false;
 			continue;
@@ -441,8 +658,7 @@ qboolean Ragdoll_Force(int num)
 		return false;
 	edict_t *e = EDICT_NUM(num);
 	model_t *m = e->free ? NULL : SV_ModelForIndex(e->v.modelindex);
-	const srcmodel_t *s = m && m->type == mod_studio ? m->studio.source : NULL;
-	if (!s || !s->phys || !s->phys->numjoints)
+	if (!SkelFor(m))
 		return false;
 	Ragdoll_Frame();   // makes sure it's tracked
 	if (num >= tracks_cap)
@@ -456,6 +672,7 @@ void Ragdoll_Clear(void)
 {
 	for (int i = 0; i < ragdolls_count; i++)
 		RemoveRagdoll(&ragdolls[i]);
+	FreeSkels();
 	Mem_Free(ragdolls);
 	Mem_Free(tracks);
 	ragdolls = NULL;
@@ -491,11 +708,11 @@ qboolean Ragdoll_Bones(int handle, const model_t *m, float (*out)[3][4], int num
 
 // in a joint's own terms: how far the child has turned about axis from the rest pose, for a joint
 // that turns about one axis only (knees, elbows)
-static float HingeAngle(const ragdoll_t *rd, const srcmodel_t *s, int pb, int cb, int axis)
+static float HingeAngle(const ragdoll_t *rd, const ragskel_t *s, int pb, int cb, int axis)
 {
-	float childtomodel[3][4], frame1[3][4], world1[3][4], inv[3][4], rel[3][4];
-	MatInvert(s->bones[cb].posetobone, childtomodel);
-	MatMul(s->bones[pb].posetobone, childtomodel, frame1);
+	float modeltoparent[3][4], frame1[3][4], world1[3][4], inv[3][4], rel[3][4];
+	MatInvert(s->rest[pb], modeltoparent);
+	MatMul(modeltoparent, s->rest[cb], frame1);
 	MatMul(rd->bones[pb], frame1, world1);
 	MatInvert(world1, inv);
 	MatMul(inv, rd->bones[cb], rel);
@@ -526,9 +743,9 @@ static void Ragdolls_f(void)
 			root[0][3], root[1][3], root[2][3], sv.time - rd->born);
 		if (Cmd_Argc() > 1 && !rd->frozen) {
 			// joints that bend one way only, against their limits
-			const srcmodel_t *s = rd->model->studio.source;
-			const srcphys_t *ph = s->phys;
-			for (int k = 0; k < ph->numjoints; k++) {
+			const ragskel_t *s = SkelFor(rd->model);
+			const srcphys_t *ph = s ? s->phys : NULL;
+			for (int k = 0; ph && k < ph->numjoints; k++) {
 				const srcphyjoint_t *j = &ph->joints[k];
 				int free = 0, axis = 0;
 				for (int a = 0; a < 3; a++)
@@ -554,5 +771,6 @@ void Ragdoll_Init(void)
 	phys_ragdolls = Cvar_Get("phys_ragdolls", "1", FCVAR_ARCHIVE, "dying characters with a physics file fall limp (Source models)");
 	phys_ragdoll_max = Cvar_Get("phys_ragdoll_max", "16", FCVAR_ARCHIVE, "most ragdolls simulated at once; the oldest beyond it keeps its pose and stops moving");
 	phys_ragdoll_time = Cvar_Get("phys_ragdoll_time", "0", FCVAR_ARCHIVE, "seconds a ragdoll is simulated before it keeps its pose (0 = until the map changes)");
+	phys_ragdoll_hl = Cvar_Get("phys_ragdoll_hl", "0", FCVAR_ARCHIVE, "Half-Life's own characters also fall limp, with joints guessed from their hitboxes, instead of playing their death animations");
 	Cmd_AddCommand("phys_ragdolls_list", Ragdolls_f, "lists the ragdolls (with any argument: their knees and elbows against their limits)");
 }

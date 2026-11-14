@@ -246,12 +246,12 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_fx.c` | 456 | Lua sound (`ent:EmitSound`/`StopSound`, `sound.Play`, `surface.PlaySound`, `CHAN_*`, the `EntityEmitSound` hook every game, client and Lua sound passes) and effects (`effects.*` as temp-entity messages through `CL_ParseTempEntity`, `util.Decal`, `util.ScreenShake`, `ply:ScreenFade`) |
 | `lua_render.c` | 562 | Lua `render.*` in the `PostDrawOpaque`/`PostDrawTranslucent` hooks, `ClientsideModel`, `Material`, `Vector:ToScreen` |
 | `lua_ents.c` | 926 | Scripted entities: `scripted_ents.Register` (classes in the registry, per-class metatables so a re-registered class updates live entities, `ENT.Base`), `SV_GetEntityInit` gives a Lua class the game's `info_target` and marks the edict (`sentslot_t`: serial, use type, last health), each Lua entity's own table in the registry by edict number (read before the Entity methods in `e_index`), think/touch/use dispatch, the player's `+use` (`LuaE_PlayerUse`, clears `IN_USE` for the game), `OnTakeDamage` from lost health each frame, `Draw` in `PostDrawOpaque`, the tables' save format (tagged values, entities by edict number) for level states, saved games and `lua_reload`, `ServerTime()` |
-| `phys.h` | 121 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
-| `phys_jolt.cpp` | 842 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
-| `phys_ragdoll.c` | 539 | Ragdolls (physics plan step 4): `Ragdoll_Frame` before each physics step watches every edict whose Source model has a jointed `.phy` (two snapshots of its last living frames), makes a ragdoll when `deadflag` is set (`MakeRagdoll`: a body per solid at its bone, joints from the rest pose, the file's collision pairs), removes it when the edict goes; `Ragdoll_AfterStep` copies the bodies into bone matrices and enforces `phys_ragdoll_max`/`phys_ragdoll_time`; `Ragdoll_ForEdict`/`Ragdoll_Bones` give them to the renderer (`rentity_t::ragdoll`, `SrcSetupBones`); `phys_ragdolls_list` |
-| `lua_phys.c`, `base/lua/entities/prop_physics.lua` | 615 | Physics props (physics plan step 5): any entity can get a Jolt body (`CreateProp`: the model's one-solid `.phy`, else a box); `Prop_BeforeStep` is the player's push, `Prop_AfterStep` copies bodies into edicts (origin, angles with the pitch flipped as studio models are drawn, velocity, and the upright box round the shape via `SV_SetMinMaxSize`), removes props that left the map and runs `PhysicsCollide`; Lua: `ent:PhysicsInit/PhysicsInitBox/PhysicsDestroy/GetPhysicsObject/BecomeRagdoll/WorldSpaceCenter`, the `PhysObj` methods, `physics.SpawnProp`. The Lua file is the `prop_physics` class (damage pushes, breaking, `OnRestore`) |
+| `phys.h` | 122 | The physics C interface (inches, Half-Life angles, kg); no C++ types, shared with the future HL2 map plan |
+| `phys_jolt.cpp` | 843 | The only C++ file: Jolt start/stop, two object layers (still, moving), worlds stepped in equal substeps of at most 1/120 s (single-threaded job system, 8 MB temp allocator), boxes, static meshes, convex-piece compounds (the only kind of map shape that can move), kinematic moves, poses, velocities, impulses; inch/metre and angle/quaternion conversion |
+| `phys_ragdoll.c` | 776 | Ragdolls (physics plan steps 4 and 7): `SkelFor` gives a model's bones, rest pose, solids and joints (a Source model's `.phy`, or made from a Half-Life model's hitboxes by `HitboxPhys` when `phys_ragdoll_hl` is on); `Ragdoll_Frame` before each physics step watches every edict whose model has them (two snapshots of its last living frames), makes a ragdoll when `deadflag` is set (`MakeRagdoll`: a body per solid at its bone, joints from the rest pose, the file's collision pairs), removes it when the edict goes; `Ragdoll_AfterStep` copies the bodies into bone matrices and enforces `phys_ragdoll_max`/`phys_ragdoll_time`; `Ragdoll_ForEdict`/`Ragdoll_Bones` give them to the renderer (`rentity_t::ragdoll`, `SrcSetupBones`); `phys_ragdolls_list` |
+| `lua_phys.c`, `base/lua/entities/prop_physics.lua` | 673 | Physics props (physics plan step 5): any entity can get a Jolt body (`CreateProp`: the model's one-solid `.phy`, else a box); `Prop_BeforeStep` is the player's push, `Prop_AfterStep` copies bodies into edicts (origin, angles with the pitch flipped as studio models are drawn, velocity, and the upright box round the shape via `SV_SetMinMaxSize`), removes props that left the map and runs `PhysicsCollide`; Lua: `ent:PhysicsInit/PhysicsInitBox/PhysicsDestroy/GetPhysicsObject/BecomeRagdoll/WorldSpaceCenter`, the `PhysObj` methods, `physics.SpawnProp`. The Lua file is the `prop_physics` class (damage pushes, breaking, `OnRestore`) |
 | `src_phys.c` | 530 | Source models' `.phy` files (physics plan step 3): `SrcPhys_Load`/`SrcPhys_Parse` give a `srcphys_t` (`src_local.h`): each solid's convex pieces as points + counts (the layout `Phys_AddConvexSet` takes), its bone name, mass, damping; the joints (`ragdollconstraint`: parent and child solid, min/max degrees per axis); which solid pairs collide. `phyinfo` |
-| `phys_world.c` | 665 | The map's physics world, made on first use (`ServerWorld`): the world model's faces as one static mesh (water left out), every `SOLID_BSP` brush entity as a kinematic body of convex pieces (the solid leaves of its hull-0 BSP tree, corners from plane triples), moved each frame to its edict (`SyncBrushes`, `Phys_ServerFrame` after `SV_Physics`), gone at `SV_Deactivate`; test boxes (`phys_dropbox/boxat/boxes/clear`, drawn after `R_DrawEntities`); `phys_test` |
+| `phys_world.c` | 669 | The map's physics world, made on first use (`ServerWorld`): the world model's faces as one static mesh (water left out), every `SOLID_BSP` brush entity as a kinematic body of convex pieces (the solid leaves of its hull-0 BSP tree, corners from plane triples), moved each frame to its edict (`SyncBrushes`, `Phys_ServerFrame` after `SV_Physics`), gone at `SV_Deactivate`; test boxes (`phys_dropbox/boxat/boxes/clear`, drawn after `R_DrawEntities`); `phys_test` |
 | `lua_ext.c` | 407 | Lua's smaller entity/player calls, `ents.FindInCone/FindAlongRay/FireTargets`, hooks `KeyPress`/`KeyRelease`, `OnNPCKilled`, `CalcView` |
 | `lua_ui.c` | 164 | Lua fonts (`surface.CreateFont/SetFont`) and textured rectangles |
 | `lua_game.c` | 1284 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
@@ -1013,6 +1013,56 @@ add-on file with a wildcard sentence key, the Lua hook changing and hiding lines
 recordings). Limits: ASCII only (the GDI font atlas); one colour per caption; HL2's UTF-16 caption files can't be
 read yet; `closecaption` defaults to 1, so test scripts comparing pixels should set it to 0.
 Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later: co-op, terrain, 64-bit.
+
+### Physics plan: done (2026-11-14). Step 7 and two extras, branch `phys-7`
+
+**The plan is built, steps 1-7, each on its own branch from the one before (`phys-1` ... `phys-7`, on
+`swep-5`); none is merged into `master` or pushed. Next in the brief's order (`docs/BRIEF_FOR_AGENTS.md`
+section 4): `docs/SWEP_PLAN.md` steps 1-4 and 6. Nothing in the physics work has been built with Visual
+C++ or run on real Windows: Linux and the MinGW exe under Wine only.**
+
+- **Extras the owner asked for after step 6** (commit "Stronger explosions; fast props hurt monsters"):
+  - `phys_blastforce` (3) multiplies the explosion throw (18 in/s per point of damage at the middle);
+    40% of the throw is turned upwards (`BLAST_LIFT`; `Phys_Explode` got a `lift` argument); bodies up to
+    40 kg get all of it. On c2a5 a magnitude-100 explosion throws 30 kg crates 190-290 units, the one on top
+    590 units up.
+  - **A corpse with a ragdoll gets `takedamage = 0`** (`Ragdoll_Frame`). This writes one field of
+    `hl.dll`'s entity: its box is still where the monster died while the body lies elsewhere, so the
+    game's blood and gibbing there were wrong, and gibbing removed the ragdoll. Now a blast 60 units from
+    a corpse throws it 230 units. Side effect: corpses of Source-model (and `phys_ragdoll_hl`) characters
+    can't be gibbed at all.
+  - **Fast props hurt monsters** (`HitMonsters` in `lua_phys.c`, each frame for awake props): a prop
+    faster than `phys_impactspeed` (250) whose box touches a living `FL_MONSTER`'s box while moving
+    towards it does mass x (speed - limit) / 100 x `phys_impactdamage` through `SV_GameObjTakeDamage`
+    (`DMG_CRUSH | DMG_NEVERGIB`, the prop as attacker), keeps 30% of its speed and can't hit again for
+    0.3 s. `Ragdoll_Kick` remembers the prop's velocity x mass / (mass + 60) for the victim, added to its
+    ragdoll if it becomes one within 0.5 s. Jolt knows nothing of monsters, so the test is box against
+    box in Half-Life's terms. Players are never hurt. Needs the game-object probe to have passed.
+    Checked: a crate at 700 in/s kills a 50-health soldier, whose ragdoll lands 110 units on; a crate
+    thrown by an explosion killed a soldier 200 units from the blast.
+- **Step 7, Half-Life model ragdolls** (decision P4: behind `phys_ragdoll_hl`, default 0):
+  - `phys_ragdoll.c` no longer reads Source structures directly. `ragskel_t` (one per model, kept until
+    the map goes) has the bone count, each bone's parent, each bone's rest matrix in the model's space
+    (Source: `posetobone` inverted; Half-Life: the bones' default position and X-Y-Z rotation chained,
+    `BoneMatrix`) and a `srcphys_t`: the model's own, or one made by `HitboxPhys`.
+  - `HitboxPhys`: every bone with hitboxes is a solid whose pieces are those boxes (in the bone's space, as
+    hitboxes are); mass = the boxes' volume at 500 kg/m3; joined to the nearest bone above that has a
+    solid; no collisions between its own solids (hitboxes overlap). `GuessLimits` picks the joint's
+    ranges by the child bone's name. **Half-Life's skeletons use older names than Half-Life 2's** ("L Leg"
+    thigh, "L Leg1" calf, "L Arm" collar, "L Arm1" upper arm, "L Arm2" forearm) **and their legs turn the
+    other way about Z**: on `scientist.mdl`'s rest pose a calf turned +90 puts the foot in front, so the
+    knee range is -125 to 10 where Half-Life 2's is -12 to 126. Elbows match Half-Life 2's. Unknown names
+    get 35 degrees every way.
+  - The renderer's Half-Life path (`R_StudioSetupBones`) takes a ragdoll's bones as the Source path does.
+  - Checked, Linux and Wine: c1a0d scientists and Barney (19 bodies, 18 joints each: one folds over the
+    counter, one drops to the floor), c2a5 grunts (22 bodies: they fold into a heap by the wall, all
+    asleep within 9 s), a headcrab on c1a1a (13 bodies). Save and load, a map change. AddressSanitizer: no
+    reports. Combine soldiers (Source) still as before with the cvar on or off.
+  - Known: the bodies curl up (both elbows often end at their limit) more than Half-Life 2's ragdolls;
+    one toe joint sat 7 degrees past its guessed limit; the monster's death sounds still play but its
+    death animation is never seen; hitboxes are bigger than the body, so limbs rest a little above the floor.
+  - Not checked: zombies, houndeyes, bullsquids and other non-human skeletons beyond the headcrab; the
+    HD model pack; other games' models; how it looks in a real fight.
 
 ### Physics plan: step 6, pushes, built (2026-11-14, branch `phys-6`)
 
