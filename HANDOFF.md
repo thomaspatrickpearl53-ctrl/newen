@@ -1017,7 +1017,8 @@ Phase 3: VGUI2. Phase 4: Opposing Force, Blue Shift, CS 1.6, Cry of Fear. Later:
 ### Physics plan: done (2026-11-14). Step 7 and two extras, branch `phys-7`
 
 **The plan is built, steps 1-7, each on its own branch from the one before (`phys-1` ... `phys-7`, on
-`swep-5`); none is merged into `master` or pushed. Next in the brief's order (`docs/BRIEF_FOR_AGENTS.md`
+`swep-5`). `master` was fast-forwarded to `phys-7` on 2026-11-14 at the owner's word (so it also has
+`swep-5`); nothing is pushed or released. Next in the brief's order (`docs/BRIEF_FOR_AGENTS.md`
 section 4): `docs/SWEP_PLAN.md` steps 1-4 and 6. Nothing in the physics work has been built with Visual
 C++ or run on real Windows: Linux and the MinGW exe under Wine only.**
 
