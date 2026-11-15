@@ -565,5 +565,7 @@ VGUI2 (the main menu already runs on it); more games
 
 ## Licence
 
-newen is under the MIT licence (`LICENSE`). The libraries in `third_party/` keep their own licences.
+newen is under the GNU General Public License, version 3 or later (`LICENSE`), with an extra permission
+(`LICENSE-EXCEPTION`) to run game DLLs, mods and VGUI libraries under any licence, such as Half-Life's own.
+The libraries in `third_party/` keep their own licences.
 Half-Life, its DLLs and its content belong to Valve and are not part of this project.

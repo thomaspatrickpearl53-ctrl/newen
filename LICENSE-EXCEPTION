@@ -1,0 +1,24 @@
+newen - additional permission under GNU GPL version 3 section 7
+
+Copyright (C) 2026 the newen authors
+
+newen is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. The full licence text is in the file LICENSE.
+
+As a special exception, the copyright holders of newen give you permission
+to load, link and run newen in the same process as Game Libraries, and to
+convey the resulting combination, regardless of the licence terms of those
+Game Libraries. You must still obey the GNU General Public License in all
+respects for all of the code in newen itself.
+
+"Game Libraries" means game code, client code, user interface libraries
+(such as vgui.dll, vgui2 and GameUI), mods and other modules that are not
+part of newen and that talk to newen only through its game, client, user
+interface or Lua interfaces. Half-Life's hl.dll, client.dll and vgui.dll
+are examples.
+
+If you modify newen, you may extend this exception to your version, but
+you are not obliged to do so. If you do not wish to do so, delete this
+exception statement from your version.

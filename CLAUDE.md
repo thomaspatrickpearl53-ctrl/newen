@@ -8,7 +8,7 @@ next steps. `README.md` covers commands, cvars and the Lua API.
   output `bin/newen`, build folder `build-linux/`).
 - Test without a human: `bin\newen.exe +map c1a0 +wait 30 +screenshot +wait 1 +quit`, then read
   `bin\userdata\valve\console.log` and convert `bin\userdata\valve\screenshots\*.tga` with ffmpeg.
-- Clean-room: never copy Xash3D (GPL) code. Never write into the Half-Life folder.
+- Clean-room: never copy Xash3D (GPL) code; newen is GPLv3 with a game-DLL exception that plain-GPL code can't carry. Never write into the Half-Life folder.
 - Match the surrounding style: tabs, C11, `Mem_*` allocators, growable arrays instead of fixed limits, short
   comments that explain why.
 - The owner likes to discuss before building. When they say to wait for "go", wait for it. Don't look in their

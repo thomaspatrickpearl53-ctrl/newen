@@ -20,7 +20,7 @@ mkdir -p "$L"
 cp bin/newen "$L/"
 strip --strip-debug "$L/newen"
 cp -r base "$L/"
-cp README.md LICENSE THIRD_PARTY_LICENSES.txt "$L/"
+cp README.md LICENSE LICENSE-EXCEPTION THIRD_PARTY_LICENSES.txt "$L/"
 tar -C dist -czf "$L.tar.gz" "newen-$VER-linux-x86"
 
 # Windows
@@ -36,7 +36,7 @@ mkdir -p "$W"
 cp build-mingw/out/newen.exe build-mingw/out/SDL2.dll "$W/"
 i686-w64-mingw32-strip --strip-debug "$W/newen.exe"
 cp -r base "$W/"
-cp README.md LICENSE THIRD_PARTY_LICENSES.txt "$W/"
+cp README.md LICENSE LICENSE-EXCEPTION THIRD_PARTY_LICENSES.txt "$W/"
 (cd dist && python3 -c "
 import os, sys, zipfile
 top = sys.argv[1]

@@ -4,6 +4,10 @@ Everything someone new needs to pick this project up: what it is, what was decid
 out, how to build and test it, what works, what doesn't, and what comes next. Read `README.md` first for the
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
+2026-11-15: **licence changed from MIT to GPLv3-or-later** (owner's choice), with a section 7 exception
+(`LICENSE-EXCEPTION`) that lets newen run Half-Life's DLLs, mods and VGUI libraries whatever their licence.
+`tools/make_release.sh` ships both files.
+
 2026-11-01: **Half-Life's own main menu** (owner: "exactly how Half-Life has it"): newen hosts the game's
 `gameui.so`/`GameUI.dll` on Half-Life's `vgui2`, as GoldSrc does, so the menu, its dialogs and the loading screen
 are Valve's own. This pulls part of Phase 3 (VGUI2) forward. Built and tested on Linux; the Windows side is written
@@ -54,7 +58,7 @@ hl-lua folder from this project.
 | **C (C11)**, MSVC on Windows, gcc `-m32` on Linux, CMake + Ninja | Matches the GoldSrc ABI naturally; the Linux game libraries are GCC-built, so GCC gives the same struct layout |
 | **32-bit only** for now | The Steam `hl.dll`/`client.dll` are 32-bit. CMake refuses a 64-bit build. 64-bit is a later goal (via a rebuilt open-source HLSDK) |
 | **Windows and Linux** (Linux since 2026-10-30), SDL2 for window/input | Keep platform code in `sys_win.c`/`sys_linux.c` and `font_win.c`/`font_stb.c`; other files use `Sys_*` (libraries, files, crash guard) |
-| **Clean-room**: written from documented formats; **never copy Xash3D code** | Xash3D is GPL; copying would force GPL on newen. Reading public format docs is fine |
+| **Clean-room**: written from documented formats; **never copy Xash3D code** | newen is GPLv3-or-later with an extra permission to run non-GPL game DLLs (`LICENSE-EXCEPTION`); Xash3D's plain GPL code can't carry that permission. Reading public format docs is fine |
 | **Game interface headers are our own** (`game_api.h`, `client_api.h`), written from the public HL SDK layout, not copied from the SDK | Owner's choice (step 4). Keeps newen free of the SDK license; size asserts guard the layout |
 | **GameUI (the main menu) is hosted on Half-Life's own vgui2**, not redrawn | Owner's choice (2026-11-01): the menu must be exactly Half-Life's. vgui2 and GameUI only need the engine's interfaces (surface, file system, panels, a few services), which are written from the layouts in Half-Life's Linux binaries (they carry debug info) |
 | **VGUI1 is hosted, not reimplemented**: the engine loads Half-Life's own `vgui.dll` and provides the drawing surface | The stock client.dll imports 548 vgui.dll functions and builds its viewport on an engine panel at `HUD_VidInit`. vgui.dll exports its vtables, so the layout is read from the binary (no SDK headers) |
