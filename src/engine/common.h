@@ -7,11 +7,20 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <limits.h>
 
 #define ENGINE_NAME    "newen"
 #define ENGINE_VERSION "0.5.0"
 
 typedef int qboolean;
+
+// a game-interface size or offset: Valve's 32-bit libraries, or hlsdk-portable built 64-bit
+#if UINTPTR_MAX > 0xffffffffu
+#define NEWEN_64 1
+#define ABI(size32, size64) (size64)
+#else
+#define ABI(size32, size64) (size32)
+#endif
 #ifndef true
 #define true 1
 #define false 0
@@ -77,6 +86,9 @@ void       *Sys_GetProcAddress(void *lib, const char *name);
 void        Sys_FreeLibrary(void *lib);
 const char *Sys_LibraryError(void);
 const char *Sys_ExportName(void *lib, void *addr);  // the exported name at an address, or NULL
+// address space that stays in one place (the 64-bit string pool): reserved once, committed as it's used
+void       *Sys_ReserveMemory(size_t size);         // NULL on failure
+qboolean    Sys_CommitMemory(void *base, size_t size);
 
 // ---------------------------------------------------------------- cvar.c
 // Layout matches GoldSrc's cvar_t so game DLLs can register their own.
@@ -206,6 +218,8 @@ const char *FS_EngineDir(void);  // newen's own content ("base")
 void       *FS_LoadFile(const char *path, size_t *len);  // NUL-terminated, Mem_Free it
 qboolean    FS_FileExists(const char *path);
 qboolean    FS_FullPath(const char *path, char *out, size_t outsize);
+// a game or client library: on 64-bit, hlsdk-portable's name for this CPU (dlls/hl_amd64.so for dlls/hl.so)
+qboolean    FS_GameLibrary(const char *path, char *out, size_t outsize);
 FILE       *FS_OpenWrite(const char *path);
 // Lists files under dir (relative) matching wildcard, merged over all search paths,
 // sorted, without duplicates. Returns count; free with FS_FreeList.
@@ -235,6 +249,18 @@ qboolean VGUI_WantsMouse(void);
 void     VGUI_MouseMove(int x, int y);
 void     VGUI_MouseButton(int button, qboolean down, qboolean dbl);
 void     VGUI_MouseWheel(int delta);
+void     VGUI_TextInput(const char *text);
+// VGUI1 that the client library carries itself (vgui_support.c; hlsdk-portable's 64-bit clients)
+qboolean VGUIS_Init(void *client_lib);
+qboolean VGUIS_Active(void);
+void    *VGUIS_GetPanel(void);
+qboolean VGUIS_WantsMouse(void);
+void     VGUIS_MouseMove(int x, int y);
+void     VGUIS_MouseButton(int button, qboolean down, qboolean dbl);
+void     VGUIS_MouseWheel(int delta);
+void     VGUIS_TextInput(const char *text);
+void     VGUIS_Paint(void);
+void     VGUIS_Shutdown(void);
 
 // ---------------------------------------------------------------- r_main.c
 void        R_Init(void);
@@ -258,6 +284,9 @@ void     CL_Frame(double frametime);  // messages to the client, HUD_Frame
 void     CL_DrawHUD(void);            // 2D: HUD, crosshair, VGUI
 qboolean CL_KeyEvent(int key, qboolean down, const char *binding);   // false = the client ate it
 qboolean CL_HasClient(void);
+qboolean CL_TakesLookEvents(void);                    // the client wants mouse look from the engine
+void     CL_LookEvent(float yaw, float pitch);        // degrees to turn
+void     CL_MoveEvent(float forward, float side);     // -1..1, a touch stick or gamepad
 void    *CL_EngineFuncs(void);        // the client DLL's engine functions (cl_enginefunc_t), also given to GameUI
 void    *CL_InterfaceFactory(void);   // the client DLL's CreateInterface, or NULL
 void     CL_MapStarted(void);

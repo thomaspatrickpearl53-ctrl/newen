@@ -27,6 +27,15 @@ bin/newen
 It runs the Linux Half-Life from Steam (`hl.so`, `client.so`, `vgui.so`). On its first start it starts itself again
 with the Half-Life folder added to `LD_LIBRARY_PATH`, because `client.so` looks for `vgui.so` there.
 
+A 64-bit build (the first step towards Android, `docs/MOBILE_PLAN.md`) can't run Valve's 32-bit libraries, so it runs
+hlsdk-portable's, built from source. It has no Half-Life main menu (the console takes its place):
+
+```
+ARCH=64 ./build.sh          # bin64/newen
+tools/build_hlsdk.sh        # fetches and builds hlsdk-portable into bin64/hlsdk/valve
+bin64/newen +map c1a0
+```
+
 It finds Half-Life through Steam on its own, or you can start it with `-basedir "C:\path\to\Half-Life"`. Other
 options: `-game <folder>` (default `valve`), `-hd` (use the `_hd` content folders), `-dev` (developer messages), and
 any `+command` like GoldSrc (`+lua_run 2+2`).

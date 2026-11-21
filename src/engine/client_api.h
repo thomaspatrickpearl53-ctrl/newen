@@ -174,6 +174,7 @@ typedef struct ref_params_s {
 	int     viewport[4];
 	int     nextView;
 	int     onlyClientDraw;
+	float   fov_x, fov_y;   // hlsdk-portable's header has these after GoldSrc's fields; never read here
 } ref_params_t;
 
 typedef struct event_args_s {
@@ -589,7 +590,7 @@ typedef struct {
 	                              float *angles, float fparam1, float fparam2, int iparam1, int iparam2, int bparam1, int bparam2);
 	void      (*pfnWeaponAnim)(int iAnim, int body);
 	float     (*pfnRandomFloat)(float flLow, float flHigh);
-	long      (*pfnRandomLong)(long lLow, long lHigh);
+	int       (*pfnRandomLong)(int lLow, int lHigh);   // the SDK says long: 32 bits on every 32-bit system
 	void      (*pfnHookEvent)(const char *name, pfnEventHook pfnEvent);
 	int       (*Con_IsVisible)(void);
 	const char *(*pfnGetGameDirectory)(void);
@@ -624,9 +625,9 @@ typedef struct {
 	void      (*pfnSetMouseEnable)(qboolean fEnable);
 	// later additions (Steam builds and the 25th anniversary update)
 	cvar_t   *(*GetFirstCvarPtr)(void);
-	unsigned  (*GetFirstCmdFunctionHandle)(void);
-	unsigned  (*GetNextCmdFunctionHandle)(unsigned cmdhandle);
-	const char *(*GetCmdFunctionName)(unsigned cmdhandle);
+	void     *(*GetFirstCmdFunctionHandle)(void);
+	void     *(*GetNextCmdFunctionHandle)(void *cmdhandle);
+	const char *(*GetCmdFunctionName)(void *cmdhandle);
 	float     (*hudGetClientOldTime)(void);
 	float     (*hudGetServerGravityValue)(void);
 	struct model_s *(*hudGetModelByIndex)(int index);
@@ -699,16 +700,20 @@ typedef struct {
 	cl_entity_t *(*HUD_GetUserEntity)(int index);
 	int   (*HUD_GetStudioModelInterface)(int version, void **ppinterface, void *pstudio);
 	void  (*HUD_DirectorMessage)(int iSize, void *pbuf);
+	// hlsdk-portable's clients built without GoldSrc input take mouse look and analog movement from
+	// the engine (degrees and -1..1 fractions) instead of reading the mouse themselves
+	void  (*IN_ClientMoveEvent)(float forwardmove, float sidemove);
+	void  (*IN_ClientLookEvent)(float relyaw, float relpitch);
 } cldll_exports_t;
 
 _Static_assert(sizeof(SCREENINFO) == 532, "SCREENINFO layout");
 _Static_assert(sizeof(entity_state_t) == 340, "entity_state_t layout");
-_Static_assert(sizeof(cl_entity_t) == 3000, "cl_entity_t layout");
+_Static_assert(sizeof(cl_entity_t) == ABI(3000, 3016), "cl_entity_t layout");
 _Static_assert(sizeof(client_sprite_t) == 152, "client_sprite_t layout");
-_Static_assert(offsetof(TEMPENTITY, entity) == 68, "TEMPENTITY layout");
+_Static_assert(offsetof(TEMPENTITY, entity) == ABI(68, 88), "TEMPENTITY layout");
 // the tables are arrays of pointers in a fixed order; these catch an entry added or lost by mistake
-_Static_assert(offsetof(efx_api_t, R_FireCustomDecal) == 73 * 4, "efx_api_t layout");
-_Static_assert(offsetof(cl_enginefunc_t, pfnFilteredClientCmd) == 134 * 4, "cl_enginefunc_t layout (HL25)");
-_Static_assert(offsetof(event_api_t, EV_KillEvents) == 21 * 4, "event_api_t layout");
-_Static_assert(offsetof(triangleapi_t, FogParams) == 19 * 4, "triangleapi_t layout");
-_Static_assert(offsetof(engine_studio_api_t, IsHardware) == 40 * 4, "engine_studio_api_t layout");
+_Static_assert(offsetof(efx_api_t, R_FireCustomDecal) == 73 * sizeof(void *), "efx_api_t layout");
+_Static_assert(offsetof(cl_enginefunc_t, pfnFilteredClientCmd) == 134 * sizeof(void *), "cl_enginefunc_t layout (HL25)");
+_Static_assert(offsetof(event_api_t, EV_KillEvents) == 21 * sizeof(void *), "event_api_t layout");
+_Static_assert(offsetof(triangleapi_t, FogParams) == 19 * sizeof(void *), "triangleapi_t layout");
+_Static_assert(offsetof(engine_studio_api_t, IsHardware) == 40 * sizeof(void *), "engine_studio_api_t layout");

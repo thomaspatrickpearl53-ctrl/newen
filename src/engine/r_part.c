@@ -508,6 +508,18 @@ void R_EntityParticles(cl_entity_t *ent)
 
 // ---------------------------------------------------------------- update and drawing
 
+// The client's callbacks are guarded outside Update's loop: gcc 13 crashes compiling the 64-bit guard
+// (setjmp) inside it.
+static void ParticleCallback(particle_t *p, float ft)
+{
+	CLIENT_CALL("particle callback", p->callback(p, ft));
+}
+
+static void ParticleDeath(particle_t *p)
+{
+	CLIENT_CALL("particle deathfunc", p->deathfunc(p));
+}
+
 static void Update(float ft)
 {
 	float grav = (sv_gravity ? sv_gravity->value : 800) * ft;
@@ -568,14 +580,14 @@ static void Update(float ft)
 				break;
 			case pt_clientcustom:
 				if (p->callback)
-					CLIENT_CALL("particle callback", p->callback(p, ft));
+					ParticleCallback(p, ft);
 				break;
 			}
 			VectorMA(p->org, ft, p->vel, p->org);
 		}
 		if (dead) {
 			if (p->deathfunc)
-				CLIENT_CALL("particle deathfunc", p->deathfunc(p));
+				ParticleDeath(p);
 			if (prev)
 				prev->link = next;
 			else

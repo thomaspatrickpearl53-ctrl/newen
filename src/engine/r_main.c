@@ -170,7 +170,8 @@ void R_UpdateCamera(void)
 {
 	qboolean active = world.loaded && !Con_IsVisible() && Vid_HasFocus() && !VGUI_WantsMouse() && !GameUI_IsActive();
 	// with m_rawinput 0 the client DLL reads the cursor and recenters it, so relative mode must be off
-	qboolean cursor_mode = active && CL_HasClient() && SV_LocalPlayer() && Cvar_VariableValue("m_rawinput") == 0;
+	qboolean cursor_mode = active && CL_HasClient() && SV_LocalPlayer() && !CL_TakesLookEvents()
+		&& Cvar_VariableValue("m_rawinput") == 0;
 	Vid_SetRelativeMouse(active && !cursor_mode);
 	Vid_SetCapturedCursor(cursor_mode);
 	int dx, dy;
@@ -179,8 +180,13 @@ void R_UpdateCamera(void)
 		return;
 
 	float sens = sensitivity->value;
-	if (CL_HasClient() && SV_LocalPlayer())
-		return;   // the client DLL turns the view (CL_CreateMove)
+	if (CL_HasClient() && SV_LocalPlayer()) {
+		// the client DLL turns the view (CL_CreateMove); an hlsdk-portable one is told how far, and
+		// applies the sensitivity itself
+		if (CL_TakesLookEvents() && (dx || dy))
+			CL_LookEvent(-dx * m_yaw->value, dy * m_pitch->value);
+		return;
+	}
 	cl_viewangles[1] -= dx * sens * m_yaw->value;
 	cl_viewangles[0] += dy * sens * m_pitch->value;
 	if (cl_viewangles[0] > 89) cl_viewangles[0] = 89;

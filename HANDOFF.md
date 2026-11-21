@@ -4,6 +4,11 @@ Everything someone new needs to pick this project up: what it is, what was decid
 out, how to build and test it, what works, what doesn't, and what comes next. Read `README.md` first for the
 user-facing overview (commands, cvars, Lua API); this file is the developer side.
 
+2026-11-21: **Android plan started** (`docs/MOBILE_PLAN.md`; owner: Android only, hlsdk-portable, rewrite the old
+OpenGL calls, test phone a Galaxy A26). **Step 1, the 64-bit build, is built** (branch `ccr-3a075a93-2uk15d`):
+`ARCH=64 ./build.sh` -> `bin64/newen`, `tools/build_hlsdk.sh` -> hlsdk-portable's `hl_amd64.so`/`client_amd64.so` in
+`bin64/hlsdk/valve`. The 32-bit build and Valve's libraries are unchanged. See "64-bit" in section 5.
+
 2026-11-15: **licence changed from MIT to GPLv3-or-later** (owner's choice), with a section 7 exception
 (`LICENSE-EXCEPTION`) that lets newen run Half-Life's DLLs, mods and VGUI libraries whatever their licence.
 `tools/make_release.sh` ships both files.
@@ -160,6 +165,44 @@ libSDL2-2.0.so.0>` works without `lib32-sdl2-compat`, e.g. the one in Steam's `u
   Consolas becomes Noto Sans Mono / DejaVu Sans Mono, Trebuchet MS becomes Noto Sans.
 - Save files store the game's mangled function names, so Windows and Linux saves don't load on the other system.
 
+### 64-bit (Android plan step 1, `docs/MOBILE_PLAN.md`)
+```
+ARCH=64 ./build.sh              -> bin64/newen; build folder build-linux64/
+tools/build_hlsdk.sh            -> bin64/hlsdk/valve/dlls/hl_amd64.so, cl_dlls/client_amd64.so (build-hlsdk/)
+bin64/newen +map c1a0
+```
+Valve's libraries are 32-bit, so a 64-bit newen runs hlsdk-portable's (Valve's SDK code made portable by FWGS,
+fetched at a fixed commit, never copied into newen). What's different from the 32-bit build:
+- `ABI(size32, size64)` (`common.h`) gives each size assert both layouts; the 64-bit numbers were measured from
+  hlsdk-portable's own headers compiled `-m64` (and the same probe at `-m32` gave exactly the old numbers). The
+  function tables' asserts count pointers (`n * sizeof(void *)`). `gs_trace_t` drops GoldSrc's plane `type/signbits`
+  bytes on 64-bit, as the SDK header the libraries are built with has none; `model_t`'s brush `entities` sits at 520.
+- Strings: `string_t` stays an `int` offset from `pStringBase`, so on 64-bit the engine's strings live in one
+  reserved 1 GB range starting at the base (`Sys_ReserveMemory`/`Sys_CommitMemory`, committed 1 MB at a time,
+  reset per map). `SV_MakeString` copies a string that's too far away; hlsdk-portable's `MAKE_STRING` does the same
+  for its own constants through `pfnAllocString`.
+- Library names: `FS_GameLibrary` turns `dlls/hl.so` into `dlls/hl_amd64.so` (`_arm64` on ARM), searched in
+  `<exe>/hlsdk/<game>` first. Valve's 32-bit `vgui.so` and GameUI are skipped (the console is the menu).
+- VGUI1: the 64-bit client links FreeVGUI in and exports `InitVGUISupportAPI`; `vgui_support.c` is the engine's side
+  of that table (written from the public-domain `vgui_api.h`'s field order). `vgui_bridge.c`'s `VGUI_*` forward to it
+  when it's active.
+- Mouse look: that client doesn't read the mouse; `R_UpdateCamera` passes the delta to its `IN_ClientLookEvent`
+  (degrees: `-dx * m_yaw`, `dy * m_pitch`; the client applies `sensitivity`). `IN_ClientMoveEvent` is wired for the
+  touch stick (step 3). `ref_params_t` has hlsdk-portable's `fov_x/fov_y` at the end.
+- Function tables compared slot by slot with hlsdk-portable's headers (pointer-carrying parameters): three spots
+  held a pointer or 64-bit value in a 32-bit integer and now use the real type, identical on 32-bit:
+  `pfnFunctionFromName/pfnNameForFunction` (`void *`; save/restore names think and touch functions with them),
+  the client's `Get*CmdFunctionHandle` (`void *`), and `RandomLong` in the client and player-movement tables
+  (`int`: the SDK's `long`, which is 64-bit on 64-bit Linux).
+- gcc 13 crashes compiling a 64-bit `CLIENT_CALL` (sigsetjmp) inside `r_part.c`'s particle loop, so those two calls
+  moved into helper functions. `sys_linux.c` reads the crash address for x86, x86-64 and ARM.
+- Tested here without Half-Life's data (none in the cloud container): `tools/make_test_room.py` writes a lit box
+  room (BSP30, its texture inside). 64-bit and 32-bit (with hlsdk-portable's 32-bit `hl.so`) both: map loads, game
+  object probe passes, walking with `+forward`, `save`/`load` restore classnames and the position. The 64-bit
+  client loads, starts its VGUI (`HUD_VidInit` passes), then crashes drawing the pain indicator because Half-Life's
+  HUD sprites aren't there; **c1a0 with real data is still to be checked on the owner's machine.** The MinGW
+  Windows cross-build still compiles.
+
 Command line: `-basedir <hl folder>`, `-game <mod>`, `-hd`, `-dev`, and `+command args` (executed after startup,
 like GoldSrc; negative numbers count as arguments).
 
@@ -262,6 +305,7 @@ All engine code is in `src/engine/`, about 24,800 lines. One executable, no DLL 
 | `lua_game.c` | 1284 | The game API for Lua: `Vector`/`Angle` userdata (3 floats, operators, methods), `Entity` userdata (edict index + serial, so stale handles become invalid; methods plus direct entvars fields through a name/offset/type table), `ents`, `player`, `util.TraceLine/TraceHull`, constants, and the hooks the server fires |
 | `client_api.h` | 710 | Clean-room client interface: `cl_enginefunc_t` (the SDK order, plus the later Steam/HL25 additions and 32 reserved slots), `cl_entity_t` (3000 bytes), `entity_state_t` (340), `ref_params_t`, `client_data_t`, `SCREENINFO`, `client_sprite_t`, the client export table. The tri/efx/event/demo/net/voice API tables are padded arrays of stubs for now |
 | `cl_main.c` | 1342 | Loads client.dll (after vgui.dll), every `cl_enginefunc_t` function (HUD sprites with `hud.txt` parsing and normal/holes/additive drawing, FillRGBA (additive, like GoldSrc), text, cvars/commands, user message hooks, player info, entities for the client, `V_CalcRefdef` with `ref_params_t`, the view model, crosshair, center print), the user-message queue (game DLL messages are buffered in `sv_engfuncs.c` and dispatched at the start of the client frame; `svc_weaponanim` sets the view model animation, `svc_temp_entity` goes to `cl_tent.c`, unhooked ScreenFade/ScreenShake to `cl_view.c`), the API tables from the files below, `CL_CrashFilter` (with `CLIENT_CALL` in `cl_local.h`: a crash in the client logs its stack and turns the client off instead of killing the engine), `HUD_PlayerMoveInit` at the first map (the client's pm_shared needs its texture types before any event) |
+| `vgui_support.c` | 330 | The engine's side of the VGUI1 support table (`vguiapi_t`) for clients that carry their own VGUI1 (hlsdk-portable's 64-bit/Android clients with FreeVGUI): `InitVGUISupportAPI`, then drawing callbacks (textures, quads, colors with VGUI1's inverted alpha, paint offset for the HUD's own drawing inside panels) and the client's start/paint/mouse/text entry points |
 | `vgui_bridge.c` | 480 | Hosts vgui.dll (vgui.so on Linux, see section 5): constructs `App(true)`, a full-screen root `Panel` and a `SurfaceBase` with our own 35-slot vtable (thiscall via `__fastcall` + dummy EDX), OpenGL drawing for rects, textures and text (glyphs from vgui's own `Font::getCharRGBA`), paint/clip stack from `getAbsExtents/getClipRect/getInset`. App's `main` and `platTick` are stubbed in a copied vtable. VGUI1 alpha is transparency (0 = opaque). Mouse input: the client shows the cursor through `setCursor` (anything but `dc_none`) when a menu wants it; then `VGUI_WantsMouse` turns off mouse look and `vid_sdl.c` sends motion, buttons and the wheel to App's `internal*` methods instead of key bindings. vgui reads the cursor back through `GetMousePos`, so that returns the position last passed in |
 | `vgui2_local.h` | 115 | What the VGUI2 files share: the C++ ABI macros (`THISCALL`/`VTHIS` as in `vgui_bridge.c`, `VT_PREFIX`, `VT_DTORS`: GCC has two destructor slots and two words before slot 0, MSVC one destructor slot), `VG_METHOD`, the IPanel method numbers and `VP_*` wrappers |
 | `gameui.c` | 849 | Hosts GameUI: checks Steam is running (GameUI ends the process otherwise) and sets `SteamAppId=70`, loads `vgui2` from the Half-Life folder and `cl_dlls/gameui`, registers the KeyValues size (24) with vgui2, starts vgui2 with the factory list GoldSrc uses (engine, vgui2, file system, HTML slot, GameUI, client), makes the three engine panels (root, client, GameUI) as vgui2 panels whose `IClientPanel` side is ours, loads `trackerscheme.res` and `valve_%language%.txt`, then `IGameUI::Initialize/Start` with the client's `cl_enginefunc_t`. The engine's interfaces: `IEngineVGui` (the panels), `IGameUIFuncs` (keys, video modes), `IBaseUI` (GameUI calls back to hide/show). Menu state (`active`), pause (`GameUI_Paused`: the menu or `setpause`), input to vgui2's `IInputInternal` (engine key numbers to vgui2 `KeyCode`s, UTF-8 text, mouse), the loading dialog (`StartProgressBar` plus two painted frames, since maps load in one go). Test commands: `gameui_press <panel>`, `gameui_click`, `gameui_key`, `gameui_panels` |

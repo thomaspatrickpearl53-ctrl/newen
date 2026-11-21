@@ -6,6 +6,7 @@
 #include <execinfo.h>
 #include <setjmp.h>
 #include <signal.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <ucontext.h>
@@ -160,6 +161,20 @@ qboolean Sys_FixCase(char *path, size_t keep)
 	return Sys_FileExists(path);
 }
 
+// ---------------------------------------------------------------- reserved memory
+
+// Untouched pages cost nothing, so the whole range is mapped at once and commit has nothing to do
+void *Sys_ReserveMemory(size_t size)
+{
+	void *p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+	return p == MAP_FAILED ? NULL : p;
+}
+
+qboolean Sys_CommitMemory(void *base, size_t size)
+{
+	return true;
+}
+
 // ---------------------------------------------------------------- loadable libraries
 
 void *Sys_LoadLibrary(const char *path)
@@ -274,9 +289,27 @@ void Sys_LogException(void *unused)
 	LogStack(1);
 }
 
+// where the crash happened, from the signal's saved registers
+static void *CrashPC(void *uc)
+{
+	mcontext_t *m = &((ucontext_t *)uc)->uc_mcontext;
+#if defined(__x86_64__)
+	return (void *)m->gregs[REG_RIP];
+#elif defined(__i386__)
+	return (void *)m->gregs[REG_EIP];
+#elif defined(__aarch64__)
+	return (void *)m->pc;
+#elif defined(__arm__)
+	return (void *)m->arm_pc;
+#else
+	(void)m;
+	return NULL;
+#endif
+}
+
 static void CrashHandler(int sig, siginfo_t *si, void *uc)
 {
-	void *pc = (void *)((ucontext_t *)uc)->uc_mcontext.gregs[REG_EIP];
+	void *pc = CrashPC(uc);
 	if (sys_crash_guard && sig != SIGABRT) {
 		// inside a guarded call: report and jump back out instead of ending the process
 		sigjmp_buf *guard = sys_crash_guard;

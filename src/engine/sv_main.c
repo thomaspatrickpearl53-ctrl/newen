@@ -25,11 +25,34 @@ static cvar_t *sv_maxedicts, *deathmatch, *coop, *teamplay;
 // ---------------------------------------------------------------- strings
 
 // string_t is an offset from pStringBase. The base is an empty string, so offset 0 means "".
-// Strings the DLL makes from its own constants (MAKE_STRING) are offsets to its memory; that works
-// because everything is 32-bit and offsets wrap.
+// Strings the DLL makes from its own constants (MAKE_STRING) are offsets to its memory. On 32-bit that
+// works because offsets wrap. On 64-bit an offset must fit in an int, so the engine's strings live in one
+// reserved range that starts at the base, and hlsdk-portable's MAKE_STRING calls pfnAllocString for a
+// constant that's too far away.
+#ifdef NEWEN_64
+#define STRING_POOL_SIZE ((size_t)1 << 30)   // address space only; pages are used as strings need them
+#define STRING_POOL_STEP ((size_t)1 << 20)
+static char  *string_base;
+static size_t string_used, string_committed;
+#else
 static const char string_base[1] = "";
 static char **strings;
 static int strings_count, strings_cap;
+#endif
+
+static void InitStrings(void)
+{
+#ifdef NEWEN_64
+	if (string_base)
+		return;
+	string_base = Sys_ReserveMemory(STRING_POOL_SIZE);
+	if (!string_base || !Sys_CommitMemory(string_base, STRING_POOL_STEP))
+		Sys_Error("Couldn't reserve the string pool");
+	string_committed = STRING_POOL_STEP;
+	string_base[0] = 0;
+	string_used = 1;
+#endif
+}
 
 const char *SV_String(string_t s)
 {
@@ -38,7 +61,14 @@ const char *SV_String(string_t s)
 
 string_t SV_MakeString(const char *s)
 {
+#ifdef NEWEN_64
+	ptrdiff_t d = s - string_base;
+	if (d < INT_MIN || d > INT_MAX)
+		return SV_AllocString(s);
+	return (string_t)d;
+#else
 	return (string_t)(s - string_base);
+#endif
 }
 
 string_t SV_AllocString(const char *s)
@@ -47,7 +77,20 @@ string_t SV_AllocString(const char *s)
 		return 0;
 	// the game treats strings as immutable but sometimes writes "\n" escapes; GoldSrc converts them
 	size_t n = strlen(s);
+#ifdef NEWEN_64
+	InitStrings();
+	if (string_used + n + 1 > STRING_POOL_SIZE)
+		Sys_Error("The string pool is full (%u MB)", (unsigned)(STRING_POOL_SIZE >> 20));
+	while (string_used + n + 1 > string_committed) {
+		if (!Sys_CommitMemory(string_base + string_committed, STRING_POOL_STEP))
+			Sys_Error("Out of memory for strings");
+		string_committed += STRING_POOL_STEP;
+	}
+	char *copy = string_base + string_used;
+	string_used += n + 1;
+#else
 	char *copy = Mem_Alloc(n + 1);
+#endif
 	char *o = copy;
 	for (const char *p = s; *p; p++) {
 		if (p[0] == '\\' && p[1] == 'n') {
@@ -58,19 +101,25 @@ string_t SV_AllocString(const char *s)
 		}
 	}
 	*o = 0;
+#ifndef NEWEN_64
 	if (strings_count == strings_cap) {
 		strings_cap = strings_cap ? strings_cap * 2 : 1024;
 		strings = Mem_Realloc(strings, sizeof(char *) * strings_cap);
 	}
 	strings[strings_count++] = copy;
+#endif
 	return SV_MakeString(copy);
 }
 
 static void FreeStrings(void)
 {
+#ifdef NEWEN_64
+	string_used = 1;   // the pages stay committed for the next map
+#else
 	for (int i = 0; i < strings_count; i++)
 		Mem_Free(strings[i]);
 	strings_count = 0;
+#endif
 }
 
 // ---------------------------------------------------------------- edicts
@@ -250,11 +299,11 @@ ENTITYINIT SV_GetEntityInit(const char *classname)
 }
 
 // Save/restore stores think and touch functions by their exported (decorated) names
-const char *SV_NameForFunction(unsigned function)
+const char *SV_NameForFunction(void *function)
 {
 	if (!sv_game_dll)
 		return NULL;
-	return Sys_ExportName(sv_game_dll, (void *)(uintptr_t)function);
+	return Sys_ExportName(sv_game_dll, function);
 }
 
 static char *LiblistValue(const char *key)
@@ -297,8 +346,13 @@ static qboolean LoadGameDLL(void)
 	for (char *s = fixed; *s; s++)
 		if (*s == '\\')
 			*s = '/';
-	if (!FS_FullPath(fixed, game_dll_path, sizeof(game_dll_path))) {
+	if (!FS_GameLibrary(fixed, game_dll_path, sizeof(game_dll_path))) {
+#ifdef NEWEN_64
+		Con_Warnf("Game library %s not found for this 64-bit build (tools/build_hlsdk.sh builds hlsdk-portable's); "
+			"maps load without game logic\n", fixed);
+#else
 		Con_Warnf("Game DLL %s not found; maps load without game logic\n", fixed);
+#endif
 		return false;
 	}
 	void *dll = Sys_LoadLibrary(game_dll_path);
@@ -318,6 +372,7 @@ static qboolean LoadGameDLL(void)
 		return false;
 	}
 	SV_InitEngineFuncs(&g_engfuncs);
+	InitStrings();
 	gGlobals.pStringBase = string_base;
 	give(&g_engfuncs, &gGlobals);
 
@@ -483,6 +538,7 @@ qboolean SV_SpawnServer(const char *mapname, const char *oldmap, const char *lan
 	LuaG_ServerStarted();
 
 	memset(&gGlobals, 0, sizeof(gGlobals));
+	InitStrings();
 	gGlobals.pStringBase = string_base;
 	gGlobals.time = (float)sv.time;
 	gGlobals.maxClients = sv.maxclients;

@@ -5,9 +5,13 @@ if(CMAKE_C_FLAGS MATCHES "-m32" AND NOT CMAKE_CXX_FLAGS MATCHES "-m32")
 endif()
 project(newen C CXX)
 
-# Half-Life's game DLLs are 32-bit, so the engine must be too.
-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
-	message(FATAL_ERROR "newen must be built 32-bit (Windows: configure with -A Win32; Linux: use build.sh, which passes -m32)")
+# Valve's own game libraries are 32-bit, so the normal build is too. A 64-bit build (and Android) runs
+# hlsdk-portable's game libraries instead (docs/MOBILE_PLAN.md); Valve's VGUI1 and GameUI can't load there.
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+	set(NEWEN_64 ON)
+	message(STATUS "64-bit build: runs hlsdk-portable's game libraries, without VGUI1 and GameUI")
+elseif(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
+	message(FATAL_ERROR "newen builds 32-bit or 64-bit")
 endif()
 
 set(CMAKE_C_STANDARD 11)
@@ -76,11 +80,15 @@ if(WIN32)
 	add_library(SDL2main STATIC IMPORTED)
 	set_target_properties(SDL2main PROPERTIES IMPORTED_LOCATION ${SDL2_DIR}/lib/x86/SDL2main.lib)
 else()
-	# the system's 32-bit SDL2 (Arch: lib32-sdl2-compat), or any libSDL2-2.0.so given with -DSDL2_LIBRARY
-	find_library(SDL2_LIBRARY NAMES SDL2-2.0 SDL2 PATHS /usr/lib32 /usr/lib/i386-linux-gnu NO_DEFAULT_PATH)
+	# the system's SDL2 (32-bit: Arch's lib32-sdl2-compat), or any libSDL2-2.0.so given with -DSDL2_LIBRARY
+	if(NEWEN_64)
+		find_library(SDL2_LIBRARY NAMES SDL2-2.0 SDL2)
+	else()
+		find_library(SDL2_LIBRARY NAMES SDL2-2.0 SDL2 PATHS /usr/lib32 /usr/lib/i386-linux-gnu NO_DEFAULT_PATH)
+	endif()
 	find_path(SDL2_INCLUDE_DIR SDL.h PATH_SUFFIXES SDL2)
 	if(NOT SDL2_LIBRARY OR NOT SDL2_INCLUDE_DIR)
-		message(FATAL_ERROR "32-bit SDL2 not found: install lib32-sdl2-compat (Arch) or libsdl2-dev:i386 (Debian/Ubuntu)")
+		message(FATAL_ERROR "SDL2 not found: install sdl2 (64-bit), lib32-sdl2-compat (Arch, 32-bit) or libsdl2-dev:i386 (Debian/Ubuntu, 32-bit)")
 	endif()
 	add_library(SDL2 SHARED IMPORTED)
 	set_target_properties(SDL2 PROPERTIES
@@ -152,6 +160,7 @@ add_executable(newen WIN32
 	src/engine/snd_mem.c
 	src/engine/snd_codecs.c
 	src/engine/vgui_bridge.c
+	src/engine/vgui_support.c
 	src/engine/gameui.c
 	src/engine/vgui2_surface.c
 	src/engine/vgui2_fs.c

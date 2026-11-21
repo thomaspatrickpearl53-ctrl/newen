@@ -554,6 +554,10 @@ void GameUI_Init(void)
 	Cmd_AddCommand("inputset_game", Nop_f, "Steam Input action set (nothing to do here)");
 	if (!gameui_cvar->value || COM_CheckParm("-nogameui"))
 		return;
+#ifdef NEWEN_64
+	Con_Printf("Half-Life's menu (GameUI) is 32-bit only; this 64-bit build uses the console\n");
+	return;
+#endif
 
 	char path[MAX_OSPATH];
 	// GameUI can't run without Steam (it ends the process when the Steam API won't start)

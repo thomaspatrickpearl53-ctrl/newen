@@ -5,3 +5,7 @@ dist/
 build-mingw/
 build-asan/
 !third_party/JoltPhysics/Build/
+bin64/
+build-64/
+build-linux64/
+build-hlsdk/

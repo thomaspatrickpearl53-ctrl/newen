@@ -251,6 +251,8 @@ void Vid_PumpEvents(void)
 					Con_CharEvent((unsigned char)*p);
 			else if (GameUI_IsActive())
 				GameUI_CharEvent(e.text.text);
+			else if (VGUI_WantsMouse())
+				VGUI_TextInput(e.text.text);
 			break;
 		case SDL_MOUSEBUTTONDOWN:
 		case SDL_MOUSEBUTTONUP: {

@@ -316,8 +316,9 @@ typedef struct {
 	int         (*pfnRegUserMsg)(const char *pszName, int iSize);
 	void        (*pfnAnimationAutomove)(const edict_t *pEdict, float flTime);
 	void        (*pfnGetBonePosition)(const edict_t *pEdict, int iBone, float *rgflOrigin, float *rgflAngles);
-	unsigned    (*pfnFunctionFromName)(const char *pName);
-	const char *(*pfnNameForFunction)(unsigned function);
+	// GoldSrc's header says unsigned; a pointer is the same thing on 32-bit and the whole address on 64-bit
+	void       *(*pfnFunctionFromName)(const char *pName);
+	const char *(*pfnNameForFunction)(void *function);
 	void        (*pfnClientPrintf)(edict_t *pEdict, PRINT_TYPE ptype, const char *szMsg);
 	void        (*pfnServerPrint)(const char *szMsg);
 	const char *(*pfnCmd_Args)(void);
@@ -563,12 +564,17 @@ typedef struct physent_s {
 	vec3f_t  vuser1, vuser2, vuser3, vuser4;
 } physent_t;
 
-// GoldSrc's own trace_t, as PM_TraceModel fills it (its plane has byte type/signbits)
+// GoldSrc's own trace_t, as PM_TraceModel fills it (its plane has byte type/signbits). hlsdk-portable's
+// 64-bit libraries are built with the SDK's header, which has no such bytes.
 typedef struct {
 	qboolean allsolid, startsolid, inopen, inwater;
 	float    fraction;
 	vec3f_t  endpos;
+#ifdef NEWEN_64
+	struct { vec3f_t normal; float dist; } plane;
+#else
 	struct { vec3f_t normal; float dist; unsigned char type, signbits, pad[2]; } plane;
+#endif
 	edict_t *ent;
 	int      hitgroup;
 } gs_trace_t;
@@ -627,7 +633,7 @@ typedef struct playermove_s {
 	int       (*PM_HullPointContents)(void *hull, int num, float *p);
 	pmtrace_t (*PM_PlayerTrace)(float *start, float *end, int traceFlags, int ignore_pe);
 	pmtrace_t *(*PM_TraceLine)(float *start, float *end, int flags, int usehull, int ignore_pe);
-	long      (*RandomLong)(long lLow, long lHigh);
+	int       (*RandomLong)(int lLow, int lHigh);   // the SDK says long: 32 bits on every 32-bit system
 	float     (*RandomFloat)(float flLow, float flHigh);
 	int       (*PM_GetModelType)(struct model_s *mod);
 	void      (*PM_GetModelBounds)(struct model_s *mod, float *mins, float *maxs);
@@ -695,8 +701,8 @@ typedef struct saverestore_s {
 	char         szCurrentMapName[32];
 } SAVERESTOREDATA;
 
-_Static_assert(sizeof(ENTITYTABLE) == 24 && sizeof(LEVELLIST) == 80, "save/restore table layout");
-_Static_assert(offsetof(SAVERESTOREDATA, fUseLandmark) == 44 + 16 * 80, "SAVERESTOREDATA layout");
+_Static_assert(sizeof(ENTITYTABLE) == ABI(24, 32) && sizeof(LEVELLIST) == ABI(80, 88), "save/restore table layout");
+_Static_assert(offsetof(SAVERESTOREDATA, fUseLandmark) == ABI(44 + 16 * 80, 1472), "SAVERESTOREDATA layout");
 
 #ifdef _WIN32
 #define GIVEFNPTRS_CALL __stdcall   // the Windows SDK declares it WINAPI; Linux builds have no such thing
@@ -709,13 +715,13 @@ typedef int  (*APIFUNCTION2)(DLL_FUNCTIONS *functionTable, int *interfaceVersion
 typedef int  (*NEW_DLL_FUNCTIONS_FN)(NEW_DLL_FUNCTIONS *functionTable, int *interfaceVersion);
 typedef void (*ENTITYINIT)(entvars_t *pev);   // exported per classname by LINK_ENTITY_TO_CLASS
 
-// sizes the shipped DLLs were compiled with
-_Static_assert(sizeof(entvars_t) == 676, "entvars_t layout");
-_Static_assert(sizeof(edict_t) == 804, "edict_t layout");
-_Static_assert(sizeof(TraceResult) == 56, "TraceResult layout");
-_Static_assert(offsetof(enginefuncs_t, pfnCheckParm) == 157 * 4, "enginefuncs_t order");
-_Static_assert(sizeof(DLL_FUNCTIONS) == 50 * 4, "DLL_FUNCTIONS layout");
+// sizes the shipped DLLs were compiled with; ABI(32-bit, 64-bit) as hlsdk-portable builds them for 64-bit
+_Static_assert(sizeof(entvars_t) == ABI(676, 720), "entvars_t layout");
+_Static_assert(sizeof(edict_t) == ABI(804, 864), "edict_t layout");
+_Static_assert(sizeof(TraceResult) == ABI(56, 64), "TraceResult layout");
+_Static_assert(offsetof(enginefuncs_t, pfnCheckParm) == 157 * sizeof(void *), "enginefuncs_t order");
+_Static_assert(sizeof(DLL_FUNCTIONS) == 50 * sizeof(void *), "DLL_FUNCTIONS layout");
 _Static_assert(sizeof(usercmd_t) == 52, "usercmd_t layout");
 _Static_assert(sizeof(pmtrace_t) == 68, "pmtrace_t layout");
-_Static_assert(sizeof(physent_t) == 224, "physent_t layout");
-_Static_assert(sizeof(gs_trace_t) == 60, "trace_t layout");
+_Static_assert(sizeof(physent_t) == ABI(224, 232), "physent_t layout");
+_Static_assert(sizeof(gs_trace_t) == ABI(60, 64), "trace_t layout");

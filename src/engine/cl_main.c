@@ -44,6 +44,19 @@ double cl_time, cl_oldtime;
 static cvar_t *crosshair, *cl_drawhud;
 
 qboolean CL_HasClient(void) { return client_ok; }
+qboolean CL_TakesLookEvents(void) { return client_ok && cl.IN_ClientLookEvent; }
+
+void CL_LookEvent(float yaw, float pitch)
+{
+	if (cl.IN_ClientLookEvent)
+		CLIENT_CALL("IN_ClientLookEvent", cl.IN_ClientLookEvent(yaw, pitch));
+}
+
+void CL_MoveEvent(float forward, float side)
+{
+	if (cl.IN_ClientMoveEvent)
+		CLIENT_CALL("IN_ClientMoveEvent", cl.IN_ClientMoveEvent(forward, side));
+}
 
 static void InitEngineFuncs(void);
 
@@ -682,7 +695,7 @@ static void WeaponAnim(int anim, int body) { CL_SetViewModelAnim(anim, body); }
 static unsigned rng = 0x2545F491u;
 static unsigned NextRand(void) { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; }
 static float ClRandomFloat(float lo, float hi) { return lo + (hi - lo) * ((NextRand() >> 8) / 16777216.0f); }
-static long ClRandomLong(long lo, long hi) { return hi <= lo ? lo : lo + (long)(NextRand() % (unsigned)(hi - lo + 1)); }
+static int ClRandomLong(int lo, int hi) { return hi <= lo ? lo : lo + (int)(NextRand() % (unsigned)(hi - lo + 1)); }
 
 static int ClCon_IsVisible(void) { return Con_IsVisible(); }
 static const char *GetGameDirectory(void) { return FS_GameDir(); }
@@ -736,9 +749,9 @@ static void ClGetMousePos(void *pt) { if (pt) { int *p = pt; SDL_GetGlobalMouseS
 static void ClSetMousePos(int x, int y) {}
 static void ClSetMouseEnable(qboolean on) {}
 static cvar_t *GetFirstCvarPtr(void) { return Cvar_First(); }
-static unsigned GetFirstCmdFunctionHandle(void) { return 0; }
-static unsigned GetNextCmdFunctionHandle(unsigned h) { return 0; }
-static const char *GetCmdFunctionName(unsigned h) { return ""; }
+static void *GetFirstCmdFunctionHandle(void) { return NULL; }
+static void *GetNextCmdFunctionHandle(void *h) { return NULL; }
+static const char *GetCmdFunctionName(void *h) { return ""; }
 static float GetServerGravityValue(void) { return sv_gravity ? sv_gravity->value : 800.0f; }
 static struct model_s *GetModelByIndex(int i) { return SV_ModelForIndex(i); }
 static void SetFilterMode(int mode) {}
@@ -1328,7 +1341,7 @@ void CL_Init(void)
 	const char *client_name = "cl_dlls/client.so";
 #endif
 	char path[MAX_OSPATH];
-	if (COM_CheckParm("-noclientdll") || COM_CheckParm("-nogamedll") || !FS_FullPath(client_name, path, sizeof(path))) {
+	if (COM_CheckParm("-noclientdll") || COM_CheckParm("-nogamedll") || !FS_GameLibrary(client_name, path, sizeof(path))) {
 		CL_InitInput();
 		return;
 	}
@@ -1342,6 +1355,7 @@ void CL_Init(void)
 		CL_InitInput();
 		return;
 	}
+	VGUIS_Init(client_dll);   // a client with its own VGUI1 needs its root panel before HUD_VidInit
 	cl.Initialize = Export("Initialize");
 	cl.HUD_Init = Export("HUD_Init");
 	cl.HUD_VidInit = Export("HUD_VidInit");
@@ -1374,6 +1388,8 @@ void CL_Init(void)
 	cl.HUD_GetUserEntity = Export("HUD_GetUserEntity");
 	cl.HUD_GetStudioModelInterface = Export("HUD_GetStudioModelInterface");
 	cl.HUD_DirectorMessage = Export("HUD_DirectorMessage");
+	cl.IN_ClientMoveEvent = (void *)Sys_GetProcAddress(client_dll, "IN_ClientMoveEvent");   // optional
+	cl.IN_ClientLookEvent = (void *)Sys_GetProcAddress(client_dll, "IN_ClientLookEvent");
 	if (!cl.Initialize || !cl.HUD_Init || !cl.HUD_VidInit || !cl.HUD_Redraw || !cl.HUD_Frame || !cl.CL_CreateMove) {
 		Con_Errorf("%s isn't a GoldSrc client DLL\n", path);
 		CL_InitInput();
@@ -1401,4 +1417,5 @@ void CL_Init(void)
 void CL_Shutdown(void)
 {
 	CLIENT_CALL("HUD_Shutdown", if (cl.HUD_Shutdown) cl.HUD_Shutdown());
+	VGUIS_Shutdown();
 }

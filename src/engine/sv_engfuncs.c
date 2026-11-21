@@ -983,12 +983,12 @@ static void PF_GetAttachment(const edict_t *e, int att, float *org, float *angle
 		org[i] = DotProduct(a->org, bones[a->bone][i]) + bones[a->bone][i][3];
 }
 
-static unsigned PF_FunctionFromName(const char *name)
+static void *PF_FunctionFromName(const char *name)
 {
-	return (unsigned)(uintptr_t)SV_GetProcAddress(name);
+	return SV_GetProcAddress(name);
 }
 
-static const char *PF_NameForFunction(unsigned f)
+static const char *PF_NameForFunction(void *f)
 {
 	const char *n = SV_NameForFunction(f);
 	return n ? n : "";

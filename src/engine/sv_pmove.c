@@ -326,11 +326,11 @@ static void PM_Con_Printf(const char *fmt, ...)
 
 static double PM_Sys_FloatTime(void) { return Sys_FloatTime(); }
 
-static long PM_RandomLong(long lo, long hi)
+static int PM_RandomLong(int lo, int hi)
 {
 	if (hi <= lo)
 		return lo;
-	return lo + (long)(rand() % (hi - lo + 1));
+	return lo + rand() % (hi - lo + 1);
 }
 
 static float PM_RandomFloat(float lo, float hi)

@@ -111,7 +111,7 @@ void        SV_SetMinMaxSize(edict_t *e, const vec3_t mins, const vec3_t maxs);
 void        SV_SetupRenderEntities(void);          // fills the renderer's lists from the edicts
 ENTITYINIT  SV_GetEntityInit(const char *classname);
 void       *SV_GetProcAddress(const char *name);
-const char *SV_NameForFunction(unsigned function);
+const char *SV_NameForFunction(void *function);
 edict_t    *SV_LocalPlayer(void);
 
 // sv_save.c

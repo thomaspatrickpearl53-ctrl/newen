@@ -321,6 +321,10 @@ static void THISCALL App_platTick(VTHIS) {}
 
 qboolean VGUI_Init(void)
 {
+#ifdef NEWEN_64
+	// vgui.so is 32-bit only; hlsdk-portable's client is built without VGUI1 and uses its own menus
+	return true;
+#endif
 	char path[MAX_OSPATH];
 	snprintf(path, sizeof(path), "%s/" VGUI_LIB, FS_BaseDir());
 	vgui = Sys_LoadLibrary(path);
@@ -422,6 +426,8 @@ qboolean VGUI_Init(void)
 
 void *VGUI_GetPanel(void)
 {
+	if (VGUIS_Active())
+		return VGUIS_GetPanel();
 	return root;
 }
 
@@ -430,11 +436,17 @@ void *VGUI_GetPanel(void)
 // true while a VGUI menu shows the cursor: the mouse then belongs to VGUI, not to mouse look
 qboolean VGUI_WantsMouse(void)
 {
+	if (VGUIS_Active())
+		return VGUIS_WantsMouse();
 	return root && cursor_visible;
 }
 
 void VGUI_MouseMove(int x, int y)
 {
+	if (VGUIS_Active()) {
+		VGUIS_MouseMove(x, y);
+		return;
+	}
 	mouse_pos[0] = x;
 	mouse_pos[1] = y;
 	if (root && app_cursorMoved)
@@ -444,6 +456,10 @@ void VGUI_MouseMove(int x, int y)
 // button: 0 left, 1 right, 2 middle (vgui's MouseCode)
 void VGUI_MouseButton(int button, qboolean down, qboolean dbl)
 {
+	if (VGUIS_Active()) {
+		VGUIS_MouseButton(button, down, dbl);
+		return;
+	}
 	if (!root)
 		return;
 	int_ptr_t f = !down ? app_mouseReleased : dbl ? app_mouseDoublePressed : app_mousePressed;
@@ -453,13 +469,27 @@ void VGUI_MouseButton(int button, qboolean down, qboolean dbl)
 
 void VGUI_MouseWheel(int delta)
 {
+	if (VGUIS_Active()) {
+		VGUIS_MouseWheel(delta);
+		return;
+	}
 	if (root && app_mouseWheeled)
 		app_mouseWheeled(VTHIS_ARG(app), delta, surface);
 }
 
 // paints every VGUI panel; call in 2D mode after the HUD
+void VGUI_TextInput(const char *text)
+{
+	if (VGUIS_Active())
+		VGUIS_TextInput(text);
+}
+
 void VGUI_Paint(void)
 {
+	if (VGUIS_Active()) {
+		VGUIS_Paint();
+		return;
+	}
 	if (!root)
 		return;
 	static int last_w, last_h;

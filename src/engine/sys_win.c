@@ -116,6 +116,16 @@ void Sys_AddLibraryPath(const char *dir)
 		Con_Warnf("Couldn't add %s to the DLL search path\n", dir);
 }
 
+void *Sys_ReserveMemory(size_t size)
+{
+	return VirtualAlloc(NULL, size, MEM_RESERVE, PAGE_NOACCESS);
+}
+
+qboolean Sys_CommitMemory(void *base, size_t size)
+{
+	return VirtualAlloc(base, size, MEM_COMMIT, PAGE_READWRITE) != NULL;
+}
+
 void *Sys_LoadLibrary(const char *path)
 {
 	return (void *)LoadLibraryA(path);

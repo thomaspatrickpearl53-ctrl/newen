@@ -205,6 +205,12 @@ void FS_Init(void)
 
 	qboolean hd = COM_CheckParm("-hd") != 0;
 	FS_AddSearchPath(fs_writedir, false);
+#ifdef NEWEN_64
+	// hlsdk-portable's game libraries, built by tools/build_hlsdk.sh (never into the Half-Life folder)
+	FS_AddSearchPath(va("%s/hlsdk/%s", Sys_ExeDir(), fs_gamedir), false);
+	if (stricmp(fs_gamedir, "valve"))
+		FS_AddSearchPath(va("%s/hlsdk/valve", Sys_ExeDir()), false);
+#endif
 	AddGameDirs(fs_gamedir, hd);
 	if (stricmp(fs_gamedir, "valve"))
 		AddGameDirs("valve", hd);
@@ -248,6 +254,31 @@ qboolean FS_FullPath(const char *path, char *out, size_t outsize)
 	}
 #endif
 	return false;
+}
+
+#ifdef NEWEN_64
+#if defined(__x86_64__) || defined(_M_X64)
+#define LIB_ARCH "amd64"
+#elif defined(__aarch64__) || defined(_M_ARM64)
+#define LIB_ARCH "arm64"
+#else
+#error "hlsdk-portable's name for this CPU is missing"
+#endif
+#endif
+
+qboolean FS_GameLibrary(const char *path, char *out, size_t outsize)
+{
+#ifdef NEWEN_64
+	// Valve's own libraries are 32-bit and can't load here, so only the CPU-named ones count
+	char named[MAX_OSPATH];
+	const char *dot = strrchr(path, '.');
+	if (!dot || dot < strrchr(path, '/'))
+		dot = path + strlen(path);
+	snprintf(named, sizeof(named), "%.*s_" LIB_ARCH "%s", (int)(dot - path), path, dot);
+	return FS_FullPath(named, out, outsize);
+#else
+	return FS_FullPath(path, out, outsize);
+#endif
 }
 
 qboolean FS_FileExists(const char *path)
